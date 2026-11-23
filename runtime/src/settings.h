@@ -1,6 +1,6 @@
 #pragma once
 // Release version (the launcher compares it with GitHub release tags).
-static const char k_version[] = "0.1.0";  // first public release: 0.1.0 beta (tag v0.1.0-beta)
+static const char k_version[] = "0.1.1";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
 
 // settings.ini written next to tms.exe on the first run (by tms.exe or the launcher). "key = value" -> NX_KEY.
 static const char k_default_settings[] =
@@ -29,6 +29,8 @@ static const char k_default_settings[] =
     "; battle_retry = 0: no \"Retry the battle?\" after a party wipe (default 1: retry with the battle's starting HP / EP / items)\n"
     "; item_max99 = 0: consumables keep the game's stock caps (Life Stone 40, Patra Stone 90, Magic Mirror 5...; default 1: 99 each)\n"
     "; map_reveal = 1: every Idolasphere floor shows its whole layout on the minimap / map when entered (default 0)\n"
+    "; field_costume = 1: outside battle (field, dungeons, story scenes) party members wear their equipped costume (default 0: story clothes)\n"
+    "; all_difficulties = 0: Friendly / Lunatic stay locked until the game unlocks them (default 1: all five selectable)\n"
     "; ko_revive = 0: members who fell stay at 0 HP after a battle (default 1: they get up with 1 HP once the battle is won or escaped)\n"
     "; upscaler: fsr1 (default: edge-adaptive upscale when res is below the window size) or bilinear\n"
     "; sharpen: 0 (off) .. 100, contrast-adaptive sharpening; fx_fxaa / fx_bloom / fx_glow / fx_dof / fx_vignette /\n"

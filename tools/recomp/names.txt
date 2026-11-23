@@ -106,6 +106,12 @@
 0x002f2118 btl_skill_panel_show
 0x006c7634 mana_timer_advance  # (timer): CRI Mana timer object (ctor 0x6c72a0, vtable 0x9ee570 slot 8) manual-mode tick: +0x48 u64 count++ unless +0x1c paused; time = count * +0x38 / +0x40 (GetTime 0x6c74e4, +0x10 == 1 manual)
 0x002cb2d4 btl_add_reward  # (battle, enemy level, EXP, money): per defeated enemy (and Lua btlSetExpMoney): battle +0x528 EXP total, +0x568 money (x float +0xa0), +0x52c.. per-member EXP by level gap; EXP / money multipliers (hle_sys.cpp)
+0x0033b9e8 camp_settings_fill  # (screen, settings values): the game's Settings page rows from the values; row 10 = difficulty: value +0x114, arrows +0x118, min +0x11c (1 unless Friendly unlocked = system +0xa6b96), max +0x120 (3; 4..4 when already Lunatic)
+0x004a0060 title_menu_update  # (?, title menu): state 0 mirrors system +0xa6b96 / +0xa6b95 (Friendly / Lunatic unlocked) into flags 0x55 / 0x56
+0x004a0a30 title_menu_return  # same flag mirror on return to the title menu
+0x0043009c lua_IsSysDiffFriendlyUnlock  # Lua: pushes system +0xa6b96
+0x004300d4 lua_IsSysDiffLunaticUnlock  # Lua: pushes system +0xa6b95 (set to 1 at game clear, 0x269708)
+0x003506fc costume_default_row  # (character id 1001..1010): PlayerDefaultCostumeTable row (12 bytes: id, s16 costume +4, s16 flag that must be on +8, s16 flag that must be off +10; -1 = none) for the story state = the clothes outside battle; callers: model loader 0x3cc560 (via 0x3cc6b4) and reload check 0x407ea4; Overworld costume setting (hle_sys.cpp)
 0x002c3c1c btl_force_mastery  # (battle, character id, amount): Lua btlSetForceMastery (only caller 0x429870): battle +0x548 + 2 * member += amount (tutorial / event Mastery); NOT scaled by the Mastery multiplier (hle_sys.cpp)
 0x003ce438 chr_motion_update  # (s0 dt, chr): character action blend: weight +0x11f8 += step +0x11fc (= 1 / (blend seconds x 30), set by 0x3ce298 from _chrPlayAction 0x41ebfc) once per call, then 0x3ce58c / 0x3cfbc8 with dt; actions +0x11f0 new / +0x11f4 old (hle_sys.cpp: step x dt*30)
 0x002c6ca8 btl_main  # (battle): battle main state machine (+0 state, +0x18 timer); state 0xc = victory wait: 30 frames then (button 0x20 or victory sequence done, **0x9ef790 vt+0xc) -> 0xd = result flow start 0x318a30

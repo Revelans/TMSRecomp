@@ -39,7 +39,7 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.0 beta.** It is tested until the chapter 2 Idolasphere with
+> **v0.1.1 beta.** It is tested until the chapter 2 Idolasphere with
 > saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
 > PCs: bug reports are very welcome.
 
@@ -62,6 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
+- [What's new in v0.1.1](#whats-new-in-v011)
 - [Requirements](#requirements)
 - [Installing and playing](#installing-and-playing)
 - [Updating](#updating)
@@ -107,6 +108,9 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
   open the Tokyo Map from anywhere.
 - **Reveal dungeon maps**: each Idolasphere floor shows its whole layout on the minimap and map when you enter it.
 - **Retry lost battles** with the battle's starting HP / EP / items.
+- **Overworld costume**: the costume equipped for battle is also worn in town, dungeons and story scenes.
+- **All difficulties unlocked**: Friendly and Lunatic from the start, and every difficulty (Friendly .. Lunatic) can be
+  changed mid-game in System > Settings. See [Difficulty levels](#difficulty-levels) for what each one changes.
 - Battle speed, autosave after battles (to slot 20, your own slots are untouched), field walk speed.
 - EXP, money and mastery multipliers; Sub Cast EXP; EXP level-gap penalty on/off; level-ups refill HP / EP;
   fallen members revive with 1 HP after a battle; carry 99 of each item; guarding recovers HP / EP.
@@ -125,6 +129,18 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.1
+
+- **Overworld costume** (new, off by default): party members wear their equipped costume outside battle too: town,
+  dungeons and story scenes. Launcher Game page, in-game menu (F1 / L3 + R3) or System > Settings PC 4/4.
+- **Unlock all difficulties** (new, on by default): Friendly and Lunatic can be chosen from the start, and the Settings
+  difficulty row goes from Friendly to Lunatic at any time (the original allows Lunatic only on a new game).
+- **Setup: NSPs with a ticket now work.** NSPs whose game data is locked with a title key (the ticket `.tik` is inside the
+  NSP) failed with a "title.keys" message; setup now uses the NSP's own ticket. `title.keys` is not needed.
+- **Extras replace older versions**: installing a newer uncensor patch removes the old patch mod; a new UHD / MovieHD ZIP
+  removes the files the old pack had.
+- After updating, the launcher rebuilds `game.dll` once (a few minutes): setup changed.
 
 ## Requirements
 
@@ -177,7 +193,9 @@ pick the file you downloaded.
 | 4K movies | 4K story movies and camp menu backgrounds (`TMSRecomp-MovieHD` ZIP) | link in the release notes |
 | Your own battle music | random battle tracks from your own `.adx` files (for example a Persona 5 Royal music mod) | your own files |
 
-Every extra is optional; the game works the same without them. The UHD textures can be turned off without uninstalling
+Installing a newer version of an extra replaces the older one: an updated patch removes the old patch mod (mods with
+other content stay), and a new UHD / MovieHD ZIP removes files the old pack had and the new one does not. Every extra
+is optional; the game works the same without them. The UHD textures can be turned off without uninstalling
 (launcher Graphics page or the in-game menu, after a restart).
 
 ## Controls
@@ -219,6 +237,8 @@ stored in `settings.ini` next to `tms.exe` as `key = value`; any key can also be
 | `pad_icons` | auto (default), switch, playstation, xbox | button prompts |
 | `walk_speed` | 1.0 (default) .. 3.0 | field walk speed |
 | `map_reveal` | 0 (default), 1 | reveal dungeon maps |
+| `field_costume` | 0 (default), 1 | overworld costume |
+| `all_difficulties` | 1 (default), 0 | Friendly / Lunatic unlocked, full difficulty range in Settings |
 | `battle_retry` | 1 (default), 0 | retry lost battles |
 | `autosave` | 1 (default), 0 | save to slot 20 after battles |
 | `exp_rate`, `money_rate`, `mastery_rate` | 1 (default) and up | multipliers |
@@ -262,10 +282,27 @@ A mod is a folder `<game files>\mods\<ModName>\` (LayeredFS style); the launcher
 - **Several mods**: for the same file or texture, the mod whose folder name sorts first wins.
 - `nx.log` lists each mod at start (`fs: mod <name> on`, `textures: mod <name>: N`). Restart the game after a change.
 
+### Difficulty levels
+
+What each difficulty changes, read from the game's code (battle setup and damage formula):
+
+| Difficulty | Damage you deal | Damage you take | Money | Escape base chance |
+|---|---|---|---|---|
+| Friendly | ×1.5 | ×0.5 | ×1.25 | 50% |
+| Easy | ×1.25 | ×0.8 | ×1.25 | 50% |
+| Normal | ×1.0 | ×1.0 | ×1.0 | 30% |
+| Hard | ×0.8 | ×1.25 | ×1.0 | 1% |
+| Lunatic | ×0.5 | ×1.5 | ×1.0 | 1% |
+
+Hard and Lunatic also change ailment hit rates; on Friendly and Easy, members below the enemy's level get +20% EXP per
+level instead of +10%. Enemy HP and stats are the same on every difficulty.
+
 ## Troubleshooting and FAQ
 
 - **Setup fails or stops.** The Setup page shows the step and the error; **Open last log** shows the details. Check
-  that the NSP is the base game 1.0.0 (not an update or DLC) and that `prod.keys` comes from your own console. With an
+  that the NSP is the base game 1.0.0 (not an update or DLC) and that `prod.keys` comes from your own console. A
+  message about `title.keys` alone is only a warning; since v0.1.1 an NSP's own ticket is used. If setup still says the
+  NSP needs a title key, put `title.keys` (with this game's key) next to `prod.keys`. With an
   extracted folder, it must contain `exefs\main` and `romfs\`.
 - **"The game is not set up yet, or needs a rebuild after an update."** Open the Setup page; it rebuilds `game.dll`
   from your existing files.

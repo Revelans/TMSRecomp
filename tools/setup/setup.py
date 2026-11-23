@@ -150,6 +150,10 @@ def extract_nsp(nstool, keys, nsp, data):
     sizes = {n: os.path.getsize(os.path.join(tmp, n)) for n in os.listdir(tmp)
              if n.endswith(".nca") and not n.endswith(".cnmt.nca")}
     prog = os.path.join(tmp, max(sizes, key=sizes.get))
+    # eShop-style NSPs: NCAs encrypted with a title key whose ticket (.tik) is in the NSP. nstool does not take it from
+    # there by itself (title.keys it reads only next to prod.keys), so give it the ticket. No ticket: standard crypto.
+    tik = sorted(n for n in os.listdir(tmp) if n.lower().endswith(".tik"))
+    tik = ["--tik", os.path.join(tmp, tik[0])] if tik else []
     for part, sub in (("/0", "exefs"), ("/1", "romfs")):
         dst = os.path.join(data, sub)
         shutil.rmtree(dst, ignore_errors=True)
@@ -157,15 +161,17 @@ def extract_nsp(nstool, keys, nsp, data):
         stop = threading.Event()
         t = threading.Thread(target=watch_size, args=([dst], os.path.getsize(prog) if sub == "romfs" else 1 << 20, stop))
         t.start()
-        r = subprocess.run([nstool, "-k", keys, "-x", part, dst, prog], capture_output=True, text=True, errors="replace")
+        r = subprocess.run([nstool, "-k", keys] + tik + ["-x", part, dst, prog], capture_output=True, text=True, errors="replace")
         stop.set(), t.join()
         if not os.path.isdir(dst) or not os.listdir(dst):
-            fail(f"nstool could not extract {sub}: wrong or old prod.keys? nstool said:\n" + (r.stdout + r.stderr)[-1500:])
-    get_icon(nstool, keys, tmp, [n for n in sizes if os.path.join(tmp, n) != prog], data)
+            fail(f"nstool could not extract {sub}: wrong or old prod.keys"
+                 + ("" if tik else ", or the NSP needs a title key (no ticket inside: put title.keys next to prod.keys)")
+                 + "? nstool said:\n" + (r.stdout + r.stderr)[-1500:])
+    get_icon(nstool, keys, tmp, [n for n in sizes if os.path.join(tmp, n) != prog], data, tik)
     shutil.rmtree(tmp, ignore_errors=True)
 
 
-def get_icon(nstool, keys, tmp, ncas, data):
+def get_icon(nstool, keys, tmp, ncas, data, tik=()):
     """The game's own icon from the control NCA -> <data>/icon.jpg (the launcher makes the window icons from it).
     Optional: any failure only means the default icon. An extracted folder has no control NCA: the launcher then crops
     one from the title screen picture the game saves on its first start."""
@@ -173,7 +179,7 @@ def get_icon(nstool, keys, tmp, ncas, data):
         for n in sorted(ncas, key=lambda n: os.path.getsize(os.path.join(tmp, n))):
             d = os.path.join(tmp, "control")
             shutil.rmtree(d, ignore_errors=True)
-            subprocess.run([nstool, "-k", keys, "-x", "/", d, os.path.join(tmp, n)], capture_output=True, text=True,
+            subprocess.run([nstool, "-k", keys, *tik, "-x", "/", d, os.path.join(tmp, n)], capture_output=True, text=True,
                            errors="replace", timeout=120)
             for root, _, files in os.walk(d):
                 icons = sorted(f for f in files if f.startswith("icon_") and f.endswith(".dat"))
@@ -225,6 +231,19 @@ def install_mod(src, data):
                 os.remove(out + ".part")
             fail(f"{p}: {e}")
         os.replace(out + ".part", out)
+    # A newer version of a patch replaces the older one (user 11-24): other mods that are nothing but patched archives,
+    # all of them archives this install just wrote, are deleted. Mods with anything else (textures, other files) stay.
+    mine = {c.lower() + ".cpk" for _, c in plan}
+    mods = os.path.join(data, "mods")
+    for other in sorted(os.listdir(mods)):
+        od = os.path.join(mods, other)
+        if other == name or not os.path.isdir(od):
+            continue
+        files = [os.path.relpath(os.path.join(r, n), od).lower() for r, _, ns in os.walk(od) for n in ns]
+        packed = {os.path.basename(f) for f in files if os.path.dirname(f) == os.path.join("romfs", "pack")}
+        if files and len(packed) == len(files) and packed <= mine:
+            say("STEP", 1, 1, f"Removing the older patch {other}")
+            shutil.rmtree(od)
 
 
 def install_zip(z, data):
@@ -239,15 +258,27 @@ def install_zip(z, data):
         if shutil.disk_usage(data).free < need + (1 << 30):
             fail(f"not enough disk space: {need >> 30} GB needed, {shutil.disk_usage(data).free >> 30} GB free")
         say("STEP", 1, 1, f"Unpacking {os.path.basename(z)}")
+        import time
         for i in items:
             out = os.path.join(data, i.filename)
-            if not (os.path.exists(out) and os.path.getsize(out) == i.file_size):  # a re-run continues
+            stamp = time.mktime(i.date_time + (0, 0, -1))
+            # a re-run continues: same size and the ZIP's own time = this file (size alone kept old files of a new pack)
+            if not (os.path.exists(out) and os.path.getsize(out) == i.file_size and abs(os.path.getmtime(out) - stamp) < 3):
                 os.makedirs(os.path.dirname(out), exist_ok=True)
                 with f.open(i) as s, open(out + ".part", "wb") as d:
                     shutil.copyfileobj(s, d, 1 << 22)
                 os.replace(out + ".part", out)
+                os.utime(out, (stamp, stamp))
             done += i.file_size
             say("PROGRESS", done >> 20, total >> 20)
+        # a newer pack replaces the older one: its files the new ZIP no longer has are deleted (only in the folders it fills)
+        keep = {os.path.normcase(os.path.join(data, i.filename)) for i in items}
+        for top in {i.filename.split("/")[0] + "/" + i.filename.split("/")[1] for i in items if i.filename.count("/") >= 2}:
+            for r, _, ns in os.walk(os.path.join(data, top)):
+                for n in ns:
+                    p = os.path.join(r, n)
+                    if os.path.normcase(p) not in keep and not n.upper().startswith("README"):
+                        os.remove(p)
 
 
 def install_music(src, data):

@@ -3,7 +3,8 @@
 Static recompilation of Tokyo Mirage Sessions #FE Encore (Switch) to a native Windows program.
 
 ## PORTABILITY RULE (user 2026-11-10, firm): "This must not only work on my machine." Players have every kind of GPU/CPU (NVIDIA, AMD, Intel, old and new, low VRAM). The point of a recomp port is that EVERYONE can play: no low fps, no crash, no stutter, smooth and optimised. Several other ports (GOW3, Gravity Rush 1/2, Drakengard 3, MediEvil, Crash NF, Bloodborne) are stable and good; we must not ship a bad recomp. Every feature needs a capability check + safe fallback (vendor-specific paths like DLSS/NGX optional), sane defaults for weak PCs, no hard dependency on the user's own setup (drivers, installed runtimes, paths, caches).
-## RESUME HERE: read "Milestone 5, session 101" at the END first (2026-11-23 evening: user playtest OK except a RAM leak, 51 GB private after ~40 battles at 4K; fixed: shared descriptor-set / pipeline layouts, e858815; NEXT: user re-check of RAM, then GitHub upload).
+## RESUME HERE: v0.1.0-beta PUBLISHED 2026-11-24 at github.com/godofknife/TMSRecomp (branch `public` = the pushed history, noreply identity; never push this history). Read "Milestone 5, session 102" at the END first (2026-11-24: Overworld costume setting field_costume (verified slot 20: field / battle / back), Hard difficulty formula from the code, all_difficulties unlock + launcher rows; NEXT: user playtest, more v0.1.1 fixes, then publish v0.1.1 per "v0.1.1 queue").
+## Previous RESUME: v0.1.0-beta PUBLISHED 2026-11-24 at github.com/godofknife/TMSRecomp (branch `public` = the one pushed commit, noreply 7660956+godofknife@users.noreply.github.com; push future releases from a commit on top of `public`, never this history). Read "Milestone 5, session 101" at the END first (2026-11-23 evening: user playtest OK except a RAM leak, 51 GB private after ~40 battles at 4K; fixed: shared descriptor-set / pipeline layouts, e858815; NEXT: user re-check of RAM, then GitHub upload).
 ## Previous RESUME: read "Milestone 5, session 100" at the END first (2026-11-23 overnight: fresh-ZIP NSP setup OK, reveal-map retry fix, crash batch 4x676 s 0 crashes; optimisation measured after the encode: GPU-bound at the Shibuya spot, no safe change; ALL DONE; NEXT: user playtest + GitHub upload). Before that: session 99 (2026-11-23, user asleep: DLSS model setting, VRR mode, TMS icon + launcher picture from the player's own game, reveal-map setting, no-mod check; ALL DONE + regression OK; NEXT: user playtest, then GitHub upload (private/RELEASE_GITHUB.md)).
 ## Previous RESUME: read "Milestone 5, session 98" at the END first (2026-11-22, launcher Guide page + one-click installs, P5R key dropped (custom_bgm_key); NEXT: user playtest of the release ZIP, then fresh-history GitHub upload (private/RELEASE_GITHUB.md)).
 ## Previous RESUME: read "Milestone 5, session 97" at the END first (2026-11-22, release check: fresh-ZIP setup + replay OK, game icon removed from release exes, legal audit, GitHub guide private/RELEASE_GITHUB.md; NEXT: user decisions: account name, history, keys mode; merge OK).
@@ -5672,8 +5673,8 @@ IFileOpenDialog (Explorer style), README "Use your emulator save" (untested with
   into the user's dev ini at some point; the parser ignores them: no "key = value" key). Left as is (user's file).
 
 ## Milestone 5, session 101 (2026-11-23 evening: user playtest, RAM leak)
-- User: everything works, but tms.exe reached 43-51 GB private (Task Manager 99% RAM). Their nx.log (in their
-  game files folder): private 6.9 -> 51.6 GB over 238 stat lines, ~1 GB per battle; grows 28 MB/s in battle (scene 0x3),
+- User: everything works, but tms.exe reached 43-51 GB private (Task Manager 99% RAM). Their nx.log (E:\GAMES\Tokyo Mirage
+  Session PC Port\game): private 6.9 -> 51.6 GB over 238 stat lines, ~1 GB per battle; grows 28 MB/s in battle (scene 0x3),
   11 MB/s otherwise. Settings: 4K, DLSS (fx_fxaa 4, fsr3_quality 1), msaa 8, UHD pack, VRR, 240 fps.
 - Ruled out: command handles (flat while RAM grew), command-list recycling, SMAA work images, pack reads, movie planes,
   map reveal. Correlation: 9978 new programs / 207k shared-by-content pipelines vs 581 / 10k in a test battle (17x, RAM 15x).
@@ -5685,3 +5686,76 @@ IFileOpenDialog (Explorer style), README "Use your emulator save" (untested with
   0 crashes, 0 pipeline failures / shader misses. Test scripts: agent_scripts/leakab.sh, retryloop.sh, btlloop.sh
   (btlloop: post-battle menus stall it; i2.sh loads fail with 3 instances at once).
 - ZIP rebuilt: Desktop\TMSRecomp-20261123.zip. Not checked: a 40-battle session like the user's.
+
+### v0.1.1 queue (user 11-24: "later, with more fixes")
+- c2900cb: a newer xdelta patch removes the older patch mod (only mods made solely of romfs/Pack cpks it covers);
+  a new UHD / MovieHD ZIP removes files the old pack had; ZIP skip check = size + ZIP time (size alone kept changed
+  same-size files). Tested with temp folders; Guide sentence not visually checked.
+- Release steps: bump k_version above 0.1.0.1 (user's install reports 0.1.0.1 after the update test), commit the
+  changed files on top of branch `public` (noreply identity), push public:main, package, gh release create --latest.
+- agent_scripts/launcherpage.ps1 -> wincap.ps1 captures by process NAME: it grabbed the user's open launcher once.
+  Capture the started pid only (or check no other launcher.exe runs) before using it again.
+- Setup signature includes setup/tools: any setup.py change makes players' launcher rebuild game.dll after updating.
+- 11-24 (s102): Overworld costume (field_costume, default 0) is in the v0.1.1 queue: names.txt changed (re-lift), so
+  players' launchers rebuild game.dll after the update anyway.
+
+## Milestone 5, session 102 (2026-11-24, with user): Overworld costume + Hard difficulty formula
+
+### Overworld costume (USER 11-24: "costume wardrobe in battle, but overworld never shows it")
+- How the game picks clothes (Ghidra): model loader 0x3cc560 (via 0x3cc6b4, desc {char, costume, use_equipped, use_default})
+  builds "Character/player/%s/skin/%02d" (name = CharacterTable row 0x350634 +0x48, skin = PlayerCostume2SkinTable row
+  0x350688(char, costume) +6). Costume source: use_default -> PlayerDefaultCostumeTable row 0x3506fc (12 bytes: id, s16
+  costume +4, s16 flag that must be on +8, must be off +10, -1 none; story clothes); use_equipped -> 0x3613c0 (party slot
+  -> 0x352f2c +0x54 dress item -> ItemDressTable +10; 1 when none; 0x3ec / 0x3ed / 0x3f2 fixed 0x31); else explicit.
+  Then 0x35083c remaps Tsubasa (1002) 2/3/4/0x26 -> the glasses variants when save +0x52106 (SetGlasses) is set.
+- Costume ids (ScriptCommon/CostumeID_Define.lua): 0 PRIM, 1 CLASSFORM (Carnage battle outfit = no dress), 2 TRAINING,
+  3..6 USUAL1..4, 15 MARTH, 38 STUDENT, 39..41 DLC_01..03, 49 SWITCH, 50..53 glasses variants. Defaults: Itsuki 3 (4 after
+  flag 0x3ee3), Tsubasa 0x26 school uniform (3 after flag 0x42a, 4 after 0x508), ...
+- Fix: names.txt costume_default_row 0x3506fc (re-lift 20653 hooks); hle_sys.cpp hook puts the equipped dress into the
+  row's +4 (restored from a host copy first on every call; the table is shared). Same row feeds the reload check 0x407ea4,
+  so loader and check agree. Skipped: dress 1, the three fixed ids, not joined (0x3535f4), no skin row (0x350688 null).
+- Setting field_costume (default 0): F1 "Overworld costume", native PC 4/4 row 4, settings.ini comment. Applies on the next
+  model load (area change / load), not instantly: 0x3506fc is not called per frame (live "env" toggle test: no reload).
+- New control command `env NX_KEY=v` (ui.cpp): _putenv a setting live, for rigs.
+- Verified (slotn.sh slot 20 = user's 11-20 save, Itsuki has TRAINING (2) equipped, Tsubasa / Touma casual): on: log
+  "costume: character 1001 outside battle wears 2 (story clothes 3)", Itsuki in the training outfit on 5F; battle (walk
+  rig, fc4) normal; back in the field still the training outfit; off (fc5): blue jacket story clothes, no log line.
+  NOT verified: story scenes with other members, town, the native PC 4/4 row on screen, a dress change in the Equip menu
+  (expected: reload on the next area load via 0x407ea4).
+
+### Difficulty (USER 11-24 question; save byte G + 0x52105 = config +0x520f8 +0xd; Lua Get/SetDifficulty 0x4355e0 / 0x435510)
+- Values: 0 Friendly, 1 Easy, 2 Normal, 3 Hard, 4 Lunatic (DFCLSEL_MENU_ITEM_*; IsSysDiffLunaticUnlock).
+- Battle setup 0x2c4108 writes battle floats +0x98 / +0x9c / +0xa0 / +0xa4 (+0xa8 = 20 always):
+  Friendly 1.5 / 0.5 / 1.25 / 50; Easy 1.25 / 0.8 / 1.25 / 50; Normal 1 / 1 / 1 / 30; Hard 0.8 / 1.25 / 1 / 1;
+  Lunatic 0.5 / 1.5 / 1 / 1.
+- +0x98 = damage dealt by the party (end of damage formula 0x29d104: attacker side vt+0x160 == 1), +0x9c = damage the
+  party takes (target side 1), +0xa0 = money (btl_add_reward), +0xa4 = base escape chance % (0x2a5c50 ~0x2a6c80:
+  a4 + level ratio x a8 + ... + 7 per earlier try vs random).
+- Ailment chance 0x29cbec: Normal and below: x0.7 when target unit data +0x198 == 1, else x1.0; Hard / Lunatic: x1.0
+  when +0x198 == 1, else x0.85 (+0x198 assumed = party member; not checked at runtime).
+- Friendly / Easy only (< 2): EXP for members below the enemy's level +20% per level (not +10%), max 200%; +1 on a
+  per-member battle counter at battle +0x556 + 2 i (victory, 3 or 1 base; meaning not identified); +600 on a victory
+  value (0x2c6ca8 state 0xd; meaning not identified); a one-time notice (0x465dc0).
+
+### Unlock all difficulties (USER 11-24: "unlock it automatically and put it in launcher setting")
+- Unlock bytes: system data **0x9ef37c + 0xa6b95 = Lunatic (set 1 at game clear, 0x269708), + 0xa6b96 = Friendly (set by
+  the Game Over notice on Easy / Friendly, 0x465dc0). Readers: title 0x4a0060 / 0x4a0a30 (mirror into flags 0x55 Friendly /
+  0x56 Lunatic for the New Game menu), Lua IsSysDiffFriendlyUnlock 0x43009c / IsSysDiffLunaticUnlock 0x4300d4, Settings
+  fill 0x33b9e8 (row 10 difficulty: value +0x114, arrows +0x118, min +0x11c = 1 unless Friendly, max +0x120 = 3; 4..4
+  when already Lunatic, so the game never lets you leave or reach Lunatic mid-game).
+- Fix (names.txt 5 new: camp_settings_fill, title_menu_update, title_menu_return, lua_IsSysDiff*; re-lift 20658 hooks):
+  probes set both bytes (log "difficulty: Friendly and Lunatic unlocked"); camp_settings_fill sets row 10 range 0..4 with
+  arrows. Setting all_difficulties (default 1). Bytes persist in system.bin like the game's own unlocks (Off does not relock).
+- Launcher Game page: new rows Overworld costume (FIELD) and Unlock all difficulties (new DIFFICULTY section).
+- Verified (setpages.sh df1-df3, user's slot 20 on Hard): row shows Normal / Easy / Friendly / Lunatic; Apply Yes with
+  Lunatic, leave, reopen: Lunatic with both arrows. NOT verified: the New Game difficulty screen (rig ng1 loaded a save;
+  unlock log fired at the title 19.8 s), launcher page on screen.
+
+### Setup: NSPs with a title-key ticket (Reddit report 11-24: "failed to find title.keys", prod.keys + title.keys in one folder)
+- Cause: setup ran nstool on the program NCA alone; an NCA with a RightsId (eShop-style NSP, .tik + .cert inside) then has
+  "NCA Partition 0 not readable. (AES-CTR Key was not determined)". The title.keys warning is nstool's (always printed).
+  The user's own TMS NSP has no .tik (standard crypto), so it always worked here.
+- Fix (setup.py extract_nsp / get_icon): pass --tik <the NSP's .tik> to every NCA extraction; the error text mentions the
+  title key when there is no ticket. Verified with a ticketed NSP (Catherine update 0100BF00112C0800) and prod.keys alone:
+  without --tik no exefs, with it exefs extracted (its romfs fails: update NCA = patch romfs, needs the base; expected).
+  setup.py changed: players' launchers rebuild game.dll after the update.

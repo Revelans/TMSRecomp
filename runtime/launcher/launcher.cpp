@@ -119,7 +119,7 @@ struct Setting {
     std::vector<Opt> opts;  // DROP; TOGGLE: {off, on}
     float lo = 0, hi = 0, step = 0;
 };
-enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, NSET };
+enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, NSET };
 static const Setting k_set[NSET] = {
     {"fps", "60", DROP, L"Frame rate",
      L"The game's logic runs at this rate. 60 is the most tested. Above 60 the game keeps its speed and only gets "
@@ -187,6 +187,14 @@ static const Setting k_set[NSET] = {
     {"map_reveal", "0", TOGGLE, L"Reveal dungeon maps",
      L"Each Idolasphere floor shows its whole layout on the minimap and the map as soon as you enter it. What was "
      L"revealed stays revealed. Also in the in-game menu (F1 / L3 + R3).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"field_costume", "0", TOGGLE, L"Overworld costume",
+     L"Outside battle (town, dungeons, story scenes) the party wears the costume equipped in Equip > Costume, as in "
+     L"battle. Off: their story clothes. Also in the in-game menu (F1 / L3 + R3).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"all_difficulties", "1", TOGGLE, L"Unlock all difficulties",
+     L"Friendly and Lunatic can be chosen from the start: New Game and System > Settings (Friendly .. Lunatic, also "
+     L"mid-game). Normally Friendly comes after a Game Over on Easy and Lunatic only after clearing the game.",
      {{"0", L"Off"}, {"1", L"On"}}},
 };
 
@@ -1266,7 +1274,8 @@ static const Topic k_topics[] = {
       L"Press PLAY. In the game, F1 (or L3 + R3 on a controller) opens the settings menu."},
      L"Already extracted the game (a folder with exefs and romfs)? Pick that folder instead: then no keys are needed."},
     {L"English patch", L"English patch & uncensor",
-     L"Fan patches come as .xdelta files, one per game archive. They install as a mod: your game files are never changed.",
+     L"Fan patches come as .xdelta files, one per game archive. They install as a mod: your game files are never changed. "
+     L"A newer version of a patch replaces the older one by itself.",
      {L"Download the patch and unzip it, so its .xdelta files sit in one folder. That folder's name becomes the mod's name.",
       L"Press Install patch and pick that folder. The full English / uncensor patch takes about 20 minutes and up to 9 GB.",
       L"Done: the mod is on. The Mods page turns it off and on."},
@@ -1491,7 +1500,10 @@ static void draw_page_body() {
     {
         section(L"FIELD", x, 128, w);
         float y = 166 + row(WALK, x, 166, w);
-        y += row(MAPREV, x, y, w);
+        for (int i : {MAPREV, FIELDCOS}) y += row(i, x, y, w);
+        section(L"DIFFICULTY", x, y + 8, w);
+        y += 46;
+        y += row(ALLDIFF, x, y, w);
         section(L"CONTROLS", x, y + 8, w);
         y += 46;
         y += row(PADICONS, x, y, w);

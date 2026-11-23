@@ -8,7 +8,9 @@
 #include <map>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <mutex>
 #include <thread>
 
 #include "rt.h"
@@ -813,6 +815,57 @@ HLE_FN(btl_add_reward, "btl_add_reward") {
              std::to_string(after - before[k]) + (lift ? " full" : "") + (undo ? " undone" : "");
     }
     log("battle: reward level %u EXP %u x%u money %u x%u; members%s", lvl, xp, ke, money, km, m.c_str());
+}
+// Overworld costume (setting field_costume, default 0 = the game's rule; user request 11-24): outside battle a party member
+// wears the PlayerDefaultCostumeTable row costume_default_row picks by story flags (+4: Itsuki 3 / 4 everyday clothes, Tsubasa
+// 0x26 school uniform...); battles use the equipped dress (0x3613c0: its ItemDressTable costume, 1 = the Carnage outfit = no
+// dress). The model loader 0x3cc560 and its reload check 0x407ea4 both read +4 of this row, so the dress goes in there: the
+// model then reloads by itself after a change in the Equip menu. The table is shared: +4 is put back first on every call.
+// Kept as is: no dress (1), the ids 0x3613c0 itself pins to 0x31 (0x3ec / 0x3ed / 0x3f2), members not joined (0x3535f4, as
+// 0x3cb2ac checks), a costume without a skin row (0x350688 null: the loader would read through null).
+HLE_FN(costume_default_row, "costume_default_row") {
+    static std::mutex lock;
+    static std::unordered_map<uint32_t, uint16_t> orig;  // row -> the table's costume
+    const uint32_t chr = c->r[0], row = call_unhooked(c, "costume_default_row", {chr});
+    if (row) {
+        std::lock_guard<std::mutex> l(lock);
+        const uint16_t story = orig.try_emplace(row, ld16(row + 4)).first->second;
+        uint16_t want = story;
+        const Cpu keep = *c;
+        if (getenv("NX_FIELD_COSTUME") && atoi(getenv("NX_FIELD_COSTUME")) != 0 &&
+            !(chr - 0x3ecu < 7 && ((1u << (chr - 0x3ec)) & 0x43)) && gcall(c, 0x3535f4, {chr})) {
+            const uint16_t dress = (uint16_t)gcall(c, 0x3613c0, {chr});
+            if (dress > 1 && dress != story && gcall(c, 0x350688, {chr, dress})) want = dress;
+        }
+        *c = keep;
+        if (ld16(row + 4) != want) {
+            st16(row + 4, want);
+            log("costume: character %u outside battle wears %u (story clothes %u)", chr, want, story);
+        }
+    }
+    c->r[0] = row;
+}
+// Unlock all difficulties (setting all_difficulties, default 1; user request 11-24): system data **0x9ef37c + 0xa6b95 =
+// Lunatic unlocked (set at game clear, 0x269708), + 0xa6b96 = Friendly unlocked (set by the Game Over notice on Easy,
+// 0x465dc0). Their readers set both first: the title menu (mirrors them into flags 0x55 / 0x56 for New Game), the Lua
+// checks, and the Settings page, whose difficulty row (10) also gets the full range Friendly .. Lunatic (the game: Easy ..
+// Hard, and locked at Lunatic once there). The system save keeps the bytes, as the game's own unlocks.
+static bool all_difficulties() { return !getenv("NX_ALL_DIFFICULTIES") || atoi(getenv("NX_ALL_DIFFICULTIES")) != 0; }
+static void unlock_difficulties() {
+    const uint32_t p = ld32(0x9ef37c), g = p ? ld32(p) : 0;
+    if (!g || !all_difficulties()) return;
+    uint8_t* b = (uint8_t*)GPTR(g + 0xa6b95);
+    if (!b[0] || !b[1]) log("difficulty: Friendly and Lunatic unlocked (were %u / %u)", b[1], b[0]), b[0] = b[1] = 1;
+}
+PROBE_FN(title_menu_update, "title_menu_update") { unlock_difficulties(); }
+PROBE_FN(title_menu_return, "title_menu_return") { unlock_difficulties(); }
+PROBE_FN(lua_IsSysDiffFriendlyUnlock, "lua_IsSysDiffFriendlyUnlock") { unlock_difficulties(); }
+PROBE_FN(lua_IsSysDiffLunaticUnlock, "lua_IsSysDiffLunaticUnlock") { unlock_difficulties(); }
+HLE_FN(camp_settings_fill, "camp_settings_fill") {
+    const uint32_t scr = c->r[0];
+    unlock_difficulties();
+    c->r[0] = call_unhooked(c, "camp_settings_fill", {c->r[0], c->r[1], c->r[2], c->r[3]});
+    if (all_difficulties()) st32(scr + 0x118, 1), st32(scr + 0x11c, 0), st32(scr + 0x120, 4);  // row 10: arrows, min, max
 }
 HLE_FN(btl_open_chance, "btl_open_chance") {
     g_autosave_armed = true;

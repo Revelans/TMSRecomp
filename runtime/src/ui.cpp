@@ -213,6 +213,7 @@ static uint64_t control_buttons(uint64_t now) {
                         else if (cmd.rfind("msaa ", 0) == 0) rt::apply_msaa(atoi(cmd.c_str() + 5));
                         else if (cmd == "cover") cover_report();
                         else if (cmd.rfind("speed ", 0) == 0) set_speed(atoi(cmd.c_str() + 6));
+                        else if (cmd.rfind("env ", 0) == 0) { _putenv(cmd.c_str() + 4); log("env %s", cmd.c_str() + 4); }  // env NX_KEY=v: a setting, live
                         else if (cmd.rfind("fps ", 0) == 0) set_fps(atoi(cmd.c_str() + 4));
                         else if (cmd.rfind("verbose ", 0) == 0) g_verbose = atoi(cmd.c_str() + 8);
                         else if (cmd.rfind("flag ", 0) == 0) flag_command(cmd.c_str() + 5);
