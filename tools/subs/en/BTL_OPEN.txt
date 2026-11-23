@@ -1,0 +1,82 @@
+# BTL_OPEN_<key>|English (battle start lines). Lines left out: roars, hisses, laughs and unclear audio.
+0001_em1008|Back off. Don't get in my way.
+0001_em2037|I told you not to come!
+0001_em2306|Let's make it dramatic!
+0001_em2307|Once I kill you all, I'll be the real one!
+0001_em2308|I'll prove that I'm the real one.
+0001_em2309|I am the true Yashiro Tsurugi.
+0001_em2335|Everything is so empty.
+0001_em2337|My blood boils for victory!
+0001_em2338|This body is a shield that protects the people.
+0001_em2339|Now, let's fight!
+0001_em2340|Won't you show me your strength?
+0001_em2341|I'm a man who knows nothing but fighting.
+0001_em2342|Show me your strength.
+0001_em2343|Show me what you're made of.
+0001_em2346|Let's see what you can do!
+0001_em2400|Yashiro Tsurugi! I'll take your Performa too!
+0001_em2401|Feel my lance of resentment!
+0001_em2412|I'll sing with all my grief and resentment.
+0001_pc1001|First strike!
+0001_pc1002|Everyone, it's our chance!
+0001_pc1003|They're wide open!
+0001_pc1006|Everyone, now's our chance!
+0001_pc1007|Oh! It's our chance!
+0001_pc1008|Finish them while they're open!
+0001_pc1009|Let's end this quickly.
+0002_em1008|So you have some skill. But you're no match for me.
+0002_pc1001|Everyone, here's our chance!
+0002_pc1002|Looks like they haven't noticed us yet.
+0002_pc1003|First strike! No hard feelings!
+0002_pc1006|Let's get them while we can!
+0002_pc1007|We can attack now, right?
+0002_pc1008|Let's finish this fast.
+0002_pc1009|Don't let your guard down.
+0003_em1008|It's just how things turned out, but I won't hold back.
+0003_pc1001|Let's press the attack!
+0003_pc1002|Whoa! Everyone, be careful!
+0003_pc1003|A surprise attack!
+0003_pc1006|Hey, isn't that cheating!?
+0003_pc1007|This is bad! Really bad!
+0003_pc1008|How careless of me.
+0003_pc1009|Stay calm. Let's regroup.
+0004_em1008|That's enough. I'll take my leave.
+0004_pc1001|Now's our chance!
+0004_pc1002|That one looks really strong...
+0004_pc1003|Heh, this one looks like a real fight.
+0004_pc1006|What is that? It looks tough!
+0004_pc1007|Th-that looks strong...
+0004_pc1008|This one's no small fry.
+0004_pc1009|That's no ordinary Performa.
+0005_pc1001|Let's finish this in one go!
+0005_pc1002|We can't let it get away!
+0005_pc1003|Oh! A rare enemy!
+0005_pc1006|Oh, lucky!
+0005_pc1007|No! Don't let it escape!
+0005_pc1008|I'll take it down for sure.
+0005_pc1009|What rare Performa.
+0006_pc1001|Ambush successful! Let's go, everyone!
+0006_pc1002_a|Carnage Form!
+0006_pc1002_b|Carnage Form!
+0006_pc1003|Let's wipe 'em out!
+0006_pc1006_a|Carnage Form!
+0006_pc1006_b|Carnage Form!
+0006_pc1008_a|Carnage Form!
+0006_pc1008_b|Carnage Form!
+0006_pc1008_c|Carnage Form!
+0006_pc1009|Let's go, Tharja!
+0007_pc1001|Uh-oh! Watch out!
+0007_pc1003_a|Carnage Form!
+0007_pc1003_b|Carnage Form!
+0007_pc1003_c|Carnage Form!
+0007_pc1007|C-Carnage... Form!
+0007_pc1009_a|Carnage Form!
+0007_pc1009_b|Carnage Form!
+0008_pc1001|Everyone, it's an ambush!
+0009_pc1001|Damn, they got the jump on us.
+0010_pc1001|This one's tough!
+0011_pc1001|Let your guard down and we're done for.
+0012_pc1001|Don't let it get away!
+0013_pc1001|If we beat this one...!
+0014_pc1001_a|Carnage Form!
+0014_pc1001_b|Carnage Form!

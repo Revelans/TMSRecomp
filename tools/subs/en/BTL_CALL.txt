@@ -1,0 +1,51 @@
+# BTL_CALL_<key>|English (thanks for healing / support, Session calls)
+0001_pc1001|Thanks.
+0001_pc1002|Thank you.
+0001_pc1003|Thanks! That helped!
+0001_pc1006|Thanks.
+0001_pc1007|That helped!
+0001_pc1008|I'm grateful.
+0001_pc1009|Thank you.
+0002_pc1001|That helped.
+0002_pc1002|I feel better!
+0002_pc1003|All right! I can still go!
+0002_pc1006|That helped.
+0002_pc1007|Thank you very much!
+0002_pc1008|Sorry for the trouble.
+0002_pc1009|That helped.
+0003_pc1001|Go for it!
+0003_pc1002|Do your best!
+0003_pc1003|You got this, you got this.
+0003_pc1006|I'll learn from this.
+0003_pc1007|Please do your best.
+0003_pc1008|Show me your strength!
+0003_pc1009|Let me see.
+0004_pc1001|Show what your training did!
+0004_pc1002|I'm sure it'll go well!
+0004_pc1003|I'm counting on you.
+0004_pc1006|Can't wait.
+0004_pc1007|Oh, that looks amazing.
+0004_pc1008|Heh, I look forward to it.
+0004_pc1009|Oh, you're doing it?
+0005_pc1001|Ready anytime!
+0005_pc1002|I'm all set!
+0005_pc1003|Session, let's go!
+0005_pc1006|Session's ready!
+0005_pc1007|I'm ready!
+0005_pc1007b|I'm ready!
+0005_pc1008|Over here.
+0005_pc1009|Ready.
+0006_pc1001|I can go!
+0006_pc1002|I'll match you perfectly!
+0006_pc1003|I'll link it for sure.
+0006_pc1006|Over here!
+0006_pc1007b|Over here!
+0006_pc1008|We'll attack with a Session.
+0006_pc1009|Link it.
+0007_pc1001|All or nothing...
+0007_pc1002|I hope I don't mess up.
+0007_pc1003|Can we do a Session?
+0007_pc1006|Shall we give it a shot?
+0007_pc1007|I-I'll do my best, but...
+0007_pc1008|Shall I bet on it?
+0008_pc1001|This might be tough.

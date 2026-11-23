@@ -1,0 +1,83 @@
+# BTL_REACT_<key>|English (hit, guard, dodge and knocked-out lines; boss defeat lines)
+0001_pc1007|Ow!
+0006_pc1002|Ugh... it hurts...
+0007_pc1001|An attack like that!?
+0007_pc1002|I can take this!
+0007_pc1003|That didn't work.
+0007_pc1006|This much is nothing!
+0007_pc1007|Draug!
+0007_pc1008|Is that all?
+0007_pc1009|Is that all!
+0008_pc1001|That's nothing.
+0008_pc1002|That didn't work!
+0008_pc1003|Easy, easy.
+0008_pc1006|Come back when you're ready!
+0008_pc1007|Oh? I seem to be fine.
+0008_pc1008|Pointless.
+0008_pc1009|This is fine.
+0009_em2307|That hurt, damn it!
+0009_em2338|Not yet!
+0009_em2342|Not bad.
+0009_pc1001|It's useless!
+0009_pc1002|Oh, looks like I blocked it!
+0009_pc1003|Cut it out!
+0009_pc1007|See!
+0009_pc1008|Far too slow.
+0009_pc1009|Useless.
+0010_em2302|That hurts, doesn't it?
+0010_em2307|That doesn't work on me!
+0010_em2309|Useless.
+0010_em2341|No!
+0010_em2400|Too slow!
+0010_em2401|Ugh... forgive me... Cain...
+0010_pc1002|Phew, close call!
+0010_pc1003|I see through you!
+0010_pc1006|You look like you're standing still.
+0010_pc1007|I dodged it!
+0010_pc1008|I see through it.
+0010_pc1009|You won't hit me.
+0011_em2307|I wanted to be the real one...
+0011_em2308|I'm... the fake?
+0011_em2309|So I... was the fake...
+0011_em2311|Powerless one...
+0011_em2334|Pathetic.
+0011_em2334_a|Pathetic.
+0011_em2334_b|Pathetic.
+0011_em2335|Is this fate as well?
+0011_em2338|Focus on defense!
+0011_em2339|Useless.
+0011_em2340|That doesn't work.
+0011_em2343|That doesn't work!
+0011_em2346|Your attacks have an off flavor!
+0011_em2412|No... not me!
+0011_pc1001|Good grief.
+0011_pc1002|I did it!
+0011_pc1003|Sorry... this is as far as I go...
+0011_pc1006|Sorry... everyone...
+0011_pc1007|I... can't go on anymore...
+0011_pc1008|Impossible... me...?
+0011_pc1009|An attack like that...
+0012_em2302|You won't hit me.
+0012_em2306|Ow!
+0012_em2338|Next time, let us compete at eating!
+0012_em2339|The flow of time really is strange.
+0012_em2340|Did I manage to act with dignity?
+0012_em2341|I leave the princess to you.
+0012_em2342|I can entrust it to you.
+0012_em2343|Splendid.
+0012_em2346|That was truly delicious.
+0012_pc1001|Is this... the end...?
+0012_pc1002|Everyone... the rest is...
+0012_pc1003|Seriously?
+0012_pc1006|No... me...?
+0012_pc1007|I'm sorry.
+0012_pc1008|Tch, in a place like this...
+0012_pc1009|I'm sorry.
+0013_em2304|Ugh... this is nothing...
+0013_em2306|No naughtiness!
+0013_pc1001|Sorry, everyone.
+0013_pc1002|I'm sorry... I can't...
+0013_pc1009|Looks like this is it.
+0014_em2304|Did you think that would work?
+0036_em2301|Useless!
+0007_em2049|Adieu!

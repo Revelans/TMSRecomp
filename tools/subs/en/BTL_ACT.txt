@@ -1,0 +1,420 @@
+# BTL_ACT_<key>|English (lines on a command: attack, skill, item, escape, ...). Grunts and shouts without words are left out.
+0005_pc1001|Take this!
+0006_pc1001|With this!
+0008_pc1001|This should do it!
+0009_pc1001|Thunder!
+0010_pc1001|Feel the shock!
+0011_pc1001|Strike, lightning!
+0012_pc1001|Fall!
+0013_pc1001|Roar, thunder!
+0014_pc1001|Blade of light!
+0015_pc1001|I'll cut you down!
+0016_pc1001|At this range...!
+0017_pc1001|Just like Chrom!
+0018_pc1001|Too slow!
+0019_pc1001|Learned from Chrom himself!
+0020_pc1001|I see through you!
+0021_pc1001|Vowing to come back victorious...
+0022_pc1001|...bravely!
+0023_pc1001|Not a single one of us...
+0024_pc1001|...will I let die!
+0026_pc1001|Give me strength...
+0028_pc1001|Huh?
+0029_pc1001|Let's get out of here.
+0030_pc1001|Let's retreat.
+0031_pc1001|Let's fall back for now!
+0032_pc1001|They caught up!
+0033_pc1001|They cut us off!
+0034_pc1001|This is it!
+0035_pc1001|Here!
+0036_pc1001|That felt solid.
+0037_pc1001|All right, got it.
+MULTI_0001_pc1001|Tsubasa, let's sync up!
+MULTI_0003_pc1001|Fly, Tsubasa!
+MULTI_0045_pc1001|Chrom!
+MULTI_0048_pc1001|Counting on you, Chrom!
+MULTI_0050_pc1001|Chrom!
+0001_pc1006|Hit!
+0004_mr1052|With this!
+0004_pc1006|Hit them!
+0005_pc1002|I'll land this one!
+0005_pc1006|Take this!
+0006_em1008|I'll scatter you with one blow!
+0006_mr1053|Heave!
+0006_pc1002|This should do it!
+0006_pc1003|Here!
+0006_pc1006|Don't dodge!
+0006_pc1007|Heave-ho!
+0006_pc1008|With this.
+0007_em1008|How about this?
+0007_pc1002|I'm not holding back!
+0007_pc1006|I'll shoot right through you!
+0007_pc1007|Hup!
+0007_pc1009|It's over!
+0008_pc1003|This'll finish it!
+0008_pc1007|Kaboom!
+0008_pc1008|Tough luck!
+0008_pc1009|And... boom!
+0009_pc1002|Fly away!
+0009_pc1006|Sure kill, sure hit! Go!
+0009_pc1007|It's going to be cold!
+0009_pc1009|It's going to be hot.
+0010_pc1002|Blow away!
+0010_pc1003|Take this!
+0010_pc1006|I won't miss!
+0010_pc1007|Go up in flames!
+0010_pc1008|Take this!
+0010_pc1009|Burn!
+0011_pc1002|I'll mow them all down!
+0011_pc1003|Pierce!
+0011_pc1006|My arrows are fast.
+0011_pc1007|It's going to be chilly!
+0011_pc1008|Don't think you can dodge this!
+0011_pc1009|Burn it all to ashes!
+0012_pc1002|Tear them apart, gale!
+0012_pc1003|Got you!
+0012_pc1006|Virion! Don't you dare miss!
+0012_pc1007|Here I go, one after another!
+0012_pc1008|I'll show you my swordsmanship.
+0012_pc1009|Freeze.
+0013_pc1002|I'll run you through.
+0013_pc1003|I trained with Cain for this!
+0013_pc1006|Everything I have, in this one shot!
+0013_pc1007|Please freeze!
+0014_pc1002_a|Let me show you my lance work!
+0014_pc1002_b|Please watch my lance work!
+0014_pc1003_a|How's my lance?
+0014_pc1003_b|How's my lance!?
+0014_pc1006|Blow away!
+0014_pc1008|Too slow!
+0015_pc1002|You can't dodge this!
+0015_pc1003|You'll get burned.
+0015_pc1008|You're in front of me now.
+0015_pc1009|This is going to hurt.
+0016_pc1002|Just like Caeda taught me!
+0016_pc1003|I'll burn it all!
+0016_pc1006|Perfect!
+0016_pc1007|This should work!
+0016_pc1008|I'll cut you to pieces.
+0016_pc1009|Surge!
+0017_pc1002|You're not getting away!
+0017_pc1003|Burn, my flower!
+0017_pc1006|Storm!
+0017_pc1007|Right down the middle!
+0017_pc1009|Rage!
+0018_pc1003|Go to sleep.
+0018_pc1006|Okay, nighty-night.
+0018_pc1007|This is going to hurt!
+0018_pc1008|Wide open!
+0018_pc1009|I'm counting on you, Tharja!
+0019_pc1002|Let Tsubasa make your heart race!
+0019_pc1003|How does it feel to be poisoned?
+0019_pc1006|This one creeps up on you.
+0019_pc1007|Here goes, big time!
+0019_pc1008|Got you!
+0019_pc1009|Whoever you are...
+0020_pc1002|Now you can't do anything, right?
+0020_pc1003|I'll stop you!
+0020_pc1006|This one'll work!
+0020_pc1007|Crying won't save you!
+0020_pc1008|I'll end this!
+0020_pc1009|Can you endure this?
+0020_pc1009_b_a|Vanish!
+0020_pc1009_b_b|Vanish!
+0020_pc1009_c_a|Here comes a big one!
+0020_pc1009_c_b|Here comes a big one!
+0021_pc1002|L-let's do our best together!
+0021_pc1009|All right, everyone...
+0022_pc1002|Do your best with Tsubasa!
+0022_pc1002_01|With Tsubasa...
+0022_pc1002_02|...do your best!
+0022_pc1008|A carpet bombing of flavor!
+0022_pc1008_b|A carpet bombing of flavor!
+0022_pc1009|I'm going all out from the start.
+0023_pc1002|Nope.
+0023_pc1003|Let's go!
+0023_pc1006|No good?
+0023_pc1009|Follow me.
+0024_pc1008|A final destination of flavor!
+0024_pc1008_b|A final destination of flavor!
+0024_pc1009|Now then...
+0025_pc1002|Oh, delicious.
+0025_pc1006_a|Your life is mine.
+0025_pc1006_b|Your life is mine.
+0025_pc1008|Farewell.
+0025_pc1009|Today's "cute" is...
+0026_pc1002|Amrita Shower! Are you crazy about Tsubasa?
+0026_pc1008|Sorry.
+0026_pc1009|What could it be, meow?
+0027_pc1008_02|Come on.
+0027_pc1009|Absolute...
+0028_pc1007|Over here!
+0028_pc1009|Cute!
+0029_pc1003|Blaze up!
+0029_pc1006|Geez!
+0029_pc1007|Um, I'm Mamori Minamoto.
+0029_pc1008|Come. I'll examine you personally.
+0029_pc1009|I want everyone to hear this.
+0030_pc1007|W-well then, allow me to sing.
+0030_pc1008|The patient's body couldn't take it.
+0030_pc1009|This is me too.
+0031_pc1003|I'm fired up!
+0031_pc1006|You just don't get it!
+0031_pc1007|Hiyah!
+0031_pc1009|All right, everyone...
+0032_pc1003|Damn it!
+0032_pc1006|Darkness, return to the darkness!
+0032_pc1007|Delicious!
+0032_pc1009|Let's keep getting more and more hyped!
+0033_pc1002|Amrita Shower! Crazy about Tsubasa!
+0033_pc1003|Ugh, they're fast!
+0033_pc1007|Enjoy your meal!
+0033_pc1008|I wasn't careful enough.
+0033_pc1009|Now then!
+0034_pc1002|Please listen! My song!
+0034_pc1003|I'll leave the rest to you.
+0034_pc1007|This time...
+0034_pc1008|Always scurrying around.
+0034_pc1009|Today's "cute" is...
+0035_pc1002|I'll sing from my heart.
+0035_pc1003|Knowing when to back off matters too.
+0035_pc1006|Focus.
+0035_pc1007|I'm going to try making shaved ice!
+0035_pc1008|I'll leave the cleanup to you.
+0035_pc1009|What could it be, meow?
+0036_pc1002|I'll sing from my heart.
+0036_pc1003|The star of the show has arrived!
+0036_pc1006|I missed!
+0036_pc1009|Absolute!
+0037_pc1002|To connect everyone's feelings!
+0037_pc1003|Touma Akagi, here I am!
+0037_pc1007|Ta-da!
+0037_pc1008|My turn came far too late.
+0037_pc1009|Cute!
+0038_pc1002|Thank you so much, everyone!
+0038_pc1003|Retreat, retreat!
+0038_pc1006|The rest is up to you!
+0038_pc1009|I want everyone to hear this.
+0039_pc1003|I'm outta here!
+0039_pc1008|We have no choice but to pull back.
+0039_pc1009|This is Kiria's new style!
+0040_pc1002|Calm down and focus.
+0040_pc1003|Guess I've got no choice.
+0040_pc1006|My turn!
+0040_pc1007|I'm Mamori Minamoto!
+0040_pc1008|Retreating is part of strategy too.
+0041_pc1002|They dodged it.
+0041_pc1003|So you won't let us go, huh?
+0041_pc1006|Let's finish this Hollywood-style!
+0041_pc1007|Well then, please listen!
+0041_pc1008|What?
+0041_pc1009|Here comes a big one.
+0042_pc1002|Huh? What?
+0042_pc1003|We can't get away!
+0042_pc1006|It's frustrating, but I'm running!
+0042_pc1007|Thank you very much!
+0042_pc1008|Tch, persistent!
+0042_pc1009|I was too careless.
+0043_pc1002|The rest is up to you.
+0043_pc1003|Found a weakness!
+0043_pc1006|Everyone, let's fall back!
+0043_pc1007|Here I go!
+0043_pc1008|There!
+0043_pc1009|Not bad.
+0044_pc1002|But I can still fight...
+0044_pc1003|That one hit!
+0044_pc1006|They cut us off!
+0044_pc1007|I'll make it go boom!
+0044_pc1008|Did you think I wouldn't see through it?
+0044_pc1009|I'll leave the rest to you.
+0045_pc1002|My turn!
+0045_pc1003|Critical!
+0045_pc1006|Ah, too fast!
+0045_pc1007|Huh?
+0045_pc1008|Just as planned.
+0045_pc1009|The crowd's warmed up.
+0046_pc1003|Easy as that.
+0046_pc1006|Just as planned.
+0046_pc1007|They dodged it.
+0046_pc1008|Child's play.
+0046_pc1009|Leave it to me.
+0047_pc1002|We have to run.
+0047_pc1003|Justice is served!
+0047_pc1006|Looks like a perfect hit.
+0047_pc1007|Please!
+0047_pc1008|Is that all?
+0047_pc1009|I'll liven things up for you.
+0048_pc1002|Let's run!
+0048_pc1006|Bullseye!
+0048_pc1007|Break time!
+0048_pc1009|Looks like we'd better fall back.
+0049_pc1002|Let's get away from here, now!
+0049_pc1006|One down!
+0049_pc1007|I'll do my best!
+0049_pc1009|Don't overdo it.
+0050_pc1002|They caught up to us?
+0050_pc1006|How's that!
+0050_pc1007|Leave it to me!
+0050_pc1009|Looks like they saw it coming.
+0051_pc1002|Oh, come on, why?
+0051_pc1007|L-let's run!
+0052_pc1002|I'm not good at this...
+0052_pc1007|N-n-no way!
+0052_pc1009|Yes, this is good.
+0053_pc1002|Just as I thought.
+0053_pc1007|I messed up!
+0053_pc1009|This is it!
+0054_pc1002_a|No way! It worked?
+0054_pc1002_b|Nailed it!
+0054_pc1007|We can't escape!
+0054_pc1009|I'm getting fired up!
+0055_pc1002|Yay! I beat it!
+0055_pc1007|That really worked!
+0055_pc1009|That's that.
+0056_pc1002|Phew, thank goodness.
+0056_pc1007|That looked painful!
+0056_pc1009|No challenge at all.
+0056_pc1009_b|D-do your best... with Kiria!
+0056_pc1009_c|D-d-d-do your best... w-with Kiria!
+0056_pc1009_d|Do your best with Kiria!
+0056_pc1009_d01|With Kiria...
+0056_pc1009_d02|...do your best!
+0057_pc1007|That hit a good spot!
+0058_pc1007|I did it!
+0059_pc1007|Please support Mamorin!
+MULTI_0004_pc1002_a|Here I go!
+MULTI_0004_pc1002_b|Here I go!
+MULTI_0005_pc1002|Let's show them, Kiria!
+MULTI_0006_pc1009|Yes, the best performance of the two of us.
+MULTI_0007_pc1002|That's Kiria for you!
+MULTI_0008_pc1009|It's thanks to you, Tsubasa.
+MULTI_0009_pc1006|Let's go, Tsubasa!
+MULTI_0010_pc1002|Yeah! Elly, let's do it together!
+MULTI_0011_pc1006|Not bad.
+MULTI_0012_pc1002|You too, Elly!
+MULTI_0013_pc1003|Elly, sync up with me!
+MULTI_0014_pc1006|You can keep up, right?
+MULTI_0015_pc1003|Don't get in my way!
+MULTI_0016_pc1006|You're the one in the way!
+MULTI_0018_pc1006|Geez...
+MULTI_0020_pc1006|Sorry.
+MULTI_0022_pc1008|As a warrior, I will defeat you.
+MULTI_0023_pc1008|That's the man I acknowledged.
+MULTI_0024_pc1003|You too.
+MULTI_0025_pc1008|Let this moment last a little longer.
+MULTI_0028_pc1008|Can you keep up?
+MULTI_0029_pc1009|Who do you think you're talking to?
+MULTI_0030_pc1008|A foolish question.
+MULTI_0031_pc1009|So that's how it is.
+MULTI_0031_pc1009_a|So that's how it is.
+MULTI_0031_pc1009_b|So that's how it is!
+MULTI_0032_pc1007|There! Go fetch!
+MULTI_0033_pc1005|Woof!
+MULTI_0035_pc1007|Good job!
+MULTI_0037_pc1007|Let's go, Tiki!
+MULTI_0038_pc1010|Let's go, Mamori!
+MULTI_0039_pc1007|Ready, set...
+MULTI_0040_pc1010|Ready, set...
+MULTI_0041_pc1007|Take this!
+MULTI_0042_pc1010|Take this!
+MULTI_0043_pc1007|We did it, Tiki!
+MULTI_0044_pc1010|A huge success, Mamori!
+MULTI_0046_mr1051|Unleash!
+MULTI_0049_mr1051|I'm going all out!
+MULTI_0051_mr1051|I won't lose!
+MULTI_0052_pc1002|Please, Caeda!
+MULTI_0053_mr1052|Leave it to me!
+MULTI_0054_pc1002|Please! Caeda!
+MULTI_0055_mr1052|Leave it to me!
+MULTI_0058_pc1003|I'm counting on you, Cain!
+MULTI_0059_mr1053|I'll wipe them all out!
+MULTI_0061_pc1003|Floor it, partner!
+MULTI_0062_mr1053|Leave it to me!
+MULTI_0063_mr1053|This speed... beyond the limit!
+MULTI_0065_mr1054|I'll play with you.
+MULTI_0069_pc1006|Virion, make it Hollywood!
+MULTI_0070_mr1055|Make it noble, Elly.
+MULTI_0071_mr1055|Allow me to shine!
+MULTI_0072_mr1055|An elegant strike!
+MULTI_0073_pc1007|Draug, please do your best!
+MULTI_0074_mr1056|Leave it to me, Master!
+MULTI_0076_pc1007|Okay! Draug's back is so big!
+MULTI_0078_em1057|Leave it to me.
+MULTI_0079_pc1008|Excellent.
+MULTI_0080_pc1008|Navarre.
+MULTI_0081_em1057|Understood.
+MULTI_0082_pc1008|Fantastic!
+0001_em2311|Die!
+0002_em2311|Disappear!
+0002_em2340|There!
+0003_em2304|Here I come!
+0003_em2311|This is the power of darkness!
+0003_em2333|Here I go!
+0004_em2302|Burn fiercely for me!
+0004_em2306|Isn't it lovely?
+0004_em2310|Learn your place!
+0004_em2333|Take this!
+0004_em2337|Here I go!
+0004_em2338|How about this!
+0004_em2339|Light!
+0004_em2340|Here I go.
+0004_em2342|Here I come.
+0004_em2400|You're an eyesore!
+0004_em2401|Take this!
+0004_em2412|Take this!
+0005_em2037|This'll hurt!
+0005_em2302|This one's amazing.
+0005_em2306|Like a dream!
+0005_em2307|There!
+0005_em2309|Get lost!
+0005_em2334|Shatter!
+0005_em2337|Take this!
+0005_em2338|Show me you can endure it!
+0005_em2340|Brace yourself.
+0005_em2343|Take this!
+0005_em2346|Savor it!
+0005_em2400|This is the end!
+0005_em2412|Die!
+0006_em2304|This will finish it!
+0006_em2307|Cheer for me more!
+0006_em2308|Get lost.
+0006_em2309|I'm the real one!
+0006_em2310|Take this!
+0006_em2335|I'll take you all at once!
+0006_em2339|Show me the courage to face the darkness!
+0006_em2340|Try taking my arrow.
+0006_em2341|I'll show you my power.
+0006_em2342|Show me you can endure it.
+0006_em2343|Take this blow!
+0006_em2400|I'll settle this.
+0006_em2401|Come forth, my kin!
+0006_em2412|Drown!
+0007_em2301|Here I come! Here I come!
+0007_em2302|Silly thing.
+0007_em2304|Harden! Harden! More! More!
+0007_em2306|More! It needs more drama!
+0007_em2307|Aim for top idol!
+0007_em2308|I am the real Kiria.
+0007_em2309|I'll show you real power!
+0007_em2311|Burn to cinders!
+0007_em2333|I'll crush you!
+0007_em2334|Just die!
+0007_em2337|Take this!
+0007_em2338|I'm going all out!
+0007_em2339|This is my magic.
+0007_em2340|I won't hold back.
+0007_em2341|This is no joke.
+0007_em2342|This is my power!
+0007_em2346|Who will take this technique?
+0007_em2401|Can you withstand this blow!?
+0008_em2301|The moment you've been waiting for!
+0008_em2302|You're so annoying!
+0008_em2304|Can you withstand this!?
+0009_em2306|This is how you act!
+0009_np1101|The real one is...
+0010_np1101|...who could it be?
+0011_em2301|Try and find me!
+0011_em2303|Scum!
+0012_em2301|And that's a penalty!
+0012_em2303|You're all my shields!
+0013_em2303|Hey, come out!

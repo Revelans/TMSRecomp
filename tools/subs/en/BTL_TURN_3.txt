@@ -1,0 +1,216 @@
+# more BTL_TURN_<key>|English: Mamori, Yashiro, Kiria
+07_0001_pc1007|I'll do my best!
+07_0002_pc1007|Wh-whoa, it's heavy!
+07_0003_pc1007|Nice to work with you!
+07_0004_pc1007|I'm going all out!
+07_0005_pc1007|I-I just have to hit them, right?
+07_0006_pc1007|Leave it to me!
+07_0007_pc1007|I've never seen this one before! Let's be careful!
+07_0008_pc1007|I'll finish before I get dirty.
+07_0009_pc1007|Heart-warming switch, on!
+07_0010_pc1007|In a place like this... th-this is embarrassing.
+07_0011_pc1007|This looks like it'll be okay!
+07_0012_pc1007|Th-that looks strong.
+07_0013_pc1007|So many of them!
+07_0014_pc1007|I'm going to attack!
+07_0015_pc1007|I won't lose!
+07_0016_pc1007|Mom, I'm saving up!
+07_0017_mr1056|I shall protect you, Master!
+07_0018_pc1007|Yes! Please do!
+07_0019_pc1007|I want the strength to protect everyone!
+07_0020_mr1056|As my Master wishes.
+07_0021_pc1007|This is where we give it our all, Draug!
+07_0022_mr1056|Let us do our utmost, Master!
+07_0023_mr1056|Sir Lorenz...
+07_0024_pc1007|We have to save him!
+07_0025_pc1007|Here I go!
+07_0027_pc1007|It's me, right?
+07_0028_pc1007|Hup!
+07_0030_pc1007|I'm tired.
+07_0031_pc1007|Fighting is hard.
+07_0032_pc1007|Please be defeated!
+07_0033_pc1007|I'll finish it!
+07_0034_pc1007|I'll protect everyone!
+07_0035_pc1007|Mamori Minamoto will sing with all her heart!
+07_0036_pc1007|Here goes Mamorin!
+07_0037_pc1007|P-please don't look too much...
+07_0038_pc1007|Th-this much is nothing!
+07_0039_pc1007|I'm dizzy...
+07_0040_pc1007|Ugh... phew... I'm not ready to go global yet...
+07_0041_pc1007|I'll microwave you all!
+07_0042_pc1007|I'm not black-hearted!
+07_0043_pc1007|I love you all!
+07_0044_pc1007|Huh? Draug?
+07_0045_pc1007|Last one! Let's do our best!
+07_0046_pc1007|Amazing!
+07_0047_pc1007|I'll do my best to keep up!
+07_0048_pc1007|D-don't mind!
+07_0049_pc1007|Let's do better next time!
+07_0050_mr1056|Let us not let our guard down.
+07_0052_mr1056|Your concentration is slipping.
+07_0053_pc1007|I-I'm fine!
+07_0054_pc1007|We go on one, two, three!
+07_0055_mr1056|Understood. One, two, three.
+07_0056_mr1056|Is it not heavy?
+07_0057_pc1007|I'm fine.
+07_0058_mr1056|Watch your opponent closely.
+07_0060_mr1056|To think you've grown this much.
+07_0061_pc1007|It's all thanks to you, Draug.
+07_0062_pc1007|Draug, you look so cool!
+07_0063_mr1056|You flatter me.
+07_0064_pc1007|Is the red... paint?
+07_0065_mr1056|It is not!
+07_0066_pc1007|I think I might be done for...
+07_0067_mr1056|Someone, save Mamori!
+07_0068_pc1007|Draug! I'll give you a handkerchief!
+07_0070_pc1007|Draug, I hate you!
+07_0071_mr1056|I like you!
+07_0072_pc1007|Draug's heart-warming switch, on!
+07_0073_mr1056|Master?
+07_0074_mr1056|Ready to charge.
+08_0001_pc1008|Shall we go?
+08_0002_pc1008|My turn.
+08_0003_pc1008|I'll scatter them.
+08_0004_pc1008|Well then.
+08_0005_pc1008|Don't get in my way too much.
+08_0006_pc1008|Leave this to me.
+08_0007_pc1008|First time seeing this one. Be careful.
+08_0008_pc1008|I'll show you the finest performance.
+08_0009_pc1008|Hmph. Light on my feet. Not bad.
+08_0010_pc1008|Time for a fun operation.
+08_0011_pc1008|Do you want to die that badly?
+08_0012_pc1008|This one looks worth defeating.
+08_0013_pc1008|They've swarmed us. What an eyesore.
+08_0014_pc1008|Crush them while we can!
+08_0015_pc1008|Are you prepared?
+08_0016_pc1008|You won't escape.
+08_0018_pc1008|I know.
+08_0019_em1057|Any oversights?
+08_0020_pc1008|A foolish question. Let's go!
+08_0021_em1057|This is the last one.
+08_0022_pc1008|We go together, Navarre.
+08_0023_em1057|To think it would copy your form.
+08_0024_pc1008|I'll teach you what Yashiro Tsurugi is.
+08_0025_em1057|That performer's radiance...
+08_0026_pc1008|Whatever it is, I'll cut it down.
+08_0027_pc1008|I won't hold back.
+08_0028_pc1008|I'll finish it next.
+08_0029_pc1008|The warm-up is over.
+08_0031_pc1008|How shall I finish this?
+08_0032_pc1008|I can't be bothered with this.
+08_0033_pc1008|Don't trouble me any further.
+08_0034_pc1008|Don't push yourself. Leave it to me.
+08_0035_pc1008|So this is what pushing each other means.
+08_0036_pc1008|You think you can beat us?
+08_0037_pc1008|Enjoy the next song to the fullest!
+08_0038_pc1008|Tch, I forgot my sunscreen.
+08_0039_pc1008|Now, where is my next patient?
+08_0040_pc1008|Tch, in a place like this...
+08_0041_pc1008|Poison? Not good.
+08_0042_pc1008|Hmm, don't take my nightcap.
+08_0044_pc1008|Who is Yashiro Tsurugi!?
+08_0045_pc1008|As expected, I am perfect.
+08_0046_pc1008|Navarre, what happened?
+08_0047_pc1008|Only that one is left.
+08_0048_pc1008|Well done.
+08_0049_pc1008|Impressive.
+08_0050_pc1008|Make sure you finish it next time.
+08_0051_pc1008|We're mid-battle. Stay focused!
+08_0052_em1057|Observe the enemy carefully.
+08_0053_pc1008|I know.
+08_0054_em1057|Now, how will you fight?
+08_0055_pc1008|Don't worry, I have a plan.
+08_0056_pc1008|Time to finish this.
+08_0057_em1057|That's the idea.
+08_0058_pc1008|You helped me back there.
+08_0059_em1057|Hmph. No thanks needed.
+08_0060_pc1008|Fighting alone is more efficient.
+08_0061_em1057|Get used to it. It's for your own good.
+08_0062_pc1008|Having allies isn't so bad.
+08_0063_em1057_a|You've changed too.
+08_0063_em1057_b|You've changed too.
+08_0064_pc1008|You look like a demon god. I'm counting on you.
+08_0065_em1057|Yes, leave it to me.
+08_0066_pc1008|What is a hero?
+08_0067_em1057|Who knows. I'm not interested.
+08_0068_em1057|Yashiro!
+08_0069_pc1008|D-don't fuss. It's nothing.
+08_0070_pc1008|Navarre! Isn't lunch ready yet!?
+08_0071_em1057|Eat on your own, then.
+08_0073_em1057|You seem to be having fun.
+08_0074_pc1008|You too, be entranced by me.
+08_0075_em1057|Shut up.
+08_0076_em1057|I'm ready anytime. The call is yours.
+08_0077_pc1008|I'll make full use of that power.
+09_0001_pc1009|Let's go.
+09_0002_pc1009|Let's scatter them.
+09_0003_pc1009|You want to hear my song?
+09_0004_pc1009|It's showtime.
+09_0005_pc1009|Leave it to me.
+09_0006_pc1009|I'll make a path for you.
+09_0007_pc1009|Was there an enemy like this?
+09_0008_pc1009|I'll show you Kiria.
+09_0009_pc1009|Absolutely cute.
+09_0010_pc1009|I'm not sure about fighting dressed like this.
+09_0011_pc1009|A waste of time.
+09_0012_pc1009|A strong enemy. Be careful.
+09_0013_pc1009|They're swarming.
+09_0015_pc1009|We'll win.
+09_0016_pc1009|I'll put it toward the live show.
+09_0016_pc1009_b|Not that there's anything I want...
+09_0016_pc1009_c|A treat for the staff, then.
+09_0017_pc1009|Tharja, are you ready?
+09_0018_mr1054|If it's for curses, I'm all set.
+09_0019_mr1054|There are a lot of things I want to try.
+09_0020_pc1009|Ugh, fine, I get it.
+09_0022_mr1054|Let's go, and don't hold anything back.
+09_0023_mr1054|Let's crush them, Kiria.
+09_0024_pc1009|Feel the weight of Kiria!
+09_0024_pc1009_b|I won't leave a single piece.
+09_0025_pc1009|I'll learn from this battle.
+09_0027_pc1009|Not yet.
+09_0029_pc1009|Well then.
+09_0030_pc1009|A good phrase just came to me.
+09_0031_pc1009|We're running behind schedule.
+09_0032_pc1009|Still not enough.
+09_0033_pc1009|I can't deny I'm not strong enough.
+09_0034_pc1009|I won't lose to anyone anymore!
+09_0035_pc1009|Come at me!
+09_0036_pc1009|Leave it to me.
+09_0037_pc1009|Everyone's voices give me strength.
+09_0038_pc1009|Things that aren't cute must go extinct, meow!
+09_0039_pc1009|I can't get used to this.
+09_0040_pc1009|I can't afford to fall.
+09_0042_pc1009|Oh, cute...
+09_0043_pc1009|M-my head is spinning...
+09_0045_pc1009|Cute is justice!
+09_0046_pc1009|Tharja?
+09_0047_pc1009|Last one! Let's go!
+09_0048_pc1009|You've grown.
+09_0049_pc1009|I'll follow!
+09_0050_pc1009|Next time, shake it off.
+09_0051_pc1009|Are you okay? I'll make up for it.
+09_0052_mr1054|Just a little longer until the curse takes effect.
+09_0053_pc1009|I'll probably have beaten it by then.
+09_0054_pc1009|I'm going to be late for my next job.
+09_0055_mr1054|I'll handle it with a curse.
+09_0057_pc1009|Th-Tharja?
+09_0058_mr1054|Worn out already?
+09_0059_pc1009|I can still keep going.
+09_0060_mr1054|Nothing but unreliable kids.
+09_0061_pc1009|That's why I'm here.
+09_0062_mr1054|Kiria.
+09_0063_pc1009|Yes, I know.
+09_0065_pc1009|It suits you, of course.
+09_0066_pc1009|Isn't there a mascot?
+09_0067_mr1054|Kiria is one.
+09_0068_mr1054|You look like you're about to die.
+09_0069_pc1009|Not yet.
+09_0070_pc1009|Why won't the lyrics come to me!?
+09_0071_mr1054|Maybe it's your everyday behavior?
+09_0072_pc1009|Give me cute things!
+09_0073_mr1054|What are you doing?
+09_0074_pc1009|I love you all.
+09_0075_mr1054|Heh, I'd love to show this to someone later.
+09_0076_mr1054|The power of my curses has built up nicely.
+09_0077_pc1009|Isn't there another way to say that?

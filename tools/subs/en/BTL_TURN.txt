@@ -1,0 +1,226 @@
+# BTL_TURN_<key>|English (turn start lines). *_mix = party member + Mirage in one clip: "Mirage line // party line",
+# or ">party line // Mirage line" when the party member speaks first (build.py sets both speakers).
+01_0001_pc1001|Let's go!
+01_0002_pc1001|Let's stay calm.
+01_0003_pc1001|Let's stay sharp.
+01_0004_pc1001|We can't let our guard down.
+01_0005_pc1001|First...
+01_0006_pc1001|Can I really do this!?
+01_0007_pc1001|I'm not confident, but...
+01_0008_pc1001|I'll carve out my own destiny!
+01_0009_pc1001|Never seen this one before. Let's be careful.
+01_0010_pc1001|Isn't this a little too defenseless?
+01_0011_pc1001|Hero-King Marth, give me strength!
+01_0012_pc1001|This'll be easy.
+01_0013_pc1001|This one's strong!
+01_0014_pc1001|There are a lot of them, but...!
+01_0015_pc1001|Here's our chance!
+01_0016_pc1001|We absolutely can't lose!
+01_0017_pc1001|All right, time to save up!
+01_0018_mr1051|Let's do this, Itsuki!
+01_0019_pc1001_mix|Let's do this, Itsuki! // Yeah!
+01_0020_pc1001|The battle's on, Chrom!
+01_0020_pc1001_mix|>The battle's on, Chrom! // Understood!
+01_0021_mr1051|Understood.
+01_0022_mr1051|Let's show them our strength!
+01_0023_pc1001_mix|Let's show them our strength! // Yeah!
+01_0024_pc1001|Chrom, this one's the last!
+01_0024_pc1001_mix|>Chrom, this one's the last! // Let's go, my friend Itsuki!
+01_0025_mr1051|Let's go, my friend Itsuki!
+01_0026_mr1051|Tsubasa is trying too hard.
+01_0027_pc1001|Yeah, but I'll back her up.
+01_0027_pc1001_mix|Tsubasa is trying too hard. // Yeah, but I'll back her up.
+01_0028_pc1001|I'll stop this no matter what! Let's go, Chrom!
+01_0028_pc1001_mix|>I'll stop this no matter what! Let's go, Chrom! // Yes, we'll stop it for sure!
+01_0029_mr1051|Yes, we'll stop it for sure!
+01_0030_pc1001|Not yet!
+01_0031_pc1001|What should I do?
+01_0033_pc1001|Now then.
+01_0034_pc1001|Next...
+01_0035_pc1001|My turn?
+01_0036_pc1001|It's still standing?
+01_0037_pc1001|I have to beat it, fast!
+01_0038_pc1001|What do I do...
+01_0039_pc1001|Everyone, are you okay!?
+01_0040_pc1001|Let's finish it here!
+01_0041_pc1001|Leave it to me.
+01_0042_pc1001|Achoo!
+01_0043_pc1001|I can't fight pathetically looking like this!
+01_0044_pc1001|I can't fall yet!
+01_0045_pc1001|This is getting rough.
+01_0049_pc1001|Don't say I don't stand out!
+01_0052_pc1001|Chrom! Damn!
+01_0053_pc1001|That one's the last!
+01_0054_pc1001|I can't fall behind either.
+01_0055_pc1001|Nice!
+01_0056_pc1001|It's fine! There's always next time!
+01_0057_pc1001|Let's shake it off.
+01_0058_mr1051|Watch the enemy's movements closely.
+01_0059_pc1001|Got it.
+01_0059_pc1001_mix|Watch the enemy's movements closely. // Got it.
+01_0060_mr1051|I trust your judgment.
+01_0061_pc1001|I'll try!
+01_0061_pc1001_mix|I trust your judgment. // I'll try!
+01_0062_pc1001|Chrom, can you still go on?
+01_0062_pc1001_mix|>Chrom, can you still go on? // Of course!
+01_0063_mr1051|Of course!
+01_0064_mr1051|Are you all right, Itsuki?
+01_0065_pc1001|I can keep going!
+01_0065_pc1001_mix|Are you all right, Itsuki? // I can keep going!
+01_0066_pc1001|Let's go together, Chrom!
+01_0066_pc1001_mix|>Let's go together, Chrom! // Right!
+01_0068_pc1001|Chrom!
+01_0068_pc1001_mix|>Chrom! // I'll protect you!
+01_0069_mr1051|I'll protect you!
+01_0070_mr1051|Have confidence! You can win!
+01_0071_pc1001_mix|Have confidence! You can win! // Y-yeah...
+01_0072_pc1001|What should I do?
+01_0072_pc1001_mix|>What should I do? // It's all right. I'm with you.
+01_0073_mr1051|It's all right. I'm with you.
+01_0074_pc1001|We'll surpass destiny!
+01_0074_pc1001_b|We'll surpass destiny!
+01_0074_pc1001_b_mix|We'll surpass destiny!
+01_0074_pc1001_mix|>We'll surpass destiny! // We'll surpass destiny!
+01_0075_mr1051|We'll surpass destiny!
+01_0076_mr1051|I'm entrusting my life to you!
+01_0077_pc1001|Same here.
+01_0077_pc1001_mix|I'm entrusting my life to you! // Same here!
+01_0078_mr1051|Ready, partner?
+01_0079_pc1001|Yeah, anytime!
+01_0079_pc1001_mix|Ready, partner? // Yeah, anytime!
+01_0080_mr1051|How do I look, Itsuki?
+01_0081_pc1001|It suits you.
+01_0081_pc1001_mix|How do I look, Itsuki? // It suits you.
+01_0082_pc1001|You kind of look like a villain.
+01_0082_pc1001_mix|>You kind of look like a villain. // What?
+01_0083_mr1051|What?
+01_0084_mr1051|Itsuki!
+01_0085_pc1001|Not yet!
+01_0085_pc1001_mix|Itsuki! // Not yet!
+01_0086_pc1001_mix|>Ahahaha! // Snap out of it!
+01_0087_mr1051|Snap out of it!
+01_0088_pc1001|Don't call me a jack of all trades, master of none!
+01_0088_pc1001_mix|>Don't call me a jack of all trades, master of none! // You have it rough too, huh.
+01_0089_mr1051|You have it rough too, huh.
+01_0090_pc1001|Chrom, you're beautiful.
+01_0090_pc1001_mix|>Chrom, you're beautiful. // I-Itsuki!
+01_0091_mr1051|I-Itsuki!
+01_0092_mr1051|Mirage Attack is ready!
+01_0093_pc1001|Roger!
+01_0093_pc1001_mix|Mirage Attack is ready! // Roger!
+02_0002_pc1002|Everyone, be careful.
+02_0003_pc1002|I'm not always a klutz, you know!
+02_0004_pc1002|All I can do is my best.
+02_0005_pc1002|If I stay calm, I'll be fine!
+02_0006_pc1002|Um, um, at times like this...
+02_0007_pc1002|I-I'm scared, but I have to do my best!
+02_0008_pc1002|I can do it too!
+02_0009_pc1002|There's something I've never seen before.
+02_0010_pc1002|Tsubasa Oribe, 17 years old!
+02_0011_pc1002|Swimsuits really are embarrassing...
+02_0012_pc1002|Do bad things and I'll arrest you!
+02_0013_pc1002|I have to show what my training's done!
+02_0014_pc1002|I'll spread my wings!
+02_0015_pc1002|Maybe it's not so scary.
+02_0016_pc1002|Everyone, don't push yourselves!
+02_0017_pc1002|Whoa! A whole group! Everyone, be careful!
+02_0018_pc1002|Now's our chance!
+02_0019_pc1002|We absolutely can't lose this fight.
+02_0020_pc1002|Maybe I'll splurge on today's snack.
+02_0021_pc1002|Caeda! Lend me your strength!
+02_0021_pc1002_mix|>Caeda, lend me your strength! // Of course! Let's go, Tsubasa!
+02_0022_mr1052|Of course! Let's go, Tsubasa!
+02_0023_mr1052|It's all right! You can do it, Tsubasa!
+02_0024_pc1002|Thank you! I'll do my best!
+02_0024_pc1002_mix|It's all right! You can do it, Tsubasa! // Thank you! I'll do my best!
+02_0025_pc1002|I'm eating a parfait when this is over!
+02_0025_pc1002_mix|>I'm eating a parfait when this is over! // Hehe, don't eat too much!
+02_0026_mr1052|Don't eat too much!
+02_0027_mr1052|This is the final battle, Tsubasa.
+02_0028_pc1002|Let's win and bring back peace!
+02_0028_pc1002_mix|This is the final battle, Tsubasa. // Let's win and bring back peace!
+02_0029_pc1002|When the fight's over, I'll be with my sister again...
+02_0029_pc1002_mix|>When the fight's over, I'll be with my sister again... // Then let's make sure we win.
+02_0030_mr1052|Then let's make sure we win.
+02_0031_mr1052|Yes, show them what you've really got.
+02_0032_pc1002|I have to teach them how important feelings are.
+02_0032_pc1002_mix|>I have to teach them how important feelings are. // Yes, show them what you've really got.
+02_0033_pc1002|I'll never forgive you!
+02_0033_pc1002_mix|>I'll never forgive you! // You can do it now, Tsubasa!
+02_0034_mr1052|You can do it now, Tsubasa!
+02_0035_pc1002|I'm going to keep going!
+02_0036_pc1002|This time for sure!
+02_0038_pc1002|Okay! Just a little more effort!
+02_0039_pc1002|What should I do next?
+02_0040_pc1002|It's my turn, right?
+02_0041_pc1002|This one might be pretty tough.
+02_0042_pc1002|Can I beat it?
+02_0043_pc1002|I can't hold everyone back.
+02_0044_pc1002|If it gets hard, tell me.
+02_0045_pc1002|You're not getting away!
+02_0046_pc1002|Leave this to me!
+02_0047_pc1002|Um, I'll do my vewy best!
+02_0048_pc1002|I feel like someone's watching me...
+02_0049_pc1002|Don't you underestimate the great Maho!
+02_0050_pc1002|Handshakes with a big, cheerful smile!
+02_0051_pc1002|I'll sing from my heart.
+02_0052_pc1002|I'm still fine.
+02_0053_pc1002|Ugh, my body feels weird...
+02_0054_pc1002|It hurts...
+02_0056_pc1002|No, Itsuki...
+02_0057_pc1002|Huh, where's my parfait?
+02_0059_pc1002|Um, Itsuki, I...
+02_0060_pc1002|My heart's pounding so hard I'm going crazy.
+02_0061_pc1002|Huh? Caeda, what's wrong?
+02_0062_pc1002|One more left!
+02_0063_pc1002|W-wow...
+02_0064_pc1002|I have to do my best too!
+02_0065_pc1002|That happens sometimes.
+02_0066_pc1002|Just do better next time.
+02_0067_mr1052|Let's show them Tsubasa's power.
+02_0068_pc1002|Yeah! Caeda, follow me!
+02_0068_pc1002_mix|Let's show them Tsubasa's power. // Yeah! Caeda, follow me!
+02_0069_mr1052|How should we attack next?
+02_0070_pc1002|Hmm, let me see...
+02_0070_pc1002_mix|How should we attack next? // Hmm, let me see...
+02_0071_mr1052|Weren't you spacing out just now?
+02_0072_pc1002|I-I was just meditating!
+02_0072_pc1002_mix|Weren't you spacing out just now? // I-I was just meditating!
+02_0073_mr1052|Tsubasa, aren't you overdoing it?
+02_0074_pc1002|I'm still fine!
+02_0074_pc1002_mix|Tsubasa, aren't you overdoing it? // I'm still fine!
+02_0075_pc1002|With the calories I've burned...
+02_0075_pc1002_mix|>With the calories I've burned... // ...a giant parfait doesn't seem possible.
+02_0076_mr1052|...a giant parfait doesn't seem possible.
+02_0077_mr1052|Tsubasa, calm down!
+02_0078_pc1002|E-even if you tell me to calm down...
+02_0078_pc1002_mix|Tsubasa, calm down! // E-even if you tell me to calm down...
+02_0079_pc1002|Hmm, I'm still kind of scared.
+02_0079_pc1002_mix|>Hmm, I'm still kind of scared. // Once you beat it, it won't be scary.
+02_0080_mr1052|Once you beat it, it won't be scary.
+02_0081_pc1002|Caeda, let's go all out!
+02_0081_pc1002_mix|>Caeda, let's go all out! // Heh, you've become reliable, Tsubasa.
+02_0082_mr1052|You've become reliable, Tsubasa.
+02_0083_mr1052|D-does it suit me?
+02_0084_pc1002|Yeah! You look super cool!
+02_0084_pc1002_mix|D-does it suit me? // Yeah! You look super cool!
+02_0085_pc1002|You're like a Spiky Knight now!
+02_0085_pc1002_mix|>You're like a Spiky Knight now! // You always notice the strangest things.
+02_0086_mr1052|You always notice the strangest things.
+02_0087_pc1002|Ugh, sorry, I think I'm done for.
+02_0087_pc1002_mix|>Ugh, sorry, I think I'm done for. // Pull yourself together, Tsubasa!
+02_0088_mr1052|P-pull yourself together! Tsubasa!
+02_0089_pc1002|Oh, a pretty butterfly...
+02_0089_pc1002_mix|>Oh, a pretty butterfly... // There's no butterfly anywhere!
+02_0090_mr1052|There's no butterfly anywhere!
+02_0091_pc1002|Everyone's a closet pervert!
+02_0091_pc1002_mix|>Everyone's a closet pervert! // Get a hold of yourself!
+02_0092_mr1052|Get a hold of yourself!
+02_0093_pc1002|Caeda's lips look so soft...
+02_0093_pc1002_mix|>Caeda's lips look so soft... // Tsubasa!? Wh-what are you...!?
+02_0094_mr1052|Tsubasa!? Wh-what are you...!?
+02_0095_mr1052|Tsubasa, I'm ready anytime.
+02_0095_mr1052_b|I'm ready anytime.
+02_0096_pc1002|Thank you, Caeda!
+02_0096_pc1002_mix|Tsubasa, I'm ready anytime. // Thank you, Caeda!
+02_1010_pc1002|Tsubasa Oribe, 18!

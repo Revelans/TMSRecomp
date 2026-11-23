@@ -1,0 +1,211 @@
+# BTL_SESSION_<key>|English (Session chain lines; Maiko, Barry and Tiki join in Duo Arts / support)
+0001_pc1001|I'll go first.
+0001_pc1002|I'll go first!
+0001_pc1003|First strike!
+0001_pc1004|I'll leave the rest to you.
+0001_pc1005|Ride the big wave!
+0001_pc1006|Follow me!
+0001_pc1007|Please follow up!
+0001_pc1008|Let's go!
+0001_pc1009|Follow my lead!
+0001_pc1010|Do your best!
+0002_pc1001|Follow me!
+0002_pc1002|Everyone, follow me!
+0002_pc1003|I'll go first.
+0002_pc1004|And they all lived happily ever after.
+0002_pc1006|Can you keep up?
+0002_pc1008|Follow after me!
+0002_pc1009|Follow me!
+0003_pc1001|I'll start!
+0003_pc1002|Okay, let's begin!
+0003_pc1005|OK!
+0003_pc1006|Me first!
+0003_pc1007|I'll go first!
+0003_pc1008|Well, shall we begin?
+0003_pc1009|Live start!
+0003_pc1010|I'll give it a try.
+0004_pc1001|Let's start!
+0004_pc1002|Starting the Session!
+0004_pc1003|Follow me!
+0004_pc1004|Are you ready?
+0004_pc1005|Count on me!
+0004_pc1006|Teamwork, here we go!
+0004_pc1007|Start!
+0004_pc1008|Follow me.
+0004_pc1009|You can keep up, right?
+0004_pc1010|Leave it to me!
+0005_pc1001|I'm next!
+0005_pc1002|Me too!
+0005_pc1003|Leave it to me!
+0005_pc1004|Get fired up!
+0005_pc1006|Me too!
+0005_pc1007|Following up!
+0005_pc1008|Leave it to me.
+0005_pc1010|No problem!
+0006_pc1001|Me too!
+0006_pc1002|Leave it to me!
+0006_pc1003|Next one's mine!
+0006_pc1004|All right!
+0006_pc1006|One more hit!
+0006_pc1008|I'll help.
+0006_pc1009|Backing you up.
+0006_pc1010|Count on me!
+0007_pc1001|Linking up!
+0007_pc1002|I'll land it for sure!
+0007_pc1003|Hyaah!
+0007_pc1004|Leave it to me.
+0007_pc1007|Me too!
+0007_pc1008|Linking up.
+0007_pc1009|I'll link it for you.
+0008_pc1002|One more, as a bonus!
+0008_pc1003|Not done yet!
+0008_pc1004|I'm counting on you.
+0008_pc1006|Following up!
+0008_pc1007|I-I won't fall behind!
+0009_pc1002|There!
+0009_pc1003|Nice combination!
+0009_pc1004|You can do it.
+0009_pc1006|You're next.
+0009_pc1007|Next!
+0009_pc1008|Fine, I'll go.
+0009_pc1009|It's not over.
+0010_pc1001|It's not over yet!
+0010_pc1002|Not done yet!
+0010_pc1003|Don't look away! I'm talking to you!
+0010_pc1004|Go give them a blast!
+0010_pc1006|It's not over!
+0010_pc1007|We're not done yet!
+0010_pc1008|Wide open.
+0010_pc1009|You're next!
+0011_em2401|Now, let us begin.
+0011_pc1001|This one next!
+0011_pc1003|I'll clean 'em all up at once!
+0011_pc1006|Yay!
+0011_pc1007|It's over!
+0011_pc1008|You're next.
+0011_pc1009|I'll put an end to you.
+0012_em2307|I'm the center!
+0012_em2308|Here we go!
+0012_em2309|A dance of death.
+0012_em2334|Let's go!
+0012_em2400|Here I come.
+0012_em2412|Now, let us begin!
+0012_pc1001|This finishes it!
+0012_pc1002|With this!
+0012_pc1003|Finishing blow!
+0012_pc1006|How's that!
+0012_pc1007|Please fall down!
+0012_pc1008|The finishing blow!
+0012_pc1009|Finishing blow!
+0013_em2311|Hear the premiere of your death!
+0013_em2338|Can you withstand it all!?
+0013_em2339|I'll keep it going!
+0013_em2340|I'll go first.
+0013_em2341|Endure it!
+0013_em2342|Here I go!
+0013_em2343|Try to endure it.
+0013_em2346|I'll sear you on high heat!
+0013_pc1001|With this blow!
+0013_pc1002|A huge success!
+0013_pc1003|Victory!
+0013_pc1006|Finishing blow!
+0013_pc1007|Last one!
+0013_pc1008|Vanish.
+0013_pc1009|Last one!
+0014_em2302|Despair, just for you.
+0014_em2310|Let us begin.
+0014_pc1001|This is the last one!
+0014_pc1002|This ends it!
+0014_pc1003|We're amazing!
+0014_pc1006|This is the last!
+0014_pc1007|I did it, we won!
+0014_pc1009|Finish!
+0015_em2306|Now, follow me!
+0015_pc1001|We win!
+0015_pc1002|Yay! We won!
+0015_pc1003|Wiped 'em out!
+0015_pc1006|Over to you!
+0015_pc1007|Please!
+0015_pc1008|Phew. Sharing the stage isn't bad.
+0015_pc1009|Please!
+0016_em2304|Follow me!
+0016_pc1001|Over to you!
+0016_pc1002|Please!
+0016_pc1003|Next one's yours!
+0016_pc1006|I made an opening.
+0016_pc1007|It's all yours!
+0016_pc1008|Go.
+0016_pc1009|I'll leave it to you.
+0017_pc1001|Next!
+0017_pc1002|While they're open!
+0017_pc1003|Osu!
+0017_pc1006|Now!
+0017_pc1007|Please!
+0017_pc1008|I leave the rest to you.
+0017_pc1009|Next!
+0018_pc1001|It's yours!
+0018_pc1002|Now!
+0018_pc1003|Keep it going!
+0018_pc1006|Next!
+0018_pc1007|Now!
+0018_pc1008|Press the attack!
+0018_pc1009|You can do it.
+0019_em2301|Follow me, you lot!
+0019_em2303|Follow me!
+0019_pc1001|Counting on you!
+0019_pc1002|Please follow up!
+0019_pc1003|I believe in you!
+0019_pc1006|Go!
+0019_pc1007|Pass!
+0019_pc1008|Do it.
+0019_pc1009|Link it!
+0020_pc1001|Now!
+0020_pc1002|Let's keep going!
+0020_pc1003|Can you do it!?
+0020_pc1006|Itsuki!
+0020_pc1007|Itsuki, go for it!
+0020_pc1008|Next!
+0020_pc1009|Itsuki, please!
+0021_pc1001|Go!
+0021_pc1002|Let's go all at once!
+0021_pc1006|Tsubasa!
+0021_pc1007|Tsubasa, now!
+0021_pc1008|Link it!
+0021_pc1009|Tsubasa, go!
+0022_pc1002|Itsuki! Finish it!
+0022_pc1003|Itsuki, I'm counting on you!
+0022_pc1006|Touma!
+0022_pc1007|Touma, please follow up!
+0022_pc1008|Aoi, show me what you've got!
+0022_pc1009|Touma, let 'em have it!
+0023_pc1001|Finish it!
+0023_pc1002|Touma! It's your chance!
+0023_pc1003|Tsubasa, go for it!
+0023_pc1006|Kiria!
+0023_pc1007|Kiria, the rest is up to you!
+0023_pc1008|Tsubasa Oribe.
+0023_pc1009|Elly, you're up!
+0024_pc1001|Please!
+0024_pc1002|Kiria, I believe in you!
+0024_pc1003|Kiria, please!
+0024_pc1006|Mamori!
+0024_pc1007|You can do it, Elly!
+0024_pc1008|Touma Akagi.
+0024_pc1009|Mamori, stay calm.
+0025_pc1001|Carefully now!
+0025_pc1002|Elly! Now's your chance!
+0025_pc1003|Elly, can you do it?
+0025_pc1006|Yashiro!
+0025_pc1007|Yashiro, it's your chance!
+0025_pc1008|Kiria Kurono.
+0025_pc1009|Yashiro, the rest is up to you!
+0026_pc1001|Go all out!
+0026_pc1002|Mamori! Do your best!
+0026_pc1003|Mamori! You can do it!
+0026_pc1008|Eleonora Yumizuru.
+0027_pc1001|Show me!
+0027_pc1002|Yashiro, please!
+0027_pc1003|Yashiro, you can do it!
+0027_pc1008|Mamori Minamoto.
+0038_em2301|Follow me!
+0022_pc1001|Don't mess this up!

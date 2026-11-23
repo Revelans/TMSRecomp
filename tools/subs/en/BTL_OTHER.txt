@@ -1,0 +1,259 @@
+# BTL_OTHER_<key>|English (reactions to results, weaknesses, allies falling, boss banter, Tiki, story lines)
+0001_em1057|Good.
+0001_mr1052|Nice!
+0001_mr1053|All right!
+0001_mr1054|Heh heh, a great success.
+0001_mr1055|Understood.
+0001_mr1056|That settles it!
+0001_pc1001|Yes!
+0001_pc1002|We did it!
+0001_pc1003|All right!
+0001_pc1006|OK!
+0001_pc1007|Okay!
+0001_pc1008|Well done.
+0001_pc1009|Good!
+0002_em1057|Impossible.
+0002_mr1051|Damn!
+0002_mr1052|N-no way!
+0002_mr1053|Damn!
+0002_mr1054|How dull.
+0002_mr1055|That won't work, I'm afraid.
+0002_mr1056|I've failed.
+0002_pc1001|All right!
+0002_pc1002|Amazing!
+0002_pc1007|Nice!
+0002_pc1008|That did it.
+0002_pc1009|That did it.
+0002b_mr1051|Use that to hit its weakness.
+0002c_mr1051|That skill won't do much.
+0003_em1057|Finish it with that skill!
+0003_mr1052|That's it!
+0003_mr1054|That looks like it'll work.
+0003_mr1055|Go with that.
+0003_mr1056|That skill won't work.
+0003_pc1001|Nailed it!
+0003_pc1002|Keep it up!
+0003_pc1003|Awesome!
+0003_pc1006|Got it!
+0003_pc1007|Keep it up!
+0003_pc1008|Keep it up.
+0003_pc1009|We did it.
+0004_em1057|Stop wasting attacks!
+0004_mr1052|Let's go with that skill.
+0004_mr1053|It's not working.
+0004_mr1054|No good.
+0004_mr1055|That won't do.
+0004_mr1056|That skill seems effective.
+0004_pc1001|Okay!
+0004_pc1003|Nice, nice!
+0004_pc1006|Hollywood-style.
+0004_pc1007|Nailed it!
+0004_pc1008|Understood.
+0004_pc1009|Impressive.
+0005_em1057|Hard to say if it'll work.
+0005_mr1052|Another skill might be better.
+0005_mr1053|This attack!
+0005_mr1054|Looks like now's our chance.
+0005_mr1055|A perfect opportunity.
+0005_mr1056|Now!
+0005_pc1001|Nice!
+0005_pc1002|Wow!
+0005_pc1003|Got it!
+0005_pc1006|Looking good.
+0005_pc1007|Yay!
+0005_pc1008|Very well.
+0005_pc1009|Good.
+0006_pc1001|Keep it up!
+0006_pc1003|You're shining!
+0006_pc1008|Not bad.
+0006_pc1009|Keep it up.
+0007_pc1001|Damn!
+0007_pc1002|That's mean!
+0007_pc1007|N-no way!
+0007_pc1008|Impossible!
+0007_pc1009|Damn.
+0008_em1008|You still don't see the gap between us?
+0008_pc1001|Oops.
+0008_pc1002|No way!
+0008_pc1003|Not good.
+0008_pc1006|Uh-oh!
+0008_pc1007|That's asking too much!
+0008_pc1008|I don't understand.
+0008_pc1009|No...
+0009_em1008|Hand over Tiki quietly.
+0009_pc1001|Huh? Me?
+0009_pc1002|I-I'm sorry.
+0009_pc1006|Me?
+0009_pc1007|Me?
+0009_pc1008|They got me.
+0009_pc1009|Not good.
+0010_em1008|Let me see for myself.
+0010_pc1001|That's impossible!
+0010_pc1002|Oh, I messed up.
+0010_pc1003|Damn it!
+0010_pc1006|Ugh.
+0010_pc1009|This is...
+0011_pc1002|It didn't work.
+0011_pc1003|They got me!
+0011_pc1006|Are you kidding me!?
+0011_pc1007|No good.
+0011_pc1008|Not good.
+0011_pc1009|What are you doing?
+0012_em2401|Good.
+0012_pc1001|Not good.
+0012_pc1003|It failed!
+0012_pc1006|Damn!
+0012_pc1009|Don't disappoint me.
+0013_em2307|Feeling good?
+0013_em2308|Okay.
+0013_em2309|Nailed it!
+0013_em2401|What!?
+0014_em2308|Impossible.
+0014_em2309|What!?
+0014_em2334|What?
+0014_em2335|What?
+0014_em2337|What!?
+0014_em2338|Not bad at all!
+0014_em2339|Amazing!
+0014_em2340|All right!
+0014_em2341|All right!
+0014_em2342|Wonderful.
+0015_em2302|Ahaha, that's how it is.
+0015_em2308|This song is proof I'm the real one!
+0015_em2309|Kneel.
+0015_em2310|This is my true power!
+0015_em2333|Wh-what a cutie.
+0015_em2334|How cute!
+0015_em2337|Dirty!
+0015_em2339|Don't disappoint me.
+0015_em2341|How careless of me.
+0015_em2342|Not good!
+0015_em2343|Is that all?
+0015_em2346|Truly awful!
+0015_em2400|Yashiro Tsurugi, is that all you've got?
+0016_em2310|What!
+0017_em2302|Farewell.
+0017_em2306|Oh no...
+0018_em2302|I'm a lucky girl, you know.
+0018_em2304|What?
+0018_em2306|That's mean!
+0018_em2311|I won't let you interfere!
+0019_em2302|I'll play with you.
+0019_em2304|My defense is ironclad!
+0019_em2306|Be quiet.
+0020_em2301|Not bad!
+0020_em2302|Lovely.
+0020_em2304|I'll mow you down with all my might!
+0020_em2306|Oh my, oh my.
+0020_em2311|I am eternal and immortal!
+0021_em2301|Damn it!
+0021_em2302|So intense.
+0021_em2306|Not yet!
+0021_em2310|Know true terror!
+0021_em2311|One step closer to ruin!
+0022_em2302|Oh, too bad.
+0023_em2303|Okay, exit stage left!
+0023_em2310|At the cost of my life...
+0026_em2303|You're pissing me off!
+0039_em2301|Good!
+0040_em2301|What!?
+0041_em2301|Kill them all!
+0042_em2301|You dare defy me?
+0043_em2301|Don't resist!
+1000_mr1051|I believe in you.
+1000_mr1052|You did well, Tsubasa.
+1000_pc1010|I'll protect all of you!
+1001_mr1051|That's it! Keep going, Itsuki!
+1001_mr1052|Wonderful, Tsubasa.
+1001_pc1001|Tsubasa!
+1001_pc1002|Itsuki, no!
+1001_pc1003|No way! Itsuki!
+1001_pc1006|Itsuki! Itsuki!
+1001_pc1007|No! Itsuki!
+1001_pc1009|Itsuki! You can't be serious!
+1001_pc1010|Light, become a shield that protects them!
+1002_mr1051|No, Itsuki!
+1002_mr1052|You look cute, Tsubasa.
+1002_pc1001|Touma! Damn it!
+1002_pc1002|Touma!
+1002_pc1003|Tsubasa!
+1002_pc1006|Tsubasa!
+1002_pc1007|Tsubasa!
+1002_pc1008|Tsubasa Oribe!
+1002_pc1009|Tsubasa!
+1002_pc1010|Power to dispel the darkness!
+1003_mr1051|Thank you, Itsuki.
+1003_mr1052|This is Tsubasa's song. This is the power of Performa.
+1003_pc1001|No, Kiria!
+1003_pc1002|No... Kiria...
+1003_pc1003|Kiria! Seriously!?
+1003_pc1006|Touma, get up!
+1003_pc1007|T-Touma!?
+1003_pc1008|Touma Akagi!
+1003_pc1009|Damn! Touma!
+1003_pc1010|Divine Dragon Naga, lend me your power!
+1004_mr1051|You're a fine lord too, Itsuki.
+1004_mr1052|Gharnef! I won't let you run wild in the world Tsubasa lives in any longer!
+1004_pc1001|Elly!
+1004_pc1002|Elly!
+1004_pc1003|Elly! Damn!
+1004_pc1006|Kiria!
+1004_pc1007|Kiria!
+1004_pc1008|Kiria Kurono!
+1004_pc1009|Elly, no!
+1004_pc1010|Big brother!
+1005_mr1051|You did well, Itsuki.
+1005_mr1052|Together until the end, Tsubasa!
+1005_pc1001|Mamori!
+1005_pc1002|Mamori!
+1005_pc1003|Damn! Mamori!
+1005_pc1006|Mamori! No!
+1005_pc1007|Elly! Elly!
+1005_pc1008|Eleonora Yumizuru!
+1005_pc1009|Mamori! Damn!
+1006_mr1051|Itsuki, can you stand?
+1006_mr1052|Shadow Dragon Medeus... what an ominous presence...
+1006_pc1001|Yashiro's down!
+1006_pc1002|Yashiro!
+1006_pc1003|Yashiro!
+1006_pc1006|Yashiro!
+1006_pc1007|Yashiro!
+1006_pc1008|Mamori Minamoto!
+1006_pc1009|Yashiro, don't tell me you...
+1007_mr1051|Itsuki! We'll stop them no matter what!
+1007_mr1052|I won't lose! I'll defeat Medeus and return home!
+1008_mr1051|Gharnef!
+1008_mr1052|That clear blue hair... that figure is...
+1008_pc1001|Damn it!
+1008_pc1003|This is bad.
+1008_pc1006|Uh, wh-what? This isn't good.
+1008_pc1008|Feels like I'm catching a cold.
+1008_pc1009|Get up!
+1009_mr1051|Gharnef! I won't let you do as you please in this world any longer!
+1009_mr1052|Prince Marth, I'm coming home.
+1009_pc1001|This is rough.
+1009_pc1002|I have to... stand firm...
+1009_pc1003|This is rough.
+1009_pc1006|Ah, uh-oh...
+1009_pc1007|No... my body...
+1009_pc1008|This is nothing.
+1009_pc1009|This is pretty rough.
+1010_mr1051|Gharnef! Your ambitions end here!
+1010_pc1001|What an overwhelming presence, but...!
+1010_pc1002|I'll never forgive you!
+1010_pc1003|Let's win and go home!
+1010_pc1006|The big boss is here.
+1010_pc1007|I'm scared, but I won't lose!
+1010_pc1008|You stand in my way...
+1010_pc1009|I'm taking back the Performa you stole!
+1011_mr1051|Even without my memories, I have my bond with Itsuki!
+1011_pc1001|I don't want to die in a place like this!
+1011_pc1002|I'm going home together with Itsuki!
+1011_pc1003|Now, it's the climax!
+1011_pc1006|I-I'm experienced, so leave it to me!
+1011_pc1007|I-I-I'll do my best!
+1011_pc1008|Watch closely: the super first-class beyond first-class.
+1011_pc1009|I'm going all out. Keep up!
+1012_mr1051|I'm taking it back, Gharnef! Everything you stole from this world!
+0002d_mr1051|Don't let this chance slip!
+0003_mr1053|A weak point!

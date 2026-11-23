@@ -1,0 +1,8 @@
+# "Tsubasa's Glasses" help open -> default choice confirmed -> opening movie (m01.usm) after ~10 s.
+b 3
+a 3
+a 5
+a 3
+up 2
+a 14
+shot 1

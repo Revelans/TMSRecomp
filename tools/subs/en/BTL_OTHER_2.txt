@@ -1,0 +1,110 @@
+# more BTL_OTHER_<key>|English: story battle lines, first Carnage battles (TALK)
+1012_pc1001|Don't panic. Stay calm.
+1012_pc1002|W-whoa! Enemies!
+1012_pc1003|Gotta show 'em what a senior looks like!
+1012_pc1006|E-easy, this is easy!
+1012_pc1007|I-I'll protect you!
+1012_pc1008|This much is no match for us.
+1012_pc1009|Kiria's on fire today.
+1013_mr1051|So that is the Shadow Dragon Medeus!
+1013_pc1001|Right now, all that matters is surviving.
+1013_pc1002|Because Caeda's with me...
+1013_pc1003|Um, can't we just talk this out?
+1013_pc1006|Ah, oh, it's this pattern.
+1013_pc1007|I-I'm not scared!
+1013_pc1008|You lot can handle this, right?
+1013_pc1009|Everyone, let's keep it cool.
+1014_mr1051|Medeus!
+1014_pc1001|I'm a Mirage Master now.
+1014_pc1002|I can't just rely on others!
+1014_pc1003|I-I'm not gonna lose!
+1014_pc1006|I know most of it. Most of it.
+1014_pc1007|I have to work hard like everyone else!
+1014_pc1008|Everyone, let's settle this in one go!
+1014_pc1009|Everyone, focus!
+1015_mr1051|This is the end, Medeus!
+1015_pc1001|What on earth are these things?
+1015_pc1002|What is this place?
+1015_pc1003|I've made up my mind!
+1015_pc1006|Bows are actually pretty heavy.
+1015_pc1007|I'm getting dizzy...
+1015_pc1008|I'll handle the rest.
+1015_pc1009|I'll take back all the Performa they stole!
+1016_mr1051|Everyone, I'm coming home.
+1016_pc1001|There are more enemies?
+1016_pc1002|I don't like getting hurt, but...
+1016_pc1003|Itsuki! Tsubasa! You okay!?
+1016_pc1006|W-wait! It's my turn!
+1016_pc1007|I-it's heavy...
+1016_pc1008|I'm even stronger now.
+1016_pc1009|The fun starts now.
+1017_mr1051|This world is beautiful too.
+1017_pc1001|They won't let us run, will they?
+1017_pc1002|Not scared, not scared!
+1017_pc1003|Wh-I'm not scared or anything!
+1017_pc1006|Huh? My turn?
+1017_pc1007|It's hot inside this armor.
+1018_mr1051|Dual Attack! Mirage Attack!
+1018_pc1001|If I do what Chrom says...
+1018_pc1002|Please go down quickly.
+1018_pc1003|Heh heh, still not down?
+1018_pc1006|Don't rush me like that!
+1018_pc1007|Heave-ho!
+1018_pc1008|Be still, wicked will!
+1019_pc1001|We're the ones who'll do it!
+1019_pc1002|Because I'm a Mirage Master!
+1019_pc1003|Uh, what was I supposed to do next?
+1019_pc1006|Ugh, geez!
+1019_pc1007|Um, um, what do I do next...
+1020_pc1001|Everyone, let's stay calm.
+1020_pc1002|Leave the support to me!
+1020_pc1003|Gotta show 'em something cool.
+1020_pc1006|I'll beat them all!
+1020_pc1007|I'll protect everyone!
+1021_pc1001|I should have grown too!
+1021_pc1002|I'll show you what my training's done!
+1021_pc1003|I'm carrying everyone's hopes! No way I'm losing!
+1021_pc1006|There's no escaping my arrows!
+1021_pc1007|I'm everyone's shield!
+1022_pc1001|The battle's on! Let's go, everyone!
+1022_pc1002|Be careful, everyone!
+1022_pc1003|All right, let's tighten up!
+1022_pc1006|Everyone! Let's do this Hollywood-style!
+1022_pc1007|Everyone, please stay back!
+1023_pc1001|Everyone, are you hurt?
+1023_pc1002|This is where it really begins!
+1023_pc1003|Touma Akagi, here I am!
+1023_pc1006|Leave the covering fire to me!
+1023_pc1007|Everyone, are you all right?
+1024_pc1001|We're all going to survive.
+1024_pc1002|Just a little more!
+1024_pc1003|No match for me now.
+1024_pc1006|Everyone! Let's keep them coming!
+1024_pc1007|I'll go in front!
+1025_pc1001|Let's press the attack all at once!
+1025_pc1002|Everyone, don't push yourselves!
+1025_pc1003|Lightning energy, full charge!
+1025_pc1006|There are still enemies left! Stay sharp!
+1025_pc1007|I'm not someone who only gets protected!
+1026_pc1003|Let's show 'em the Fortuna spirit!
+1026_pc1006|Watch me liven this up, Hollywood-style!
+1027_pc1007|Where's your warmth?
+1028_pc1007|Right here!
+TALK_1000_pc1001|Whoa! Stay back!
+TALK_1001_mr1051|Look ahead! I'll teach you how to fight!
+TALK_1002_pc1001|The man with the sword will teach me?
+TALK_1003_pc1001|I-I can do this too!?
+TALK_1004_mr1051|You've got good instincts.
+TALK_1005_pc1001|The swordsman's feelings...
+TALK_1006_mr1051|This is... Carnage Form.
+TALK_1007_pc1001|Chrom, is this the end?
+TALK_1008_mr1051|Yes, it must be. Let's go together until the end, my friend.
+TALK_1009_pc1002|I-I'm scared!
+TALK_1010_mr1052|Calm down. I'm with you.
+TALK_1011_pc1002|L-Lance lady! I...!
+TALK_1012_mr1052|Don't rush.
+TALK_1013_pc1002|Lance lady, doesn't it hurt?
+TALK_1014_mr1052|I'm all right.
+TALK_1015_pc1002|My heart and the lance lady's...
+TALK_1016_mr1052|...are becoming one.
+TALK_1014_pc1001_mix|Itsuki, can you stand? // Not yet!

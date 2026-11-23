@@ -1,0 +1,47 @@
+# BTL_RESULT_<key>|English (results: new skills, level-ups)
+0001_em1057|Take my power.
+0001_mr1051|The you of now can master my technique, Itsuki!
+0001_mr1052|Take this power, Tsubasa.
+0001_mr1053|My trump card. Take it, Touma.
+0001_mr1054|Heh heh, my secret arts, just for Kiria.
+0001_mr1055|With this even nobler power, fight elegantly.
+0001_mr1056|This power will protect you.
+0001_pc1001|I've grown nicely.
+0001_pc1002|It's nice when hard work pays off.
+0001_pc1003|Feels like I got a little stronger.
+0001_pc1006|Naturally.
+0001_pc1007|I got stronger!
+0001_pc1008|Just one more stop along the way.
+0001_pc1009|I'll get even stronger.
+0002_em1057|Well? Did you get it?
+0002_mr1051|Did you learn it properly?
+0002_mr1052|Tsubasa, didn't forget anything?
+0002_mr1053|You learned it properly.
+0002_mr1054|Is that enough, then?
+0002_mr1055|Are you ready?
+0002_mr1056|Did you learn it properly?
+0002_pc1001|It's all thanks to everyone!
+0002_pc1002|Step by steady step.
+0002_pc1003|Did I get a step closer to being a hero?
+0002_pc1006|Effort? It's talent!
+0002_pc1007|I'll protect everyone even more!
+0002_pc1008|Even higher now.
+0002_pc1009|That'll do.
+0003_em1057|Good. Let's go.
+0003_mr1051|Let's go! To the next battlefield!
+0003_mr1052|Putting it into practice is what matters.
+0003_mr1053|We'll charge ahead with this new power.
+0003_mr1054|Heh heh, I want to try it soon.
+0003_mr1055|The next stage awaits us.
+0003_mr1056|All that's left is real combat.
+0003_pc1001|Even I should be able to aim higher!
+0003_pc1002|Spread your wings even more, me!
+0003_pc1003|Woo! I'll keep charging ahead!
+0003_pc1006|Wait for me, glorious Hollywood!
+0003_pc1007|I'll work even, even harder!
+0003_pc1008|Onward, to even greater heights!
+0003_pc1009|The word "complete" isn't in my vocabulary.
+0003a_pc1003|I'll keep charging ahead!
+0004_pc1008|A natural result.
+1000_pc1001|Through Chrom, a new way of fighting is inside me.
+1001_mr1051|Is this what this form means?

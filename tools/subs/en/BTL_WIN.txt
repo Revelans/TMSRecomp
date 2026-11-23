@@ -1,0 +1,100 @@
+# BTL_WIN_<key>|English (victory lines)
+0001_pc1001|We won't lose!
+0001_pc1002|I helped too, right?
+0001_pc1003|Evil never prospers!
+0001_pc1006|A Hollywood-style happy ending!
+0001_pc1007|I did my best!
+0001_pc1008|Well done.
+0001_pc1009|That's that.
+0002_pc1001|Let's keep it up!
+0002_pc1002|A victory we won together!
+0002_pc1003|Nailed it.
+0002_pc1006|You all did pretty well too!
+0002_pc1007|Hehe, victory!
+0002_pc1008|You lot aren't bad either.
+0002_pc1009|We win.
+0003_pc1001|Oh right, I was in a swimsuit.
+0003_pc1002|Thank you, everyone!
+0003_pc1006|I said don't look!
+0003_pc1007|Thank you very much, everyone.
+0003_pc1008|Were you satisfied?
+0003_pc1009|Thank you!
+0004_pc1001|I can't afford to lose.
+0004_pc1002|Good thing my swimsuit didn't come off.
+0004_pc1003|The road I walk is my legend.
+0004_pc1006|I'm hungry, Mamorin.
+0004_pc1007|Next week too, heart-warming switch, on!
+0004_pc1008|Maybe I'll swim at the gym after this.
+0004_pc1009|Meow~n.
+0005_pc1001|Good work, everyone.
+0005_pc1002|"Don't think you can do evil in front of me!" ...just kidding.
+0005_pc1006|Size has nothing to do with it!
+0005_pc1007|C-can I change clothes now?
+0005_pc1008|Another successful operation.
+0005_pc1009|How long do I have to wear this outfit?
+0006_pc1001|Good grief.
+0006_pc1002|Hehe, the handshake event was a huge success!
+0006_pc1003|Can I put my clothes on now?
+0006_pc1006|Easy, easy.
+0006_pc1007|Huh? Is it over already?
+0006_pc1008|Over already?
+0006_pc1009|That was easy.
+0007_pc1001|Everyone, are you okay?
+0007_pc1002|I'll keep singing the songs I love!
+0007_pc1003|No match for us.
+0007_pc1006|Huh? Over already?
+0007_pc1007|That was easy!
+0007_pc1008|Not even a warm-up.
+0007_pc1009|That was a good warm-up.
+0008_pc1001|We somehow made it through.
+0008_pc1002|Let's keep it up!
+0008_pc1003|Let's keep charging ahead like this!
+0008_pc1006|That was rough, I admit.
+0008_pc1007|W-we somehow won.
+0008_pc1008|That was close.
+0008_pc1009|That was a narrow fight.
+0009_pc1001|Th-thanks.
+0009_pc1002|That was super easy, huh?
+0009_pc1003|Phew, that was close. We somehow won.
+0009_pc1006|We somehow won.
+0009_pc1007|Ugh... I'm tired...
+0009_pc1008|As expected, never let your guard down.
+0009_pc1009|Did we win?
+0010_pc1001|This is kind of embarrassing.
+0010_pc1002|Phew... we somehow won...
+0010_pc1003|That was a heated fight!
+0010_pc1006|Yay! Thank you!
+0010_pc1007|Thank you! Thank you very much!
+0010_pc1008|The cheers, the excitement, they become my power.
+0010_pc1009|That was a good live show.
+0011_pc1001|Case closed, I guess?
+0011_pc1002|Everyone, are you hurt?
+0011_pc1003|It's all thanks to everyone cheering!
+0011_pc1006|The rest, in theaters.
+0011_pc1007|What an exciting crowd!
+0011_pc1008|Next time too, I'll answer those cheers.
+0011_pc1009|Thank you, everyone!
+0012_pc1001|Now Tsubasa and Ayaha can rest easy.
+0012_pc1002|Thank you for your support!
+0012_pc1003|I was awesome, right!?
+0012_pc1006|Is that settled, then?
+0012_pc1007|Case solved!
+0012_pc1008|One step closer to my goal.
+0012_pc1009|That's one chapter done.
+0013_pc1001|Gharnef, I'll crush your ambitions for sure!
+0013_pc1002|Everyone! Thank you!
+0013_pc1003|The big boss is down!
+0013_pc1006|Hmph, don't underestimate acting.
+0013_pc1007|I did it! I could do it too!
+0013_pc1008|Be honored that I faced you myself.
+0013_pc1009|This is a real performance.
+0014_pc1001|I won't let you do as you please with this world!
+0014_pc1002|Case closed!
+0014_pc1003|Thanks, Cain, Itsuki.
+0014_pc1009|Thank you, Tsubasa.
+0015_pc1002|We won, sis.
+0016_pc1002|Songs that hurt people just make me sad.
+0017_pc1002|We win!
+3000_pc1002|Please check out the magazine too!
+3001_pc1006|The model was good, that's why.
+3002_pc1006|I can pull off any outfit!

@@ -1,0 +1,6 @@
+; setjmp + memcpy/memset for the recompiled code (guest.h NX_GAME_DLL): VCRUNTIME140.dll names setjmp __intrinsic_setjmp
+LIBRARY VCRUNTIME140.dll
+EXPORTS
+    _setjmp == __intrinsic_setjmp
+    memcpy
+    memset

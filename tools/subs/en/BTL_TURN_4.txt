@@ -1,0 +1,72 @@
+# more BTL_TURN_<key>|English: outfit lines, story-battle (SPECIAL) lines
+3000_pc1002|Casual and sporty...
+3001_pc1002|Hehe, what do you think? Does it suit me?
+3002_pc1006|I'm the fashion leader.
+3003_pc1006|This is easy to move in. I like it.
+SPECIAL_0001_pc1002|Itsuki, hang in there!
+SPECIAL_0002_pc1001|You too, Tsubasa.
+SPECIAL_0003_pc1009|I'll back you up, Itsuki.
+SPECIAL_0004_pc1001|I'm counting on you.
+SPECIAL_0005_pc1003|I've got your back.
+SPECIAL_0006_pc1001|Same as always, right?
+SPECIAL_0007_pc1006|Don't you dare screw up.
+SPECIAL_0008_pc1001|If I do, I'm counting on you.
+SPECIAL_0009_pc1007|Itsuki, do your best!
+SPECIAL_0010_pc1001|Thanks, Mamori.
+SPECIAL_0011_pc1008|I'm watching, Aoi.
+SPECIAL_0012_pc1001|I-I'll do my best!
+SPECIAL_0014_pc1001|I can at least protect!
+SPECIAL_0015_pc1002|Itsuki, do your best!
+SPECIAL_0016_pc1002|I finally found my sister! Don't get in my way!
+SPECIAL_0017_pc1003|Tsubasa, let's review what we just practiced!
+SPECIAL_0018_pc1002_a|Yeah! Let's pull off some cool action!
+SPECIAL_0019_pc1002|I won't forgive you for pretending to be my sister!
+SPECIAL_0020_pc1002|Me, yours? Absolutely not!
+SPECIAL_0021_pc1002|I'm taking back Azusa's soul!
+SPECIAL_0023_pc1009|Tsubasa, once more!
+SPECIAL_0025_pc1003|Oh, there it is!
+SPECIAL_0026_pc1003|Let's beat it, fast.
+SPECIAL_0027_pc1003|Let's take that guy down!
+SPECIAL_0028_pc1003|I don't care about hostages!
+SPECIAL_0029_pc1009|Leave the rest to me, Itsuki.
+SPECIAL_0030_pc1009|Don't get in the way of getting Maiko back!
+SPECIAL_0031_pc1009|Now we just have to smash this one.
+SPECIAL_0032_pc1009|A Mirage in Barry...
+SPECIAL_0033_pc1009|Hold on, I'll free you right away.
+SPECIAL_0034_pc1009|This feeling takes me back.
+SPECIAL_0035_pc1007|I-I have to do my best...
+SPECIAL_0036_pc1009|Relax your shoulders more.
+SPECIAL_0037_pc1009|Maybe I'll try acting too.
+SPECIAL_0038_pc1009|We're definitely strong now!
+SPECIAL_0039_pc1009|What bad taste. It makes me sick.
+SPECIAL_0040_pc1009|I want to smash it all.
+SPECIAL_0041_pc1009|I'll make them acknowledge me.
+SPECIAL_0041_pc1009_a|I'll make them acknowledge me.
+SPECIAL_0041_pc1009_b|I'll make them acknowledge me.
+SPECIAL_0042_pc1009|It's finally ending.
+SPECIAL_0043_pc1009|I won't let you interfere with the ritual.
+SPECIAL_0045_pc1009|Not, cute!
+SPECIAL_0046_pc1006|S-so we just need to beat that one?
+SPECIAL_0047_mr1055|Are you trembling?
+SPECIAL_0048_pc1006|I-it's excitement!
+SPECIAL_0049_pc1006|Tsubasa, let's go!
+SPECIAL_0051_pc1006|I won't lose to Tsubasa.
+SPECIAL_0052_pc1007|You'll be fine, Itsuki.
+SPECIAL_0053_pc1001|Yeah, thanks.
+SPECIAL_0054_pc1007|I-I'm nervous.
+SPECIAL_0055_pc1002|I'll back you up!
+SPECIAL_0057_pc1003|Just do it like always.
+SPECIAL_0058_pc1007|Let's save Ayaha no matter what!
+SPECIAL_0059_pc1002|Yeah, lend me your strength.
+SPECIAL_0060_pc1007|Ayaha, please wait for us!
+SPECIAL_0061_pc1007|I can't forgive this!
+SPECIAL_0062_pc1007|Isn't there a fake me?
+SPECIAL_0063_pc1007|If a Dark Mamori showed up...
+SPECIAL_0064_pc1007|There's no fake me...
+SPECIAL_0065_pc1007|Even though I've released songs too...
+SPECIAL_0066_pc1007|I'll make them acknowledge me!
+SPECIAL_0067_pc1007|Please do your best!
+SPECIAL_0068_pc1007|I'll protect everyone!
+SPECIAL_0069_pc1008|Aoi, I'm trusting you with my back!
+SPECIAL_0071_pc1008|Gharnef... you, at least, will fall by my hand...
+SPECIAL_0072_pc1008|This is my father's...

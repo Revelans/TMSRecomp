@@ -1,0 +1,21 @@
+; C library math the recompiled code calls (guest.h NX_GAME_DLL), from the UCRT DLL tms.exe already imports.
+; llvm-lib /def:nx_crt_math.def /machine:x64 /out:nx_crt_math.lib (CMakeLists.txt)
+LIBRARY api-ms-win-crt-math-l1-1-0.dll
+EXPORTS
+    sqrt
+    sqrtf
+    floor
+    floorf
+    ceil
+    ceilf
+    round
+    roundf
+    trunc
+    truncf
+    nearbyint
+    nearbyintf
+    fabs
+    fmin
+    fminf
+    fmax
+    fmaxf

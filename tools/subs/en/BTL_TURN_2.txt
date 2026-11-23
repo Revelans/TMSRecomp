@@ -1,0 +1,157 @@
+# more BTL_TURN_<key>|English (build.py reads BTL_TURN_<n>.txt as part of BTL_TURN): Touma, Eleonora
+03_0001_pc1003|I'll knock you flat!
+03_0002_pc1003|The hero has arrived! Y'know?
+03_0003_pc1003|Feast your eyes on this lance work!
+03_0004_pc1003|Think you can keep up with me?
+03_0005_pc1003|C'mon, c'mon! Let's go!
+03_0006_pc1003|We can win this.
+03_0007_pc1003|I'm getting used to fighting.
+03_0008_pc1003|I'll make this a thrilling stage!
+03_0009_pc1003|Never seen this guy before!
+03_0011_pc1003|I'll give you the thrill of your life!
+03_0012_pc1003|Masked Rider Ogre, here!
+03_0013_pc1003|My body itself is my battle suit.
+03_0014_pc1003|You picked the wrong guys to fight.
+03_0015_pc1003|This one's strong!
+03_0016_pc1003|Outnumbered? Bring it on!
+03_0017_pc1003|The first strike wins!
+03_0018_pc1003|Let's win and head back to Fortuna!
+03_0019_pc1003|There's a rare one!
+03_0020_mr1053|We'll charge through this battlefield!
+03_0022_pc1003|You ready, Cain?
+03_0023_mr1053|You don't even need to ask.
+03_0024_mr1053|Show me your technique.
+03_0025_pc1003|Yeah, look forward to it!
+03_0026_pc1003|It's finally here.
+03_0027_mr1053|The you of now will surely win!
+03_0028_mr1053|We'll save him no matter what.
+03_0029_pc1003|Yeah, hang on, Riku!
+03_0030_pc1003|Yeah! Let's keep it going!
+03_0031_pc1003|Follow-up, follow-up!
+03_0032_pc1003|Remember Raiga's moves!
+03_0033_pc1003|Don't be late for work!
+03_0034_pc1003|Justice prevails.
+03_0035_pc1003|Ready to go down?
+03_0036_pc1003|I'll master Cain's power.
+03_0037_pc1003|Get pumped, me!
+03_0038_pc1003|Can I win?
+03_0039_pc1003|I'll set up the perfect final scene for you.
+03_0040_pc1003|Let's finish this in one go!
+03_0041_pc1003|Good beats evil, completely!
+03_0042_pc1003|My horns thirst for blood!
+03_0043_pc1003|Racing down the street!
+03_0044_pc1003|Blaze up!
+03_0045_pc1003|It's getting kinda cold.
+03_0046_pc1003|I'm fine, I can still go!
+03_0047_pc1003|This poison... not good...
+03_0049_pc1003|Itsuki's surprisingly... huh!?
+03_0050_pc1003|Stop it.
+03_0051_pc1003|Even I get down sometimes.
+03_0053_pc1003|I can't use Cain's power!
+03_0054_pc1003|Last one!
+03_0055_pc1003|Not bad!
+03_0056_pc1003|Then I'll get serious too.
+03_0057_pc1003|Don't sweat it, don't sweat it.
+03_0058_pc1003|Leave the rest to me!
+03_0059_mr1053|Don't let your guard down, Touma.
+03_0060_pc1003|I know, I know.
+03_0061_mr1053|What's our next move?
+03_0062_pc1003|Let's see...
+03_0063_pc1003|Can you still go, Cain!?
+03_0064_mr1053|Leave it to me.
+03_0065_pc1003|Watch this! This is a hero!
+03_0066_mr1053|Nice, Touma!
+03_0067_pc1003|Our combination!
+03_0068_mr1053|Let's show them.
+03_0069_pc1003|I'm counting on you, Cain!
+03_0070_mr1053|Trust me!
+03_0071_mr1053|Don't push yourself.
+03_0073_pc1003|Let's go, partner!
+03_0074_mr1053|Like a true hero.
+03_0075_mr1053|This is our new power!
+03_0076_pc1003|Looking sharp!
+03_0077_mr1053|This is the power of darkness.
+03_0078_pc1003|Dark heroes are cool too!
+03_0079_mr1053|Touma, I'm at my limit!
+03_0080_pc1003|No, not yet!
+03_0082_mr1053|Watch the enemy closely.
+03_0083_pc1003|Everyone's always "Itsuki, Itsuki"...
+03_0084_mr1053|I'm watching you, Touma!
+03_0085_pc1003|That one... is super cute...
+03_0086_mr1053|Touma, that's the enemy!
+03_0087_mr1053|My power can be unleashed!
+03_0088_pc1003|Thanks, Cain.
+06_0001_pc1006|Shall we begin?
+06_0002_pc1006|Well then.
+06_0003_pc1006|Hollywood-style.
+06_0004_pc1006|Let's get started!
+06_0005_pc1006|Here I go!
+06_0006_pc1006|I-I'm not scared!
+06_0007_pc1006|I'm invincible right now!
+06_0008_pc1006|Never seen this one before.
+06_0009_pc1006|Wh-ugh, d-don't stare so much...
+06_0010_pc1006|I'm Mamorin's big sister!
+06_0012_pc1006|It's flashy, sure, but... come on...
+06_0013_pc1006|Small fry, total small fry.
+06_0014_pc1006|Can't let our guard down... right.
+06_0015_pc1006|Numbers won't be enough to beat me.
+06_0016_pc1006|The first strike wins!
+06_0017_pc1006|If I can just beat this one!
+06_0018_pc1006|All-you-can-drink smoothies!
+06_0019_mr1055|Are you ready?
+06_0020_pc1006|Of course!
+06_0021_pc1006|Virion, let's do this.
+06_0022_mr1055|As you wish.
+06_0023_mr1055|Finish it nobly.
+06_0024_pc1006|Hollywood-style!
+06_0025_pc1006|Let's end this.
+06_0026_mr1055|Let us show them our power.
+06_0027_pc1006|I'll teach you the essence of acting!
+06_0028_mr1055|You're serious, Elly.
+06_0029_pc1006|Let's keep it going.
+06_0030_pc1006|What should I do?
+06_0031_pc1006|This is where it starts.
+06_0032_pc1006|My turn.
+06_0033_pc1006|Not yet!
+06_0034_pc1006|Wh-um...
+06_0035_pc1006|I-I'll do it!
+06_0036_pc1006|How shall I cook this one?
+06_0037_pc1006|Let's end this.
+06_0038_pc1006|I'll show you the power of the Horror Hunter!
+06_0039_pc1006|I-I can't get used to this.
+06_0040_pc1006|Heart-warming switch, on!
+06_0041_pc1006|Something feels off...
+06_0042_pc1006|I can't lose in a place like this!
+06_0044_pc1006|Geez...
+06_0045_pc1006|I'm a Hollywood star.
+06_0046_pc1006|Kyahaha! I'll kill you!
+06_0047_pc1006|I'm not a tsundere! I'm not a tsundere!
+06_0049_pc1006|Hey, get to work, Virion!
+06_0050_pc1006|That one's the last!
+06_0051_pc1006|Not bad.
+06_0052_pc1006|I can't fall behind either.
+06_0053_pc1006|Leave the backup to me!
+06_0054_pc1006|Don't mind, don't mind.
+06_0055_pc1006|Stubborn, aren't they?
+06_0056_mr1055|Finish it next time.
+06_0057_mr1055|What will you do, Elly?
+06_0058_pc1006|Let me think...
+06_0059_mr1055|Can you still go on?
+06_0060_pc1006|Who do you think you're asking?
+06_0061_pc1006|Virion, are you okay?
+06_0062_mr1055|But of course.
+06_0063_mr1055|Look, it's a crisis!
+06_0064_pc1006|Ugh, shut up!
+06_0065_pc1006|Virion!
+06_0066_mr1055|As you command, princess.
+06_0067_mr1055|Behold my splendid attire.
+06_0069_mr1055|Lurking in the dark... nobly, of course.
+06_0070_pc1006|What's that supposed to mean?
+06_0071_mr1055|Can you stand, Elly?
+06_0072_pc1006|D-don't underestimate me.
+06_0073_pc1006|Virion!
+06_0074_mr1055|Why me?
+06_0075_pc1006|Let's go nobly!
+06_0076_mr1055|H-hold on, you?
+06_0077_pc1006|Hey, Virion.
+06_0079_mr1055|Mirage Attack is ready.

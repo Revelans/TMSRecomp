@@ -1,0 +1,13 @@
+# Title menu -> difficulty chosen (Normal). Start once the title is up (log "movie: first frame").
+# Yes/No prompts default to No: "up" then "a" picks Yes. Ends with a shot: expect the "Tsubasa's Glasses" help
+# (it opens late; if not visible yet, wait and press "a" once).
+wait 8
+a 4
+b 3
+a 3
+a 5
+a 3
+up 2
+a 6
+a 8
+shot 1

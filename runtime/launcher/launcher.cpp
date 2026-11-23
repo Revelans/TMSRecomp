@@ -1,0 +1,1839 @@
+// TMSRecomp launcher (launcher.exe next to tms.exe): edits settings.ini, manages mods, updates from GitHub releases
+// and starts the game. Drawn with Direct2D / DirectWrite (Windows components, no other dependency). Only keys this
+// window knows are rewritten; comments and any other lines in settings.ini are kept.
+#include <windows.h>
+#include <d2d1.h>
+#include <dwmapi.h>
+#include <dwrite_1.h>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <wincodec.h>
+#include <winhttp.h>
+#include <windowsx.h>
+
+#include <algorithm>
+#include <atomic>
+#include <commdlg.h>
+#include <mutex>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "../src/settings.h"
+#include "../src/sysinfo.h"
+
+namespace fs = std::filesystem;
+
+// ------------------------------------------------------------------------------------------------ settings.ini
+static fs::path g_dir, g_ini, g_data;
+static std::vector<std::string> g_lines;
+static bool g_dirty = false;
+
+static std::string trim(std::string s) {
+    s.erase(0, s.find_first_not_of(" \t\r"));
+    s.erase(s.find_last_not_of(" \t\r") + 1);
+    return s;
+}
+
+// The key of an uncommented "key = value" line (lower case, as tms.exe upper-cases it anyway), else "".
+static std::string key_of(const std::string& line) {
+    std::string l = line.substr(0, line.find_first_of(";#"));
+    size_t eq = l.find('=');
+    if (eq == std::string::npos) return "";
+    std::string k = trim(l.substr(0, eq));
+    std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+    return k;
+}
+
+static std::string get(const char* k, const char* def) {
+    for (auto& l : g_lines)
+        if (key_of(l) == k) {
+            std::string v = trim(l.substr(0, l.find_first_of(";#")).substr(l.find('=') + 1));
+            return v.empty() ? def : v;
+        }
+    return def;
+}
+
+static void set(const char* k, const std::string& v) {
+    g_dirty = true;
+    for (auto& l : g_lines)
+        if (key_of(l) == k) {
+            l = std::string(k) + " = " + v;
+            return;
+        }
+    if (!v.empty()) g_lines.push_back(std::string(k) + " = " + v);
+}
+
+// ANSI like tms.exe's getenv (ponytail: non-ASCII data paths need the wide-char API on both sides).
+static std::wstring wide(const std::string& s) {
+    std::wstring w(MultiByteToWideChar(CP_ACP, 0, s.c_str(), -1, nullptr, 0), 0);
+    MultiByteToWideChar(CP_ACP, 0, s.c_str(), -1, w.data(), (int)w.size());
+    w.pop_back();
+    return w;
+}
+static std::string narrow(const std::wstring& w) {
+    std::string s(WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr), 0);
+    WideCharToMultiByte(CP_ACP, 0, w.c_str(), -1, s.data(), (int)s.size(), nullptr, nullptr);
+    s.pop_back();
+    return s;
+}
+
+static bool is_data(const fs::path& p) {
+    std::error_code ec;
+    return fs::exists(p / "link" / "image.bin", ec) && fs::exists(p / "romfs", ec);
+}
+
+// The data folder tms.exe will use: ini "data", else the folder above the build folder (tms.exe's order).
+static void find_data() {
+    std::string d = get("data", "");
+    g_data = !d.empty() ? fs::path(wide(d)) : is_data(g_dir.parent_path()) ? g_dir.parent_path() : fs::path();
+}
+
+static void load() {
+    if (!fs::exists(g_ini)) std::ofstream(g_ini) << k_default_settings;
+    g_lines.clear();
+    std::ifstream f(g_ini);
+    for (std::string l; std::getline(f, l);) g_lines.push_back(l);
+    find_data();
+}
+
+static bool save() {
+    std::ofstream f(g_ini);
+    for (auto& l : g_lines) f << l << "\n";
+    if (f) g_dirty = false;
+    return (bool)f;
+}
+
+// ------------------------------------------------------------------------------------------------ what can be set
+enum Kind { DROP, TOGGLE, SLIDER };
+struct Opt { const char* v; const wchar_t* label; };
+struct Setting {
+    const char* key;
+    const char* def;
+    Kind kind;
+    const wchar_t* name;
+    const wchar_t* help;
+    std::vector<Opt> opts;  // DROP; TOGGLE: {off, on}
+    float lo = 0, hi = 0, step = 0;
+};
+enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, NSET };
+static const Setting k_set[NSET] = {
+    {"fps", "60", DROP, L"Frame rate",
+     L"The game's logic runs at this rate. 60 is the most tested. Above 60 the game keeps its speed and only gets "
+     L"smoother.",
+     {{"30", L"30 FPS · the game's own"}, {"60", L"60 FPS"}, {"120", L"120 FPS"}, {"144", L"144 FPS"},
+      {"165", L"165 FPS"}, {"240", L"240 FPS"}, {"0", L"Uncapped"}}},
+    {"res", "auto", DROP, L"Render resolution",
+     L"Internal size of the 3D image. Auto fits your screen and graphics card. The game's own is 720p; 1080p renders at 1440p and scales down (sharper).",
+     {{"auto", L"Auto · fits your screen and GPU"}, {"720p", L"1280 × 720 · the game's own"}, {"1080p", L"1920 × 1080"}, {"1440p", L"2560 × 1440"},
+      {"4k", L"3840 × 2160 · 4K"}, {"8k", L"7680 × 4320 · supersampling for 4K screens (~5 GB VRAM)"}}},
+    {"window", "borderless", DROP, L"Display mode", L"F11 or Alt+Enter switches between the two while playing.",
+     {{"borderless", L"Borderless fullscreen"}, {"window", L"Window"}}},
+    {"present_mode", "mailbox", DROP, L"VSync",
+     L"Mailbox shows the newest frame at each refresh: no tearing, low latency. Classic VSync waits in a queue. VRR: "
+     L"for G-SYNC / FreeSync screens (turn it on in your GPU driver); keeps the frame rate just under your refresh rate.",
+     {{"mailbox", L"Mailbox · no tearing"}, {"fifo", L"Classic VSync"}, {"vrr", L"VRR · G-SYNC / FreeSync"}, {"immediate", L"Off · tearing"}}},
+    {"post_native", "1", TOGGLE, L"Blur effects at native size",
+     L"Depth of field and bloom at the game's own size, as on the Switch. Off renders them at full resolution: "
+     L"sharper, but with ringed halos around characters.",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"walk_speed", "1.0", SLIDER, L"Field walk speed",
+     L"How fast Itsuki walks and runs in dungeons and towns. 1.0× is the original. His leg animation keeps its "
+     L"own speed.",
+     {}, 1.0f, 3.0f, 0.1f},
+    {"mute", "", TOGGLE, L"Mute sound", L"Turns all game audio off.", {{"", L"Off"}, {"1", L"On"}}},
+    {"tex_pack", "auto", DROP, L"UHD texture pack",
+     L"Uses the upscaled textures in <data>\\textures\\pack when there are any (tools\\uhd_pack.py makes them). Auto "
+     L"leaves them off on integrated graphics and cards under 4 GB of VRAM.",
+     {{"auto", L"Auto · on with 4 GB+ VRAM"}, {"0", L"Off"}, {"1", L"On"}}},
+    {"tex_dump", "", TOGGLE, L"Collect textures for the pack",
+     L"While you play, every new texture is saved to <data>\\textures\\dump, for uhd_pack.py to upscale. Costs "
+     L"disk space and short hitches the first time a texture appears.",
+     {{"", L"Off"}, {"1", L"On"}}},
+    {"fx_fxaa", "1", DROP, L"Anti-aliasing",
+     L"FXAA is the game's own. SMAA blurs textures less. FSR 3 and DLSS give the smoothest edges (DLSS: RTX GPU and "
+     L"the Setup page's DLSS option). Off is the sharpest, with jagged edges. Also in the in-game menu (F1 / L3 + R3).",
+     {{"0", L"Off"}, {"1", L"FXAA · the game's own"}, {"2", L"SMAA"}, {"3", L"AMD FSR 3 · temporal"}, {"4", L"NVIDIA DLSS · RTX GPUs"}}},
+    {"fsr3_quality", "0", DROP, L"FSR 3 / DLSS upscaling",
+     L"Only with Anti-aliasing = FSR 3 or DLSS. The 3D scene renders smaller and is scaled up: more fps, a little "
+     L"softer. Native keeps the full size (DLSS Native is DLAA). The menus always stay sharp.",
+     {{"0", L"Native · full size"}, {"1", L"Quality · 1/1.5"}, {"2", L"Balanced · 1/1.7"}, {"3", L"Performance · 1/2"}, {"4", L"Ultra Performance · 1/3"}}},
+    {"pad_icons", "auto", DROP, L"Button icons",
+     L"Button prompts drawn for your controller: PlayStation symbols or Xbox letters instead of the Switch ones. "
+     L"Auto picks them from the connected pad.",
+     {{"auto", L"Auto · from the pad"}, {"switch", L"Switch"}, {"playstation", L"PlayStation"}, {"xbox", L"Xbox"}}},
+    {"sharpen", "0", DROP, L"Sharpening",
+     L"Contrast-adaptive sharpening of the final image: crisper textures at 4K, no halos on hard edges.",
+     {{"0", L"Off"}, {"35", L"Low"}, {"65", L"Medium"}, {"100", L"High"}}},
+    {"upscaler", "fsr1", DROP, L"Screen scaler",
+     L"Only used when the render resolution is below your screen size. FSR 1 keeps edges sharper than Bilinear. "
+     L"For FSR 3 or DLSS, pick them under Anti-aliasing instead.",
+     {{"bilinear", L"Bilinear"}, {"fsr1", L"FSR 1"}}},
+    {"random_battle_bgm", "0", DROP, L"Random battle music",
+     L"Game: a random battle track of the game each battle. Custom: a random .adx file from your music folder "
+     L"(<data>\\music, or custom_bgm_dir in settings.ini) with the victory theme of the same series. Mixed: both.",
+     {{"0", L"Off"}, {"1", L"Game tracks"}, {"2", L"Custom (.adx folder)"}, {"3", L"Mixed"}}},
+    {"msaa", "0", DROP, L"MSAA",
+     L"Smoother edges on 3D models, costs fps and VRAM. Not used with FSR 3 or DLSS. Also in the in-game menu "
+     L"(F1 / L3 + R3).",
+     {{"0", L"Off"}, {"2", L"2x"}, {"4", L"4x"}, {"8", L"8x"}}},
+    {"dlss_preset", "0", DROP, L"DLSS model",
+     L"Only with Anti-aliasing = DLSS. Auto is NVIDIA's pick for each mode (DLSS 4.5's M / L at Performance / Ultra "
+     L"Performance). M and L look best but cost more fps on RTX 20 / 30 cards.",
+     {{"0", L"Auto · NVIDIA's pick"}, {"11", L"K · transformer"}, {"13", L"M · DLSS 4.5 · made for Performance"}, {"12", L"L · DLSS 4.5 · made for Ultra Perf."}}},
+    {"map_reveal", "0", TOGGLE, L"Reveal dungeon maps",
+     L"Each Idolasphere floor shows its whole layout on the minimap and the map as soon as you enter it. What was "
+     L"revealed stays revealed. Also in the in-game menu (F1 / L3 + R3).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+};
+
+static std::string value_of(int i) { return get(k_set[i].key, k_set[i].def); }
+static int opt_index(int i) {
+    std::string v = value_of(i);
+    for (size_t k = 0; k < k_set[i].opts.size(); k++)
+        if (v == k_set[i].opts[k].v) return (int)k;
+    return -1;
+}
+static bool toggled(int i) {
+    std::string v = value_of(i);
+    return !v.empty() && v != "0";
+}
+
+// ------------------------------------------------------------------------------------------------ mods
+struct Mod { std::string name; uint64_t bytes = 0; int files = 0; bool on = true; };
+static std::vector<Mod> g_mods;
+
+static std::vector<std::string> disabled_mods() {
+    std::vector<std::string> v;
+    std::string s = get("mods_disabled", "") + ",";
+    for (size_t a = 0, b; (b = s.find(',', a)) != std::string::npos; a = b + 1)
+        if (std::string n = trim(s.substr(a, b - a)); !n.empty()) v.push_back(n);
+    return v;
+}
+
+static void scan_mods() {
+    g_mods.clear();
+    std::error_code ec;
+    auto off = disabled_mods();
+    for (auto& e : fs::directory_iterator(g_data / "mods", ec)) {
+        if (!fs::is_directory(e.path() / "romfs", ec) && !fs::is_directory(e.path() / "textures", ec)) continue;
+        Mod m;
+        m.name = e.path().filename().string();
+        m.on = std::find(off.begin(), off.end(), m.name) == off.end();
+        for (const char* sub : {"romfs", "textures"})
+            for (auto& f : fs::recursive_directory_iterator(e.path() / sub, ec))
+                if (f.is_regular_file(ec)) m.files++, m.bytes += f.file_size(ec);
+        g_mods.push_back(m);
+    }
+    std::sort(g_mods.begin(), g_mods.end(), [](const Mod& a, const Mod& b) { return a.name < b.name; });
+}
+
+static void store_mods() {
+    std::string s;
+    for (auto& m : g_mods)
+        if (!m.on) s += (s.empty() ? "" : ",") + m.name;
+    set("mods_disabled", s);
+}
+
+static std::wstring pretty(std::string n) {
+    std::replace(n.begin(), n.end(), '_', ' ');
+    if (!n.empty()) n[0] = (char)toupper((unsigned char)n[0]);
+    return wide(n);
+}
+
+static std::wstring size_text(uint64_t b) {
+    wchar_t t[32];
+    if (b >= (1ull << 30)) swprintf(t, 32, L"%.1f GB", b / double(1ull << 30));
+    else swprintf(t, 32, L"%.0f MB", b / double(1ull << 20));
+    return t;
+}
+
+// ------------------------------------------------------------------------------------------------ updates
+// Checks https://api.github.com/repos/<repo>/releases/latest (repo: ini update_repo, else k_update_repo). An update
+// downloads the release's first .zip asset, unpacks it with Windows' tar.exe and replaces the files next to this exe
+// (files in use are renamed to *.old first and deleted at the next start). settings.ini, saves and mods are never
+// touched (they are not in a release).
+static const char k_update_repo[] = "godofknife/TMSRecomp";  // GitHub releases: the update check and download
+enum Upd { UPD_OFF, UPD_CHECKING, UPD_LATEST, UPD_NEW, UPD_FAIL, UPD_BUSY };
+static std::atomic<int> g_upd{UPD_OFF};
+static std::string g_rel_tag, g_rel_zip, g_rel_page;
+static HWND g_wnd;
+constexpr UINT WM_UPD = WM_APP + 1;
+
+static bool http_get(const std::wstring& url, std::string* body, HANDLE file) {
+    URL_COMPONENTS u{sizeof u};
+    wchar_t host[256], path[2048], extra[1024];
+    u.lpszHostName = host, u.dwHostNameLength = 256;
+    u.lpszUrlPath = path, u.dwUrlPathLength = 2048;
+    u.lpszExtraInfo = extra, u.dwExtraInfoLength = 1024;
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &u)) return false;
+    bool ok = false;
+    HINTERNET s = WinHttpOpen(L"TMSRecomp-launcher", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0);
+    HINTERNET c = s ? WinHttpConnect(s, host, u.nPort, 0) : nullptr;
+    std::wstring obj = std::wstring(path) + extra;
+    HINTERNET r = c ? WinHttpOpenRequest(c, L"GET", obj.c_str(), nullptr, nullptr, nullptr,
+                                         u.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
+                    : nullptr;
+    if (r && WinHttpSendRequest(r, L"Accept: application/vnd.github+json\r\n", (DWORD)-1, nullptr, 0, 0, 0) &&
+        WinHttpReceiveResponse(r, nullptr)) {
+        DWORD code = 0, n = sizeof code;
+        WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &code, &n, nullptr);
+        ok = code == 200;
+        char buf[1 << 16];
+        for (DWORD got = 0; ok && WinHttpReadData(r, buf, sizeof buf, &got) && got; got = 0) {
+            if (body) body->append(buf, got);
+            DWORD w;
+            if (file && !WriteFile(file, buf, got, &w, nullptr)) ok = false;
+        }
+    }
+    if (r) WinHttpCloseHandle(r);
+    if (c) WinHttpCloseHandle(c);
+    if (s) WinHttpCloseHandle(s);
+    return ok;
+}
+
+// The string value of "key" after position from (JSON written by GitHub: no escapes in these values but \/).
+static std::string json_str(const std::string& j, const char* key, size_t from = 0, size_t* at = nullptr) {
+    size_t p = j.find(std::string("\"") + key + "\"", from);
+    if (p == std::string::npos) return "";
+    p = j.find('"', j.find(':', p) + 1);
+    size_t e = j.find('"', p + 1);
+    if (at) *at = e;
+    std::string v = j.substr(p + 1, e - p - 1);
+    for (size_t k; (k = v.find("\\/")) != std::string::npos;) v.erase(k, 1);
+    return v;
+}
+
+static std::vector<int> version_parts(const std::string& v) {
+    std::vector<int> n;
+    for (size_t i = 0; i < v.size();)
+        if (isdigit((unsigned char)v[i])) n.push_back(atoi(v.c_str() + i)), i = v.find_first_not_of("0123456789", i);
+        else i++;
+    return n;
+}
+
+static std::string repo() { return get("update_repo", k_update_repo); }
+
+static void check_updates() {
+    if (repo().empty()) { g_upd = UPD_OFF; return; }
+    g_upd = UPD_CHECKING;
+    std::thread([] {
+        std::string j;
+        bool ok = http_get(L"https://api.github.com/repos/" + wide(repo()) + L"/releases/latest", &j, nullptr);
+        if (ok) {
+            g_rel_tag = json_str(j, "tag_name");
+            g_rel_page = json_str(j, "html_url");
+            g_rel_zip.clear();
+            for (size_t at = 0;;) {
+                std::string u = json_str(j, "browser_download_url", at, &at);
+                if (u.empty()) break;
+                if (u.size() > 4 && u.substr(u.size() - 4) == ".zip") { g_rel_zip = u; break; }
+            }
+        }
+        g_upd = !ok || g_rel_tag.empty() ? UPD_FAIL
+              : version_parts(g_rel_tag) > version_parts(k_version) && !g_rel_zip.empty() ? UPD_NEW : UPD_LATEST;
+        PostMessageW(g_wnd, WM_UPD, 0, 0);
+    }).detach();
+}
+
+static bool run_wait(std::wstring cmd) {
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi;
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        return false;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return code == 0;
+}
+
+static void delete_old_files() {
+    std::error_code ec;
+    for (auto& e : fs::recursive_directory_iterator(g_dir, ec))
+        if (e.path().extension() == ".old") fs::remove(e.path(), ec);
+}
+
+// Runs on a worker thread; posts WM_UPD with lParam 1 when the new files are in place.
+static void apply_update() {
+    g_upd = UPD_BUSY;
+    std::thread([] {
+        std::error_code ec;
+        fs::path tmp = fs::temp_directory_path() / "tmsrecomp_update", zip = tmp / "update.zip", stage = tmp / "files";
+        fs::remove_all(tmp, ec);
+        fs::create_directories(stage, ec);
+        bool ok = false;
+        HANDLE f = CreateFileW(zip.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        if (f != INVALID_HANDLE_VALUE) {
+            ok = http_get(wide(g_rel_zip), nullptr, f);
+            CloseHandle(f);
+        }
+        ok = ok && run_wait(L"tar.exe -xf \"" + zip.wstring() + L"\" -C \"" + stage.wstring() + L"\"");
+        fs::path root = stage;
+        if (ok) {  // a zip with one top folder: its contents
+            auto it = fs::directory_iterator(stage, ec);
+            if (it != fs::directory_iterator() && it->is_directory() && std::next(it) == fs::directory_iterator())
+                root = it->path();
+        }
+        for (auto& e : fs::recursive_directory_iterator(root, ec)) {
+            if (!ok) break;
+            if (!e.is_regular_file()) continue;
+            fs::path rel = fs::relative(e.path(), root, ec);
+            std::wstring top = rel.begin()->wstring();
+            if (rel == L"settings.ini" || top == L"save" || top == L"mods" || top == L"romfs" || top == L"link") continue;
+            fs::path dst = g_dir / rel;
+            fs::create_directories(dst.parent_path(), ec);
+            if (fs::exists(dst, ec)) {
+                fs::path old = dst;
+                old += ".old";
+                fs::remove(old, ec);
+                fs::rename(dst, old, ec);
+            }
+            ok = fs::copy_file(e.path(), dst, fs::copy_options::overwrite_existing, ec);
+        }
+        g_upd = ok ? UPD_LATEST : UPD_FAIL;
+        PostMessageW(g_wnd, WM_UPD, 0, ok ? 1 : 0);
+    }).detach();
+}
+
+// ------------------------------------------------------------------------------------------------ drawing
+static ID2D1Factory* g_d2d;
+static IDWriteFactory* g_dw;
+static IWICImagingFactory* g_wic;
+static ID2D1HwndRenderTarget* g_rt;
+static ID2D1SolidColorBrush* g_brush;
+static ID2D1Bitmap* g_hero;
+static bool g_hero_title = false;  // g_hero is <data>/launcher_hero.* (the title screen the game saved), not a fallback
+static IDWriteTextFormat *f_brand, *f_brand2, *f_nav, *f_h1, *f_h2, *f_caps, *f_label, *f_body, *f_small, *f_btn, *f_play;
+static float g_scale = 1;  // pixels per DIP
+static const float W = 1180, H = 720, SIDE = 264, FOOT = 84;
+
+static D2D1_COLOR_F C(uint32_t rgb, float a = 1) {
+    return {((rgb >> 16) & 255) / 255.f, ((rgb >> 8) & 255) / 255.f, (rgb & 255) / 255.f, a};
+}
+// palette: ink with a green cast, one accent (the Encore green), mint for small highlights, amber for warnings.
+// INK is the text on accent fills (white on this green is too faint).
+static const uint32_t BG = 0x101513, SIDEBG = 0x0b0f0d, PANEL = 0x17201c, LINE = 0x263129, TEXT = 0xeaf3ee,
+                      MUTED = 0x93a69b, DIM = 0x627269, ACCENT = 0x34d27f, ACCENT_HI = 0x55e398, CYAN = 0x7fe3d0,
+                      WARN = 0xffb454, INK = 0x06170e, HOVER = 0x1f2a25, TRACK = 0x2e3a34, EDGE_HI = 0x3d4b44;
+
+static D2D1_RECT_F R(float x, float y, float w, float h) { return {x, y, x + w, y + h}; }
+static void fill(D2D1_RECT_F r, D2D1_COLOR_F c) { g_brush->SetColor(c); g_rt->FillRectangle(r, g_brush); }
+static void rounded(D2D1_RECT_F r, float rad, D2D1_COLOR_F c) {
+    g_brush->SetColor(c);
+    g_rt->FillRoundedRectangle({r, rad, rad}, g_brush);
+}
+static void outline(D2D1_RECT_F r, float rad, D2D1_COLOR_F c, float w = 1) {
+    g_brush->SetColor(c);
+    g_rt->DrawRoundedRectangle({{r.left + w / 2, r.top + w / 2, r.right - w / 2, r.bottom - w / 2}, rad, rad}, g_brush, w);
+}
+static void text(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* f, D2D1_COLOR_F c,
+                 DWRITE_TEXT_ALIGNMENT a = DWRITE_TEXT_ALIGNMENT_LEADING,
+                 DWRITE_PARAGRAPH_ALIGNMENT p = DWRITE_PARAGRAPH_ALIGNMENT_CENTER, float spacing = 0) {
+    f->SetTextAlignment(a);
+    f->SetParagraphAlignment(p);
+    g_brush->SetColor(c);
+    if (spacing == 0) { g_rt->DrawText(s.c_str(), (UINT32)s.size(), f, r, g_brush); return; }
+    IDWriteTextLayout* l = nullptr;
+    g_dw->CreateTextLayout(s.c_str(), (UINT32)s.size(), f, r.right - r.left, r.bottom - r.top, &l);
+    IDWriteTextLayout1* l1 = nullptr;
+    if (l && SUCCEEDED(l->QueryInterface(&l1))) {
+        l1->SetCharacterSpacing(0, spacing, 0, {0, (UINT32)s.size()});
+        l1->Release();
+    }
+    if (l) g_rt->DrawTextLayout({r.left, r.top}, l, g_brush), l->Release();
+}
+
+static IDWriteTextFormat* font(const wchar_t* family, float size, DWRITE_FONT_WEIGHT w,
+                               DWRITE_FONT_STRETCH st = DWRITE_FONT_STRETCH_NORMAL) {
+    IDWriteTextFormat* f = nullptr;
+    g_dw->CreateTextFormat(family, nullptr, w, DWRITE_FONT_STYLE_NORMAL, st, size, L"en-us", &f);
+    f->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    return f;
+}
+
+static ID2D1Bitmap* load_bitmap(const fs::path& p) {
+    IWICBitmapDecoder* dec = nullptr;
+    IWICBitmapFrameDecode* fr = nullptr;
+    IWICFormatConverter* cv = nullptr;
+    ID2D1Bitmap* bmp = nullptr;
+    if (SUCCEEDED(g_wic->CreateDecoderFromFilename(p.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) &&
+        SUCCEEDED(dec->GetFrame(0, &fr)) && SUCCEEDED(g_wic->CreateFormatConverter(&cv)) &&
+        SUCCEEDED(cv->Initialize(fr, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                 WICBitmapPaletteTypeCustom)))
+        g_rt->CreateBitmapFromWicBitmap(cv, nullptr, &bmp);
+    if (cv) cv->Release();
+    if (fr) fr->Release();
+    if (dec) dec->Release();
+    return bmp;
+}
+
+// Hero picture: <data>/launcher_hero.(png|jpg|bmp), else the newest F12 screenshot, else a drawn stage backdrop.
+static void load_hero() {
+    if (g_hero) g_hero->Release(), g_hero = nullptr;
+    g_hero_title = false;
+    std::error_code ec;
+    for (const wchar_t* n : {L"launcher_hero.png", L"launcher_hero.jpg", L"launcher_hero.bmp"})
+        if (fs::exists(g_data / n, ec) && (g_hero = load_bitmap(g_data / n))) { g_hero_title = true; return; }
+    fs::path newest;
+    fs::file_time_type t{};
+    for (auto& e : fs::directory_iterator(g_data / "shots", ec))
+        if (e.path().filename().wstring().rfind(L"screenshot_", 0) == 0 && e.last_write_time(ec) > t)
+            t = e.last_write_time(ec), newest = e.path();
+    if (!newest.empty()) g_hero = load_bitmap(newest);
+}
+
+// Window icon (user 11-23): <data>/icon.ico, made from the player's own game: the icon setup took from the NSP
+// (<data>/icon.jpg), else a square of the title screen picture the game saved (launcher_hero.*). Nothing of the game
+// ships with us, so a fresh install shows the default icon until then. tms.exe uses the same file.
+static bool make_icon(const fs::path& ico) {
+    std::error_code ec;
+    fs::path src = g_data / "icon.jpg";
+    const bool own = fs::exists(src, ec);
+    if (!own) {
+        src.clear();
+        for (const wchar_t* n : {L"launcher_hero.png", L"launcher_hero.jpg", L"launcher_hero.bmp"})
+            if (fs::exists(g_data / n, ec)) { src = g_data / n; break; }
+        if (src.empty()) return false;
+    }
+    IWICBitmapDecoder* dec = nullptr;
+    IWICBitmapFrameDecode* fr = nullptr;
+    IWICBitmapClipper* clip = nullptr;
+    IWICBitmapScaler* sc = nullptr;
+    IWICFormatConverter* cv = nullptr;
+    IWICBitmapEncoder* enc = nullptr;
+    IWICBitmapFrameEncode* fe = nullptr;
+    IStream* st = nullptr;
+    bool ok = false;
+    UINT w = 0, h = 0;
+    if (SUCCEEDED(g_wic->CreateDecoderFromFilename(src.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) &&
+        SUCCEEDED(dec->GetFrame(0, &fr)) && SUCCEEDED(fr->GetSize(&w, &h)) && w >= 64 && h >= 64 &&
+        SUCCEEDED(g_wic->CreateBitmapClipper(&clip))) {
+        // the title screen: a square around the whole logo (centre, upper half); the NSP icon: all of it
+        INT side = own ? (INT)std::min(w, h) : (INT)(h * 0.78f);
+        INT cx = own ? (INT)w / 2 : (INT)(w * 0.488f), cy = own ? (INT)h / 2 : (INT)(h * 0.41f);
+        WICRect rc{std::clamp(cx - side / 2, 0, (INT)w - side), std::clamp(cy - side / 2, 0, (INT)h - side), side, side};
+        if (SUCCEEDED(clip->Initialize(fr, &rc)) && SUCCEEDED(g_wic->CreateBitmapScaler(&sc)) &&
+            SUCCEEDED(sc->Initialize(clip, 256, 256, WICBitmapInterpolationModeFant)) &&
+            SUCCEEDED(g_wic->CreateFormatConverter(&cv)) &&
+            SUCCEEDED(cv->Initialize(sc, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) &&
+            SUCCEEDED(CreateStreamOnHGlobal(nullptr, TRUE, &st)) &&
+            SUCCEEDED(g_wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &enc)) &&
+            SUCCEEDED(enc->Initialize(st, WICBitmapEncoderNoCache)) && SUCCEEDED(enc->CreateNewFrame(&fe, nullptr)) &&
+            SUCCEEDED(fe->Initialize(nullptr)) && SUCCEEDED(fe->SetSize(256, 256))) {
+            WICPixelFormatGUID pf = GUID_WICPixelFormat32bppBGRA;
+            ok = SUCCEEDED(fe->SetPixelFormat(&pf)) && SUCCEEDED(fe->WriteSource(cv, nullptr)) && SUCCEEDED(fe->Commit()) &&
+                 SUCCEEDED(enc->Commit());
+        }
+    }
+    if (ok) {  // ICO = 6-byte header + one 16-byte entry (256 x 256 = 0, 32 bpp) + the PNG
+        HGLOBAL g = nullptr;
+        GetHGlobalFromStream(st, &g);
+        STATSTG ss{};
+        st->Stat(&ss, STATFLAG_NONAME);
+        const uint32_t n = (uint32_t)ss.cbSize.QuadPart;
+        std::string png((const char*)GlobalLock(g), n);
+        GlobalUnlock(g);
+        uint8_t hdr[22] = {0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 32, 0};
+        memcpy(hdr + 14, &n, 4);
+        hdr[18] = 22;
+        fs::path part = ico;
+        part += L".part";
+        {
+            std::ofstream f(part, std::ios::binary);
+            f.write((const char*)hdr, sizeof hdr).write(png.data(), png.size());
+            ok = (bool)f;
+        }
+        ok = ok && MoveFileExW(part.c_str(), ico.c_str(), MOVEFILE_REPLACE_EXISTING);
+        if (!ok) fs::remove(part, ec);
+    }
+    for (IUnknown* u : std::initializer_list<IUnknown*>{fe, enc, st, cv, sc, clip, fr, dec})
+        if (u) u->Release();
+    return ok;
+}
+
+static HICON g_icon_big, g_icon_small;
+static void apply_icon() {
+    if (g_data.empty() || !g_wnd) return;
+    std::error_code ec;
+    const fs::path ico = g_data / "icon.ico", jpg = g_data / "icon.jpg";
+    if (!fs::exists(ico, ec) || (fs::exists(jpg, ec) && fs::last_write_time(jpg, ec) > fs::last_write_time(ico, ec)))
+        if (!make_icon(ico)) return;
+    HICON big = (HICON)LoadImageW(nullptr, ico.c_str(), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_LOADFROMFILE);
+    HICON sml = (HICON)LoadImageW(nullptr, ico.c_str(), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_LOADFROMFILE);
+    if (!big || !sml) {
+        if (big) DestroyIcon(big);
+        if (sml) DestroyIcon(sml);
+        return;
+    }
+    SendMessageW(g_wnd, WM_SETICON, ICON_BIG, (LPARAM)big);
+    SendMessageW(g_wnd, WM_SETICON, ICON_SMALL, (LPARAM)sml);
+    if (g_icon_big) DestroyIcon(g_icon_big), DestroyIcon(g_icon_small);
+    g_icon_big = big, g_icon_small = sml;
+}
+
+static void draw_hero(D2D1_RECT_F r) {
+    float w = r.right - r.left, h = r.bottom - r.top;
+    if (g_hero) {  // cover: crop the picture to the box's aspect
+        D2D1_SIZE_F s = g_hero->GetSize();
+        float sw = s.width, sh = s.width * h / w;
+        if (sh > s.height) sh = s.height, sw = s.height * w / h;
+        D2D1_RECT_F src = R((s.width - sw) / 2, (s.height - sh) * 0.15f, sw, sh);
+        g_rt->DrawBitmap(g_hero, r, 1, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src);
+    } else {  // two stage spotlights over the ink
+        fill(r, C(0x0d1a14));
+        struct { float x, y, rad; uint32_t c; float a; } spots[] = {{0.72f, 0.15f, 0.75f, ACCENT, 0.55f},
+                                                                    {0.25f, 0.9f, 0.6f, CYAN, 0.28f}};
+        for (auto& sp : spots) {
+            D2D1_GRADIENT_STOP st[2] = {{0, C(sp.c, sp.a)}, {1, C(sp.c, 0)}};
+            ID2D1GradientStopCollection* sc = nullptr;
+            ID2D1RadialGradientBrush* b = nullptr;
+            g_rt->CreateGradientStopCollection(st, 2, &sc);
+            g_rt->CreateRadialGradientBrush({{r.left + w * sp.x, r.top + h * sp.y}, {0, 0}, w * sp.rad, h * sp.rad * 1.4f},
+                                            sc, &b);
+            g_rt->FillRectangle(r, b);
+            b->Release();
+            sc->Release();
+        }
+        g_brush->SetColor(C(0xffffff, 0.035f));
+        for (int i = 0; i < 7; i++) {  // faint light beams from the top right
+            float x0 = r.left + w * (0.55f + i * 0.07f);
+            ID2D1PathGeometry* g = nullptr;
+            g_d2d->CreatePathGeometry(&g);
+            ID2D1GeometrySink* k = nullptr;
+            g->Open(&k);
+            k->BeginFigure({x0, r.top}, D2D1_FIGURE_BEGIN_FILLED);
+            D2D1_POINT_2F pts[] = {{x0 + 18, r.top}, {x0 - w * 0.5f + i * 30, r.bottom}, {x0 - w * 0.5f + i * 30 - 70, r.bottom}};
+            k->AddLines(pts, 3);
+            k->EndFigure(D2D1_FIGURE_END_CLOSED);
+            k->Close();
+            g_rt->FillGeometry(g, g_brush);
+            k->Release();
+            g->Release();
+        }
+    }
+    // fade into the page at the bottom and into the sidebar on the left
+    auto fade = [&](D2D1_POINT_2F a, D2D1_POINT_2F b, D2D1_RECT_F box, float from) {
+        D2D1_GRADIENT_STOP st[2] = {{0, C(BG, from)}, {1, C(BG, 1)}};
+        ID2D1GradientStopCollection* sc = nullptr;
+        ID2D1LinearGradientBrush* lb = nullptr;
+        g_rt->CreateGradientStopCollection(st, 2, &sc);
+        g_rt->CreateLinearGradientBrush({a, b}, sc, &lb);
+        g_rt->FillRectangle(box, lb);
+        lb->Release();
+        sc->Release();
+    };
+    fade({0, r.bottom - h * 0.55f}, {0, r.bottom}, {r.left, r.bottom - h * 0.55f, r.right, r.bottom}, 0);
+    fade({r.left + 160, 0}, {r.left, 0}, {r.left, r.top, r.left + 160, r.bottom}, 0);
+}
+
+// ------------------------------------------------------------------------------------------------ hit targets
+struct Hit { D2D1_RECT_F r; int id; std::function<void(float x)> click; };
+static std::vector<Hit> g_hits;
+static int g_hover = -1, g_open = -1, g_drag = -1, g_page = 0;
+static D2D1_RECT_F g_drag_track;
+enum { ID_NAV = 100, ID_SET = 1000, ID_POP = 2000, ID_MOD = 3000, ID_PLAY = 10, ID_SAVE, ID_UPDATE, ID_NOTES,
+       ID_BROWSE, ID_OPEN_GAME, ID_OPEN_SHOTS, ID_OPEN_MODS, ID_OPEN_LOG, ID_CHECK,
+       ID_SU_SRC, ID_SU_KEYS, ID_SU_TARGET, ID_SU_SHADERS, ID_SU_DLSS, ID_SU_DLSS_RUN, ID_SU_RUN, ID_SU_CANCEL,
+       ID_G_TOPIC = 4000, ID_G_BTN = 4100, ID_X = 4200 };  // ID_X: page buttons below
+// Scrolling pages draw shifted up by g_scroll[page] and clipped above the footer: hits move and clip with them.
+static float g_scroll[8], g_max_scroll, g_bottom;
+static bool g_clip;
+static void hit(D2D1_RECT_F r, int id, std::function<void(float)> f) {
+    if (g_clip) {
+        r.top = std::max(r.top - g_scroll[g_page], 0.f), r.bottom = std::min(r.bottom - g_scroll[g_page], H - FOOT);
+        if (r.bottom <= r.top) return;
+    }
+    g_hits.push_back({r, id, std::move(f)});
+}
+static bool hov(int id) { return g_hover == id; }
+static void redraw() { InvalidateRect(g_wnd, nullptr, FALSE); }
+
+static void play();
+static void browse();
+static void open_path(const fs::path& p) {
+    std::error_code ec;
+    fs::create_directories(p, ec);
+    ShellExecuteW(g_wnd, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+static void button(D2D1_RECT_F r, const wchar_t* label, int id, bool primary, std::function<void()> f,
+                   IDWriteTextFormat* fmt = nullptr) {
+    bool h = hov(id);
+    if (primary) {
+        rounded(r, 4, C(h ? ACCENT_HI : ACCENT));
+    } else {
+        rounded(r, 4, C(h ? HOVER : PANEL));
+        outline(r, 4, C(h ? EDGE_HI : LINE));
+    }
+    text(label, r, fmt ? fmt : f_btn, C(primary ? INK : TEXT), DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, fmt == f_play ? 3.0f : 0.6f);
+    hit(r, id, [f](float) { f(); });
+}
+
+static void chevron(float x, float y, D2D1_COLOR_F c, bool up = false) {
+    g_brush->SetColor(c);
+    float d = up ? -1 : 1;
+    g_rt->DrawLine({x - 5, y - 2.5f * d}, {x, y + 2.5f * d}, g_brush, 1.6f);
+    g_rt->DrawLine({x, y + 2.5f * d}, {x + 5, y - 2.5f * d}, g_brush, 1.6f);
+}
+
+static void toggle(D2D1_RECT_F r, bool on, int id, std::function<void()> f, bool enabled);
+// One control for setting i in box r (the control only; the label is drawn by the caller).
+static void control(int i, D2D1_RECT_F r) {
+    const Setting& s = k_set[i];
+    int id = ID_SET + i;
+    bool h = hov(id) || g_open == i;
+    if (s.kind == DROP) {
+        rounded(r, 4, C(h ? 0x1c2621 : PANEL));
+        outline(r, 4, C(g_open == i ? ACCENT : h ? EDGE_HI : LINE));
+        int k = opt_index(i);
+        std::wstring v = k >= 0 ? s.opts[k].label : wide(value_of(i)) + L" FPS";
+        text(v, {r.left + 14, r.top, r.right - 36, r.bottom}, f_label, C(TEXT));
+        chevron(r.right - 18, (r.top + r.bottom) / 2, C(MUTED), g_open == i);
+        hit(r, id, [i](float) { g_open = g_open == i ? -1 : i; });
+    } else if (s.kind == TOGGLE) {
+        toggle(r, toggled(i), id, [i] { set(k_set[i].key, toggled(i) ? k_set[i].opts[0].v : k_set[i].opts[1].v); }, true);
+    } else {
+        float v = std::clamp((float)atof(value_of(i).c_str()), s.lo, s.hi), k = (v - s.lo) / (s.hi - s.lo);
+        D2D1_RECT_F tr = {r.left, (r.top + r.bottom) / 2 - 2, r.right - 70, (r.top + r.bottom) / 2 + 2};
+        rounded(tr, 2, C(TRACK));
+        rounded({tr.left, tr.top, tr.left + (tr.right - tr.left) * k, tr.bottom}, 2, C(ACCENT));
+        g_brush->SetColor(C(h || g_drag == i ? 0xffffff : 0xe3eee8));
+        g_rt->FillEllipse({{tr.left + (tr.right - tr.left) * k, (tr.top + tr.bottom) / 2}, 9, 9}, g_brush);
+        wchar_t t[16];
+        swprintf(t, 16, L"%.1f×", v);
+        text(t, {tr.right + 16, r.top, r.right, r.bottom}, f_label, C(TEXT), DWRITE_TEXT_ALIGNMENT_TRAILING);
+        D2D1_RECT_F area = {tr.left - 10, r.top, tr.right + 10, r.bottom};
+        hit(area, id, [i, tr](float x) {
+            g_drag = i;
+            g_drag_track = tr;
+            SetCapture(g_wnd);
+            const Setting& s = k_set[i];
+            float k = std::clamp((x - tr.left) / (tr.right - tr.left), 0.f, 1.f);
+            float v = s.lo + std::round(k * (s.hi - s.lo) / s.step) * s.step;
+            char b[16];
+            snprintf(b, 16, "%.1f", v);
+            set(s.key, b);
+        });
+    }
+}
+
+// A settings row: name, help text under it, control on the right. Returns the row height.
+static float text_h(const std::wstring& s, IDWriteTextFormat* f, float w) {
+    IDWriteTextLayout* l = nullptr;
+    DWRITE_TEXT_METRICS m{};
+    if (SUCCEEDED(g_dw->CreateTextLayout(s.c_str(), (UINT32)s.size(), f, w, 4000, &l))) l->GetMetrics(&m), l->Release();
+    return m.height;
+}
+
+static float text_w(const std::wstring& s, IDWriteTextFormat* f) {
+    IDWriteTextLayout* l = nullptr;
+    DWRITE_TEXT_METRICS m{};
+    f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    if (SUCCEEDED(g_dw->CreateTextLayout(s.c_str(), (UINT32)s.size(), f, 4000, 100, &l))) l->GetMetrics(&m), l->Release();
+    return m.widthIncludingTrailingWhitespace;
+}
+
+// A settings row: name, help text under it (and an optional value line in green), control on the right. The row is
+// as tall as its text. Returns the row height.
+static float row_with(const std::wstring& name, const std::wstring& help, float x, float y, float w,
+                      const std::function<void(D2D1_RECT_F)>& ctl, const std::wstring& value = L"") {
+    float hh = text_h(help, f_small, w - 400), vh = value.empty() ? 0 : 26, sep = y + std::max(84.f, 28 + hh + vh + 20);
+    text(name, R(x, y, w - 380, 26), f_label, C(TEXT), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    text(help, R(x, y + 28, w - 400, hh + 4), f_small, C(MUTED), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    if (vh) text(value, R(x, y + 34 + hh, w - 400, 22), f_small, C(ACCENT));
+    ctl(R(x + w - 360, y, 360, 40));
+    fill(R(x, sep, w, 1), C(LINE));
+    g_bottom = std::max(g_bottom, sep);
+    return sep + 2 - y;
+}
+static float row(int i, float x, float y, float w) {
+    return row_with(k_set[i].name, k_set[i].help, x, y, w, [i](D2D1_RECT_F r) { control(i, r); });
+}
+
+// An on/off switch in box r (vertically centred), with On / Off beside it.
+static void toggle(D2D1_RECT_F r, bool on, int id, std::function<void()> f, bool enabled) {
+    D2D1_RECT_F t = R(r.left, (r.top + r.bottom) / 2 - 12, 46, 24);
+    rounded(t, 12, C(on ? ACCENT : TRACK, enabled ? 1 : 0.5f));
+    g_brush->SetColor(C(on ? INK : 0xffffff, enabled ? 1 : 0.5f));
+    g_rt->FillEllipse({{on ? t.right - 12 : t.left + 12, t.top + 12}, 8.5f, 8.5f}, g_brush);
+    text(on ? L"On" : L"Off", {t.right + 12, r.top, t.right + 60, r.bottom}, f_label, C(on ? TEXT : MUTED));
+    if (enabled) hit({t.left, r.top, t.right + 50, r.bottom}, id, [f](float) { f(); });
+}
+
+// A small rounded label: "Ready to play" in green, a warning in amber. Right-aligned at `right`.
+static void pill(const std::wstring& t, float right, float y, uint32_t c) {
+    float tw = text_w(t, f_small) + 26;
+    D2D1_RECT_F r = R(right - tw, y, tw, 26);
+    rounded(r, 13, C(c, 0.14f));
+    outline(r, 13, C(c, 0.55f));
+    text(t, r, f_small, C(c), DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+}
+
+// A green circle with a step number.
+static void badge(float cx, float cy, int n) {
+    g_brush->SetColor(C(ACCENT));
+    g_rt->FillEllipse({{cx, cy}, 13, 13}, g_brush);
+    text(std::to_wstring(n), R(cx - 13, cy - 13, 26, 26), f_btn, C(INK), DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+}
+
+// A button as wide as its label; returns the x after it (with a gap).
+static float button_at(float x, float y, const std::wstring& label, int id, bool primary, std::function<void()> f, float h = 42) {
+    float bw = text_w(label, f_btn) + 44;
+    button(R(x, y, bw, h), label.c_str(), id, primary, std::move(f));
+    return x + bw + 12;
+}
+
+static void card(D2D1_RECT_F r) {
+    rounded(r, 10, C(PANEL));
+    outline(r, 10, C(LINE));
+}
+
+static void popup() {
+    if (g_open < 0) return;
+    const Setting& s = k_set[g_open];
+    // find the control's box from this frame's hits
+    D2D1_RECT_F at{};
+    for (auto& h : g_hits)
+        if (h.id == ID_SET + g_open) at = h.r;
+    float ih = 38, ph = ih * s.opts.size() + 8;
+    float top = at.bottom + 6 + ph > H - 8 ? at.top - 6 - ph : at.bottom + 6;
+    D2D1_RECT_F p = {at.left, top, at.right, top + ph};
+    rounded({p.left, p.top + 4, p.right, p.bottom + 6}, 6, C(0x000000, 0.45f));  // shadow
+    rounded(p, 6, C(0x1a2420));
+    outline(p, 6, C(0x34423b));
+    int cur = opt_index(g_open);
+    for (size_t k = 0; k < s.opts.size(); k++) {
+        D2D1_RECT_F ir = R(p.left + 4, p.top + 4 + ih * k, p.right - p.left - 8, ih);
+        int id = ID_POP + (int)k;
+        if (hov(id)) rounded(ir, 4, C(0x2a3831));
+        if ((int)k == cur) fill(R(ir.left, ir.top + 9, 3, ih - 18), C(ACCENT));
+        text(s.opts[k].label, {ir.left + 14, ir.top, ir.right - 8, ir.bottom}, f_label, C((int)k == cur ? 0xffffff : TEXT));
+        int i = g_open;
+        hit(ir, id, [i, k](float) { set(k_set[i].key, k_set[i].opts[k].v); g_open = -1; });
+    }
+}
+
+static void section(const wchar_t* t, float x, float y, float w) {
+    text(t, R(x, y, w, 20), f_caps, C(MUTED), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 2.2f);
+    fill(R(x, y + 26, 28, 2), C(ACCENT));
+}
+
+static void page_header(const wchar_t* title, const wchar_t* sub) {
+    text(title, R(SIDE + 48, 34, 700, 48), f_h1, C(TEXT));
+    text(sub, R(SIDE + 50, 82, 760, 22), f_small, C(MUTED));
+}
+
+static const wchar_t* k_pages[] = {L"Play", L"Graphics", L"Display & FPS", L"Game", L"Mods", L"Advanced", L"Setup", L"Guide"};
+
+static std::wstring status_line() {
+    std::wstring s;
+    int r = opt_index(RES);
+    s += r == 4 ? L"8K · 7680 × 4320" : r == 3 ? L"4K · 3840 × 2160" : r == 2 ? L"2560 × 1440" : r == 1 ? L"1920 × 1080" : L"1280 × 720";
+    std::string f = value_of(FPS);
+    s += f == "0" ? L"  ·  uncapped" : L"  ·  " + wide(f) + L" FPS";
+    s += value_of(WINDOW) == "window" ? L"  ·  window" : L"  ·  borderless";
+    int on = 0;
+    for (auto& m : g_mods) on += m.on;
+    if (on) s += L"  ·  " + std::to_wstring(on) + (on == 1 ? L" mod" : L" mods");
+    if (atof(value_of(WALK).c_str()) > 1.05) s += L"  ·  walk " + wide(value_of(WALK)) + L"×";
+    return s;
+}
+
+static void draw_sidebar() {
+    fill(R(0, 0, SIDE, H), C(SIDEBG));
+    fill(R(SIDE - 1, 0, 1, H), C(LINE));
+    text(L"TOKYO MIRAGE", R(28, 30, SIDE - 40, 30), f_brand, C(TEXT), DWRITE_TEXT_ALIGNMENT_LEADING,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 1.5f);
+    text(L"SESSIONS", R(28, 58, SIDE - 40, 30), f_brand, C(TEXT), DWRITE_TEXT_ALIGNMENT_LEADING,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 1.5f);
+    text(L"♯FE ENCORE", R(29, 90, SIDE - 40, 22), f_brand2, C(ACCENT), DWRITE_TEXT_ALIGNMENT_LEADING,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 3.0f);
+    text(L"native PC recompilation · v" + wide(k_version), R(29, 116, SIDE - 40, 20), f_small, C(DIM));
+    float y = 168;
+    for (int p = 0; p < (int)std::size(k_pages); p++, y += 50) {
+        D2D1_RECT_F r = R(0, y, SIDE - 1, 46);
+        bool sel = p == g_page, h = hov(ID_NAV + p);
+        if (sel) fill(r, C(0x16201b)), fill(R(0, y + 8, 3, 30), C(ACCENT));
+        else if (h) fill(r, C(0x131a17));
+        text(k_pages[p], {30, r.top, r.right, r.bottom}, f_nav, C(sel ? 0xffffff : h ? TEXT : MUTED),
+             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 0.4f);
+        hit(r, ID_NAV + p, [p](float) { g_page = p; g_open = -1; if (p == 4) scan_mods(); });
+    }
+    // update box
+    D2D1_RECT_F b = R(20, H - 150, SIDE - 40, 124);
+    int u = g_upd;
+    if (u == UPD_NEW || u == UPD_BUSY) {
+        rounded(b, 6, C(0x12281c));
+        outline(b, 6, C(ACCENT, 0.7f));
+        text(L"Version " + wide(g_rel_tag) + L" is ready", R(b.left + 16, b.top + 12, b.right - b.left - 32, 22),
+             f_label, C(0xffffff));
+        if (u == UPD_BUSY) text(L"Downloading and installing…", R(b.left + 16, b.top + 40, 200, 20), f_small, C(MUTED));
+        else {
+            button(R(b.left + 16, b.top + 44, 92, 34), L"Update", ID_UPDATE, true, [] {
+                std::wstring q = L"Download and install " + wide(g_rel_tag) + L" from github.com/" + wide(repo()) +
+                                 L"?\n\nSettings, saves and mods stay as they are.";
+                if (MessageBoxW(g_wnd, q.c_str(), L"Update TMSRecomp", MB_YESNO | MB_ICONQUESTION) == IDYES) apply_update();
+            });
+            button(R(b.left + 116, b.top + 44, 92, 34), L"What's new", ID_NOTES, false, [] {
+                ShellExecuteW(g_wnd, L"open", wide(g_rel_page).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            });
+        }
+        text(L"Installed: v" + wide(k_version), R(b.left + 16, b.top + 90, 200, 20), f_small, C(DIM));
+    } else {
+        const wchar_t* t = u == UPD_CHECKING ? L"Checking for updates…"
+                         : u == UPD_LATEST   ? L"Up to date"
+                         : u == UPD_FAIL     ? L"Update check failed"
+                                             : L"Updates not set up yet";
+        g_brush->SetColor(C(u == UPD_LATEST ? CYAN : u == UPD_FAIL ? WARN : DIM));
+        g_rt->FillEllipse({{b.left + 5, b.bottom - 40}, 3.5f, 3.5f}, g_brush);
+        text(t, R(b.left + 18, b.bottom - 50, 200, 20), f_small, C(MUTED));
+        if (u == UPD_LATEST || u == UPD_FAIL)
+            button(R(b.left, b.bottom - 22, 120, 26), L"Check again", ID_CHECK, false, [] { check_updates(); }, f_small);
+        else
+            text(L"In game: F12 screenshot,\nF11 / Alt+Enter window mode", R(b.left, b.bottom - 26, 220, 34), f_small, C(DIM),
+                 DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    }
+}
+
+static void draw_footer();
+static void setup_go();
+
+// ------------------------------------------------------------------------------------------------ first-run setup
+// setup\tools\setup\setup.py (with setup\python) builds the data folder and game.dll from the player's own game:
+// this download holds no game code. The script prints STEP / PROGRESS / ERROR / DATA / DONE lines (see setup.py).
+constexpr UINT WM_SETUP = WM_APP + 2;
+static std::wstring g_su_src, g_su_keys, g_su_target;  // NSP file or extracted folder; keys + target for an NSP
+static bool g_su_shaders = true;
+static bool g_su_dlss = false;  // the player's tick: NVIDIA's licence applies to the file it downloads
+static std::mutex g_su_lock;
+static struct SetupState {
+    bool running = false, done = false;
+    int step = 0, steps = 6;
+    double done_n = 0, total = 0;
+    std::wstring text, error;
+} g_su;
+static HANDLE g_su_job;
+static bool g_su_extra = false;  // the running / last job is a Guide install (mod, ZIP, music), not the game setup
+static int g_topic = 0;  // Guide topic (the Setup page's Extras tiles open one)
+static int g_su_topic = -1;       // the Guide topic that install belongs to (its status shows only there)
+static DWORD g_su_t0;
+
+static bool game_ready() { return is_data(g_data) && fs::exists(g_dir / "game.dll"); }
+
+// What game.dll and the shader cache were built with: tms.exe (its exports), setup\sdk, setup\tools, setup\llvm and the
+// shader translator. A finished setup stores this in setup\built.txt; after an update it differs -> setup runs again
+// (incremental: only the steps whose tools changed, usually a relink of game.dll).
+static std::string build_signature() {
+    std::error_code ec;
+    std::vector<std::string> v;
+    auto add = [&](const fs::path& p) {
+        if (!fs::is_regular_file(p, ec)) return;
+        auto t = fs::last_write_time(p, ec).time_since_epoch().count();
+        v.push_back(fs::relative(p, g_dir, ec).string() + "|" + std::to_string(fs::file_size(p, ec)) + "|" + std::to_string(t));
+    };
+    add(g_dir / "tms.exe");
+    add(g_dir / "shaderc" / "NxShader.dll");
+    for (const char* d : {"sdk", "tools", "llvm"})
+        for (auto it = fs::recursive_directory_iterator(g_dir / "setup" / d, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (it->is_directory(ec) && it->path().filename() == "__pycache__") { it.disable_recursion_pending(); continue; }
+            if (it->path().extension() != ".old") add(it->path());
+        }
+    std::sort(v.begin(), v.end());
+    std::string s;
+    for (auto& x : v) s += x + "\n";
+    return s;
+}
+static fs::path built_file() { return g_dir / "setup" / "built.txt"; }
+static bool setup_stale() {  // dev builds (no setup\) never are
+    if (!game_ready() || !fs::exists(g_dir / "setup" / "tools")) return false;
+    std::ifstream f(built_file(), std::ios::binary);
+    std::string old((std::istreambuf_iterator<char>(f)), {});
+    return old != build_signature();
+}
+static bool su_is_nsp() { return !g_su_src.empty() && !fs::is_directory(g_su_src); }
+
+static void su_line(const std::string& l) {
+    std::lock_guard<std::mutex> lk(g_su_lock);
+    if (!l.compare(0, 5, "STEP ")) {
+        int i = 0, k = 0, used = 0;
+        sscanf(l.c_str() + 5, "%d %d %n", &i, &k, &used);
+        g_su.step = i, g_su.steps = k, g_su.text = wide(l.substr(5 + used)), g_su.done_n = g_su.total = 0;
+    } else if (!l.compare(0, 9, "PROGRESS ")) {
+        sscanf(l.c_str() + 9, "%lf %lf", &g_su.done_n, &g_su.total);
+    } else if (!l.compare(0, 6, "ERROR ")) {
+        g_su.error = wide(l.substr(6));
+    } else if (!l.compare(0, 5, "DATA ")) {
+        g_data = fs::path(wide(l.substr(5)));
+    } else if (l == "DONE") {
+        g_su.done = true;
+    } else if (!g_su.error.empty() && g_su.error.size() < 1500) {
+        g_su.error += L"\n" + wide(l);  // the tool's own error lines follow the ERROR line
+    }
+}
+
+static void su_reader(HANDLE out) {
+    std::string buf;
+    char b[4096];
+    DWORD n;
+    while (ReadFile(out, b, sizeof b, &n, nullptr) && n) {
+        buf.append(b, n);
+        for (size_t e; (e = buf.find('\n')) != std::string::npos; buf.erase(0, e + 1)) {
+            su_line(trim(buf.substr(0, e)));
+            PostMessageW(g_wnd, WM_SETUP, 0, 0);
+        }
+    }
+    CloseHandle(out);
+    {
+        std::lock_guard<std::mutex> lk(g_su_lock);
+        g_su.running = false;
+        if (!g_su.done && g_su.error.empty()) g_su.error = L"Setup stopped.";
+    }
+    PostMessageW(g_wnd, WM_SETUP, 1, 0);
+}
+
+// extra: setup.py arguments of a Guide page install (--mod / --zip / --music <path>), into the data folder
+static void su_start(bool dlss_only = false, const std::wstring& extra = L"") {
+    fs::path py = g_dir / "setup" / "python" / "python.exe", script = g_dir / "setup" / "tools" / "setup" / "setup.py";
+    if (!fs::exists(script)) {
+        MessageBoxW(g_wnd, L"The setup tools (setup\\ folder) are missing: extract the whole TMSRecomp ZIP again.",
+                    L"TMSRecomp", MB_ICONERROR);
+        return;
+    }
+    if (!dlss_only && extra.empty() && (g_su_src.empty() || (su_is_nsp() && (g_su_keys.empty() || g_su_target.empty())))) {
+        MessageBoxW(g_wnd, L"Pick your game (NSP file, or a folder with exefs\\ and romfs\\), and for an NSP your prod.keys.",
+                    L"TMSRecomp", MB_ICONWARNING);
+        return;
+    }
+    // shortcut: a dev tree without setup\python uses python.exe from PATH
+    std::wstring cmd = L"\"" + (fs::exists(py) ? py.wstring() : std::wstring(L"python.exe")) + L"\" -I -u \"" +
+                       script.wstring() + L"\"";
+    if (dlss_only) cmd += L" --dlss-only";
+    else if (!extra.empty()) cmd += L" " + extra + L" --data \"" + g_data.wstring() + L"\"";
+    else {
+        cmd += su_is_nsp() ? L" --nsp \"" + g_su_src + L"\" --keys \"" + g_su_keys + L"\" --data \"" + g_su_target + L"\""
+                           : L" --folder \"" + g_su_src + L"\"";
+        if (!g_su_shaders) cmd += L" --no-shaders";
+        if (g_su_dlss) cmd += L" --dlss";
+    }
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE rd, wr;
+    CreatePipe(&rd, &wr, &sa, 0);
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si{sizeof si};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = si.hStdError = wr;
+    PROCESS_INFORMATION pi;
+    // a job: Cancel (or closing the launcher) ends python and every tool it started (nstool, clang, translator)
+    if (!g_su_job) {
+        g_su_job = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(g_su_job, JobObjectExtendedLimitInformation, &li, sizeof li);
+    }
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
+                        g_dir.c_str(), &si, &pi)) {
+        CloseHandle(rd), CloseHandle(wr);
+        MessageBoxW(g_wnd, L"Could not start the setup (Python).", L"TMSRecomp", MB_ICONERROR);
+        return;
+    }
+    AssignProcessToJobObject(g_su_job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread), CloseHandle(pi.hProcess), CloseHandle(wr);
+    {
+        std::lock_guard<std::mutex> lk(g_su_lock);
+        g_su = {};
+        g_su.running = true, g_su.text = L"Starting…";
+    }
+    g_su_extra = !extra.empty();
+    g_su_topic = g_page == 7 ? g_topic : 1;  // the Mods page installs the patch
+    g_su_t0 = GetTickCount();
+    std::thread(su_reader, rd).detach();
+}
+
+static void su_cancel() {
+    if (g_su_job) TerminateJobObject(g_su_job, 1);  // the reader thread then sees the pipe close
+}
+
+static std::wstring pick_file(const wchar_t* filter, const wchar_t* title) {
+    wchar_t b[MAX_PATH] = L"";
+    OPENFILENAMEW o{sizeof o};
+    o.hwndOwner = g_wnd, o.lpstrFilter = filter, o.lpstrFile = b, o.nMaxFile = MAX_PATH, o.lpstrTitle = title;
+    o.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+    return GetOpenFileNameW(&o) ? b : L"";
+}
+
+// The Explorer-style "Select Folder" dialog (address bar, search, quick access), same look as pick_file's.
+static std::wstring pick_folder(const wchar_t* title) {
+    std::wstring r;
+    IFileOpenDialog* d = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d)))) return r;
+    DWORD o = 0;
+    d->GetOptions(&o);
+    d->SetOptions(o | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    d->SetTitle(title);
+    IShellItem* it = nullptr;
+    if (SUCCEEDED(d->Show(g_wnd)) && SUCCEEDED(d->GetResult(&it))) {
+        PWSTR b = nullptr;
+        if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &b))) r = b, CoTaskMemFree(b);
+        it->Release();
+    }
+    d->Release();
+    return r;
+}
+
+
+// Shortened path for a value line: the end matters most.
+static std::wstring short_path(const std::wstring& v) { return v.size() > 70 ? L"\u2026" + v.substr(v.size() - 69) : v; }
+
+// The Guide's installs (setup.py --mod / --zip / --music into the data folder; the game files stay as dumped).
+static void install_patch() {
+    if (auto p = pick_folder(L"The folder with the patch's .xdelta files (or a mod with a romfs folder)"); !p.empty())
+        su_start(false, L"--mod \"" + p + L"\"");
+}
+static void install_zip() {
+    if (auto p = pick_file(L"TMSRecomp ZIP\0*.zip\0", L"TMSRecomp-UHD or TMSRecomp-MovieHD ZIP"); !p.empty())
+        su_start(false, L"--zip \"" + p + L"\"");
+}
+static void install_music() {
+    if (auto p = pick_folder(L"A folder with .adx music files"); !p.empty()) su_start(false, L"--music \"" + p + L"\"");
+}
+
+// Progress / result of the last setup run at (x, y), width w. Caller holds g_su_lock. Returns the height used.
+static float run_status(float x, float y, float w, const wchar_t* done) {
+    if (g_su.running) {
+        double k = g_su.total > 0 ? std::clamp(g_su.done_n / g_su.total, 0.0, 1.0) : 0;
+        float pk = std::clamp((float)((g_su.step - 1 + k) / std::max(1, g_su.steps)), 0.f, 1.f);
+        D2D1_RECT_F bar = R(x, y + 16, w - 140, 8);
+        rounded(bar, 4, C(TRACK));
+        rounded({bar.left, bar.top, bar.left + (bar.right - bar.left) * pk, bar.bottom}, 4, C(ACCENT));
+        DWORD s = (GetTickCount() - g_su_t0) / 1000;
+        wchar_t b[64];
+        swprintf(b, 64, L"Step %d of %d  \u00b7  %u:%02u  \u00b7  ", g_su.step, g_su.steps, s / 60, s % 60);
+        text(b + g_su.text, R(x, y + 30, w - 140, 22), f_small, C(MUTED));
+        button(R(x + w - 124, y, 124, 40), L"Cancel", ID_SU_CANCEL, false, [] { su_cancel(); });
+        return 60;
+    }
+    if (!g_su.error.empty()) {
+        float h = text_h(g_su.error, f_small, w);
+        text(g_su.error, R(x, y, w, h + 4), f_small, C(WARN), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        return h + 12;
+    }
+    if (g_su.done) {
+        text(done, R(x, y, w, 24), f_label, C(ACCENT));
+        return 32;
+    }
+    return 0;
+}
+
+static void draw_setup(float x, float w) {
+    std::lock_guard<std::mutex> lk(g_su_lock);
+    page_header(L"Setup", L"Builds the game from your own copy. You do this once: about 5 to 15 minutes.");
+    pill(game_ready() ? L"\u2713  Ready to play" : L"Not set up yet", x + w, 46, game_ready() ? ACCENT : WARN);
+    const bool nsp = su_is_nsp(), idle = !g_su.running, picked = !g_su_src.empty();
+
+    float y = 128;
+    if (!g_su.running && !g_su_extra) {  // the last build's result, where it is seen
+        float h = run_status(x, y, w, L"\u2713  Done. Press PLAY.");
+        if (h) y += h + 12;
+    }
+    section(L"1   YOUR GAME", x, y, w);
+    y += 38;
+    y += row_with(L"Game", L"Tokyo Mirage Sessions #FE Encore, base game 1.0.0, dumped from your own Switch: the NSP file, "
+                           L"or a folder you already extracted (with exefs and romfs in it).",
+                  x, y, w, [&](D2D1_RECT_F r) {
+                      if (!idle) return;
+                      button(R(r.left, r.top, 174, 40), L"NSP file\u2026", ID_SU_SRC, !picked && !game_ready(), [] {
+                          if (auto p = pick_file(L"Switch NSP\0*.nsp\0All files\0*.*\0", L"Your game's NSP"); !p.empty()) {
+                              g_su_src = p;
+                              if (g_su_target.empty()) g_su_target = (g_dir / "game").wstring();
+                          }
+                      });
+                      button(R(r.left + 186, r.top, 174, 40), L"Extracted folder\u2026", ID_X + 0, false, [] {
+                          if (auto p = pick_folder(L"Your extracted game: the folder with exefs and romfs"); !p.empty()) g_su_src = p;
+                      });
+                  }, picked ? L"\u2713  " + short_path(g_su_src) : L"");
+    y += row_with(L"prod.keys",
+                  nsp ? L"The keys file from your own console. Setup needs it to open the NSP."
+                      : picked ? L"Not needed: an extracted folder is already decrypted."
+                               : L"The keys file from your own console. Only needed for an NSP file.",
+                  x, y, w, [&](D2D1_RECT_F r) {
+                      if (idle && nsp)
+                          button(R(r.left + 186, r.top, 174, 40), L"Browse\u2026", ID_SU_KEYS, g_su_keys.empty(), [] {
+                              if (auto p = pick_file(L"Keys\0*.keys\0All files\0*.*\0", L"prod.keys"); !p.empty()) g_su_keys = p;
+                          });
+                  }, nsp && !g_su_keys.empty() ? L"\u2713  " + short_path(g_su_keys) : L"");
+    if (nsp)
+        y += row_with(L"Install to", L"Where the game files go: about 13 GB.", x, y, w, [&](D2D1_RECT_F r) {
+                 if (idle)
+                     button(R(r.left + 186, r.top, 174, 40), L"Change\u2026", ID_SU_TARGET, false, [] {
+                         if (auto p = pick_folder(L"Where the game files go (about 13 GB)"); !p.empty()) g_su_target = p;
+                     });
+             }, short_path(g_su_target));
+
+    section(L"2   OPTIONS", x, y + 14, w);
+    y += 52;
+    y += row_with(L"Precompile shaders", L"No stutter the first time an effect appears in the game. Adds about 4 minutes and "
+                                         L"300 MB to the setup.",
+                  x, y, w, [&](D2D1_RECT_F r) { toggle(r, g_su_shaders, ID_SU_SHADERS, [] { g_su_shaders = !g_su_shaders; }, idle); });
+    const bool have_dlss = fs::exists(g_dir / "nvngx_dlss.dll");
+    y += row_with(L"NVIDIA DLSS",
+                  have_dlss ? L"Installed. Turn it on under Display & FPS \u2192 Anti-aliasing (RTX graphics cards)."
+                            : L"For RTX graphics cards. Not included in this download: when on, setup downloads it from "
+                              L"NVIDIA's GitHub (59 MB, NVIDIA's own licence). Without it, FSR 3 works on every card.",
+                  x, y, w, [&](D2D1_RECT_F r) {
+                      toggle(r, g_su_dlss || have_dlss, ID_SU_DLSS, [] { g_su_dlss = !g_su_dlss; }, idle && !have_dlss);
+                      if (idle && !have_dlss && g_su_dlss && game_ready())
+                          button(R(r.right - 150, r.top, 150, 40), L"Download now", ID_SU_DLSS_RUN, true, [] { su_start(true); });
+                  });
+
+    y += 18;
+    if (idle && game_ready()) {
+        float bx = button_at(x, y, L"Set up again", ID_SU_RUN, false, [] { setup_go(); });
+        text(L"Only needed when a new TMSRecomp version asks for it, or for another dump.", R(bx + 8, y, w, 42), f_small, C(MUTED));
+        y += 56;
+    } else if (idle) {
+        text(L"Ready? Press SET UP at the bottom right. It takes 5 to 15 minutes: keep this window open.",
+             R(x, y, w, 24), f_label, C(TEXT));
+        y += 40;
+    }
+
+    section(L"3   EXTRAS (OPTIONAL)", x, y + 6, w);
+    y += 46;
+    static const wchar_t* ex[][2] = {{L"English patch", L"Translation and uncensor"}, {L"UHD textures", L"4\u00d7 sharper textures"},
+                                     {L"4K movies", L"Story movies in 4K"}, {L"Battle music", L"Your own .adx tracks"}};
+    const float tw = (w - 36) / 4;
+    for (int k = 0; k < 4; k++) {
+        D2D1_RECT_F r = R(x + k * (tw + 12), y, tw, 84);
+        const bool h = hov(ID_X + 10 + k);
+        rounded(r, 10, C(h ? HOVER : PANEL));
+        outline(r, 10, C(h ? ACCENT : LINE, h ? 0.7f : 1));
+        text(ex[k][0], R(r.left + 18, r.top + 16, tw - 36, 24), f_label, C(TEXT));
+        text(ex[k][1], R(r.left + 18, r.top + 44, tw - 50, 22), f_small, C(MUTED));
+        text(L"\u2192", R(r.right - 34, r.top + 44, 20, 22), f_label, C(h ? ACCENT : DIM));
+        hit(r, ID_X + 10 + k, [k](float) { g_page = 7; g_topic = k + 1; });
+    }
+    g_bottom = std::max(g_bottom, y + 84);
+}
+
+// "Copy system info": one block for a bug report (version, Windows, CPU, RAM, GPU + driver from the last nx.log, the
+// settings that change rendering). Paths are left out (they hold the Windows user name).
+static void copy_sysinfo() {
+    std::string t = sysinfo_line() + "\r\n";
+    std::ifstream lf(g_data / "nx.log");
+    std::string gpu;
+    for (std::string l; gpu.empty() && std::getline(lf, l);)
+        if (auto k = l.find("vk: "); k != std::string::npos && l.find("(driver") != std::string::npos) gpu = trim(l.substr(k + 4));
+    if (gpu.empty()) {
+        DISPLAY_DEVICEW d{sizeof d};
+        for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &d, 0); i++)
+            if (d.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) { gpu = narrow(d.DeviceString) + " (driver: see nx.log)"; break; }
+    }
+    t += "GPU: " + (gpu.empty() ? std::string("unknown") : gpu) + "\r\nSettings:";
+    for (const char* k : {"fps", "res", "window", "present_mode", "fx_fxaa", "fsr3_quality", "dlss_preset", "msaa", "upscaler", "tex_pack",
+                          "movie_hd", "mods_disabled", "random_battle_bgm"})
+        if (auto v = get(k, ""); !v.empty()) t += std::string(" ") + k + "=" + v;
+    int on = 0;
+    for (auto& m : g_mods) on += m.on;
+    t += " mods_on=" + std::to_string(on) + "\r\n";
+    const std::wstring w = wide(t);
+    if (!OpenClipboard(g_wnd)) return;
+    EmptyClipboard();
+    if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, (w.size() + 1) * sizeof(wchar_t))) {
+        memcpy(GlobalLock(h), w.c_str(), (w.size() + 1) * sizeof(wchar_t));
+        GlobalUnlock(h);
+        if (!SetClipboardData(CF_UNICODETEXT, h)) GlobalFree(h);
+    }
+    CloseClipboard();
+    MessageBoxW(g_wnd, (L"Copied. Paste it into your bug report, and attach nx.log.\n\n" + w).c_str(), L"System info", MB_ICONINFORMATION);
+}
+
+// ------------------------------------------------------------------------------------------------ Guide page
+// First-time help: one topic at a time, numbered steps and the buttons that do them (installs run setup.py --mod /
+// --zip / --music with the Setup page's progress machinery; results go into the data folder, the game files stay as dumped).
+struct Topic { const wchar_t* name; const wchar_t* title; const wchar_t* intro; const wchar_t* steps[3]; const wchar_t* tip; };
+static const Topic k_topics[] = {
+    {L"Get started", L"Set up the game",
+     L"All you need is your own copy of the game. No emulator and no Switch firmware.",
+     {L"Dump the game from your own Switch: the base game 1.0.0 as an NSP file, plus your console's prod.keys.",
+      L"Open Setup, pick both files and press Set up game files. It takes 5 to 15 minutes, once.",
+      L"Press PLAY. In the game, F1 (or L3 + R3 on a controller) opens the settings menu."},
+     L"Already extracted the game (a folder with exefs and romfs)? Pick that folder instead: then no keys are needed."},
+    {L"English patch", L"English patch & uncensor",
+     L"Fan patches come as .xdelta files, one per game archive. They install as a mod: your game files are never changed.",
+     {L"Download the patch and unzip it, so its .xdelta files sit in one folder. That folder's name becomes the mod's name.",
+      L"Press Install patch and pick that folder. The full English / uncensor patch takes about 20 minutes and up to 9 GB.",
+      L"Done: the mod is on. The Mods page turns it off and on."},
+     L"A mod that already has a romfs folder installs the same way: pick the folder that holds romfs."},
+    {L"UHD textures", L"UHD textures",
+     L"The game's own textures, upscaled 4\u00d7. Needs about 12 GB of disk and a graphics card with 4 GB of memory or more.",
+     {L"Download the TMSRecomp-UHD ZIP (link on the release page).",
+      L"Press Install ZIP and pick the file.",
+      L"Graphics \u2192 UHD texture pack = On, then start the game."},
+     L"Your own texture mods go in <game files>\\mods\\<name>\\textures (see README.txt)."},
+    {L"4K movies", L"4K movies",
+     L"Story movies and camp backgrounds in 4K, upscaled from the game's 720p videos (also the uncensor patch's movies).",
+     {L"Download the TMSRecomp-MovieHD ZIP (link on the release page).",
+      L"Press Install ZIP and pick the file. It needs about 7 GB.",
+      L"That's all: the game plays the 4K movies on its own."},
+     L"A CPU too slow for 4K video plays the 720p movie instead. To turn them off: movie_hd = 0 in settings.ini."},
+    {L"Battle music", L"Your own battle music",
+     L"Play your own .adx tracks in random battles, for example from a battle music mod.",
+     {L"Press Add music folder and pick a folder of .adx files.",
+      L"Game \u2192 Random battle music = Custom (only yours) or Mixed (yours and the game's).",
+      L"Start a battle."},
+     L"Name files like \u201c1_P5R_Last Surprise.adx\u201d. A title with \u201cVictory\u201d plays after battles of the same series. "
+     L"Encrypted .adx files need their key as custom_bgm_key in settings.ini."},
+    {L"Controls & help", L"Controls & help",
+     L"A controller works as on the Switch: the right face button is A. To quit, open the Y menu and press \u2212.",
+     {}, L"Found a bug? Press Copy system info and paste it into a GitHub issue, with nx.log attached. Never post game files or keys."},
+};
+
+static void draw_guide(float x, float w) {
+    page_header(L"Guide", L"New here? Start with Get started. The buttons in each topic do the work for you.");
+    for (int k = 0; k < (int)std::size(k_topics); k++) {
+        D2D1_RECT_F r = R(x, 128 + k * 50.f, 196, 44);
+        bool sel = k == g_topic, h = hov(ID_G_TOPIC + k);
+        if (sel || h) rounded(r, 8, C(sel ? PANEL : 0x141c18));
+        if (sel) outline(r, 8, C(LINE)), rounded(R(r.left, r.top + 11, 3, 22), 1.5f, C(ACCENT));
+        text(k_topics[k].name, {r.left + 18, r.top, r.right, r.bottom}, f_label, C(sel ? 0xffffff : h ? TEXT : MUTED));
+        hit(r, ID_G_TOPIC + k, [k](float) { g_topic = k; });
+    }
+    const Topic& t = k_topics[g_topic];
+    const float cx = x + 216, cw = w - 216, px = cx + 30, pw = cw - 60;
+    std::lock_guard<std::mutex> lk(g_su_lock);
+    {  // measure, then draw the card behind the content
+        float h = 22 + 42 + text_h(t.intro, f_body, pw) + 24;
+        if (g_topic == 5) h += 5 * 38 + 16;
+        else for (auto st : t.steps) h += std::max(26.f, text_h(st, f_body, pw - 46)) + 18;
+        h += (g_topic == 5 ? 0 : 4) + 56 + 8 + text_h(t.tip, f_small, pw - 40) + 24 + 28;
+        if (g_su_extra && g_su_topic == g_topic) h += g_su.running ? 60 : !g_su.error.empty() ? text_h(g_su.error, f_small, pw) + 12 : g_su.done ? 32 : 0;
+        card(R(cx, 128, cw, h));
+    }
+    float y = 150;
+    text(t.title, R(px, y, pw, 34), f_h2, C(0xffffff));
+    y += 42;
+    float ih = text_h(t.intro, f_body, pw);
+    text(t.intro, R(px, y, pw, ih + 4), f_body, C(MUTED), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    y += ih + 24;
+    if (g_topic == 5) {  // controls: key caps in two columns
+        static const wchar_t* keys[][2] = {{L"F1  \u00b7  L3 + R3", L"Settings menu"}, {L"F12", L"Screenshot"},
+                                           {L"F11  \u00b7  Alt + Enter", L"Fullscreen"}, {L"W A S D", L"Move"},
+                                           {L"Arrow keys", L"D-pad"},           {L"K  \u00b7  Enter", L"A"},
+                                           {L"J  \u00b7  Backspace", L"B"},      {L"I  /  U", L"X  /  Y"},
+                                           {L"Space  /  Tab", L"+  /  \u2212"}};
+        const float colw = pw / 2;
+        for (int k = 0; k < 9; k++) {
+            float kx = px + (k < 5 ? 0 : colw), ky = y + (k % 5) * 38;
+            float kw = text_w(keys[k][0], f_small) + 22;
+            D2D1_RECT_F kr = R(kx, ky, kw, 28);
+            rounded(kr, 6, C(HOVER));
+            outline(kr, 6, C(EDGE_HI));
+            text(keys[k][0], kr, f_small, C(TEXT), DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            text(keys[k][1], R(kx + 156, ky, colw - 160, 28), f_body, C(MUTED));
+        }
+        y += 5 * 38 + 16;
+    } else {
+        for (int k = 0; k < 3; k++) {
+            float sh = text_h(t.steps[k], f_body, pw - 46);
+            badge(px + 13, y + 12, k + 1);
+            text(t.steps[k], R(px + 46, y + 1, pw - 46, sh + 4), f_body, C(TEXT), DWRITE_TEXT_ALIGNMENT_LEADING,
+                 DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            y += std::max(26.f, sh) + 18;
+        }
+        y += 4;
+    }
+    const bool idle = !g_su.running, ready = is_data(g_data) && fs::exists(g_data / "romfs");
+    float bx = px;
+    if (g_topic >= 1 && g_topic <= 4 && !ready)
+        bx = button_at(bx, y, L"Set up the game first", ID_G_BTN + 0, true, [] { g_page = 6; });
+    else switch (g_topic) {
+        case 0: bx = button_at(bx, y, game_ready() ? L"Open Setup" : L"Go to Setup", ID_G_BTN + 0, !game_ready(), [] { g_page = 6; }); break;
+        case 1:
+            if (idle) bx = button_at(bx, y, L"Install patch\u2026", ID_G_BTN + 1, true, [] { install_patch(); });
+            bx = button_at(bx, y, L"Open Mods", ID_G_BTN + 2, false, [] { g_page = 4; scan_mods(); });
+            break;
+        case 2:
+        case 3:
+            if (idle) bx = button_at(bx, y, L"Install ZIP\u2026", ID_G_BTN + 3, true, [] { install_zip(); });
+            if (g_topic == 2) bx = button_at(bx, y, L"Open Graphics", ID_G_BTN + 4, false, [] { g_page = 1; });
+            break;
+        case 4:
+            if (idle) bx = button_at(bx, y, L"Add music folder\u2026", ID_G_BTN + 5, true, [] { install_music(); });
+            bx = button_at(bx, y, L"Open music folder", ID_G_BTN + 6, false, [] { open_path(g_data / "music"); });
+            bx = button_at(bx, y, L"Open Game page", ID_G_BTN + 7, false, [] { g_page = 3; });
+            break;
+        case 5:
+            bx = button_at(bx, y, L"Copy system info", ID_G_BTN + 10, true, [] { copy_sysinfo(); });
+            bx = button_at(bx, y, L"Open last log", ID_G_BTN + 8, false, [] {
+                ShellExecuteW(g_wnd, L"open", (g_data / "nx.log").c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            });
+            break;
+        }
+    y += 56;
+    if (g_su_extra && g_su_topic == g_topic) y += run_status(px, y, pw, L"\u2713  Installed.");
+    // tip at the bottom of the card
+    float th = text_h(t.tip, f_small, pw - 40), ty = y + 8;
+    D2D1_RECT_F tr = R(px, ty, pw, th + 24);
+    rounded(tr, 8, C(0x111a15));
+    rounded(R(tr.left, tr.top + 10, 3, th + 4), 1.5f, C(ACCENT, 0.8f));
+    text(t.tip, R(tr.left + 20, tr.top + 12, pw - 40, th + 4), f_small, C(MUTED), DWRITE_TEXT_ALIGNMENT_LEADING,
+         DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+}
+
+// Starts the game build when the Setup page has what it needs, else says what is missing.
+static void setup_go() {
+    if (g_su_src.empty() || (su_is_nsp() && g_su_keys.empty())) {
+        g_page = 6;
+        MessageBoxW(g_wnd, g_su_src.empty() ? L"First pick your game: the NSP file or your extracted folder."
+                                            : L"An NSP file also needs prod.keys from your console.",
+                    L"Setup", MB_ICONINFORMATION);
+        return;
+    }
+    su_start();
+}
+
+// The footer's big button: SET UP until the game is built, CANCEL while setup runs, then PLAY. Setup progress shows
+// here on every page.
+static void draw_footer() {
+    D2D1_RECT_F f = R(SIDE, H - FOOT, W - SIDE, FOOT);
+    fill(f, C(0x0d1210));
+    fill(R(SIDE, H - FOOT, W - SIDE, 1), C(LINE));
+    bool running;
+    {
+        std::lock_guard<std::mutex> lk(g_su_lock);
+        running = g_su.running;
+        if (running) {
+            double k = g_su.total > 0 ? std::clamp(g_su.done_n / g_su.total, 0.0, 1.0) : 0;
+            float pk = std::clamp((float)((g_su.step - 1 + k) / std::max(1, g_su.steps)), 0.f, 1.f);
+            D2D1_RECT_F bar = R(SIDE + 48, H - FOOT + 30, 470, 6);
+            rounded(bar, 3, C(TRACK));
+            rounded({bar.left, bar.top, bar.left + (bar.right - bar.left) * pk, bar.bottom}, 3, C(ACCENT));
+            DWORD sec = (GetTickCount() - g_su_t0) / 1000;
+            wchar_t b[64];
+            swprintf(b, 64, L"%d / %d  \u00b7  %u:%02u  \u00b7  ", g_su.step, g_su.steps, sec / 60, sec % 60);
+            text(b + g_su.text, R(SIDE + 48, H - FOOT + 42, 470, 22), f_small, C(MUTED));
+        }
+    }
+    if (!running) text(status_line(), R(SIDE + 48, H - FOOT, 520, FOOT), f_small, C(MUTED));
+    button(R(W - 252 - 140, H - FOOT + 20, 124, 44), g_dirty ? L"Save" : L"Saved", ID_SAVE, false, [] { save(); });
+    const D2D1_RECT_F big = R(W - 252, H - FOOT + 14, 220, 56);
+    if (running) button(big, L"CANCEL", ID_SU_CANCEL, false, [] { su_cancel(); }, f_play);
+    else if (!game_ready()) button(big, L"SET UP", ID_PLAY, true, [] { setup_go(); }, f_play);
+    else button(big, L"PLAY", ID_PLAY, true, [] { play(); }, f_play);
+}
+
+static void draw_page_body();
+static void draw_page() {
+    g_clip = g_page >= 1 && g_page <= 6;
+    float& sc = g_scroll[g_page];
+    if (!g_clip) { g_max_scroll = 0; draw_page_body(); return; }
+    g_bottom = 0;
+    g_rt->PushAxisAlignedClip(R(SIDE, 0, W - SIDE, H - FOOT), D2D1_ANTIALIAS_MODE_ALIASED);
+    g_rt->SetTransform(D2D1::Matrix3x2F::Translation(0, -sc));
+    draw_page_body();
+    g_rt->SetTransform(D2D1::Matrix3x2F::Identity());
+    g_rt->PopAxisAlignedClip();
+    g_clip = false;
+    const float view = H - FOOT, content = g_bottom + 24;
+    g_max_scroll = std::max(0.f, content - view);
+    if (sc > g_max_scroll) sc = g_max_scroll;
+    if (g_max_scroll > 0) {  // scrollbar: the mouse wheel scrolls
+        float th = view * view / content, ty = sc / g_max_scroll * (view - th - 16) + 8;
+        rounded(R(W - 10, ty, 4, th), 2, C(EDGE_HI));
+    }
+}
+
+static void draw_page_body() {
+    float x = SIDE + 48, w = W - SIDE - 96;
+    switch (g_page) {
+    case 0: {  // Play: hero, quick settings
+        draw_hero(R(SIDE, 0, W - SIDE, 360));
+        text(L"QUICK SETTINGS", R(x, 330, 400, 20), f_caps, C(MUTED), DWRITE_TEXT_ALIGNMENT_LEADING,
+             DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 2.2f);
+        fill(R(x, 356, 28, 2), C(ACCENT));
+        int quick[] = {FPS, RES, WINDOW, PRESENT};
+        for (int k = 0; k < 4; k++) {
+            float cx = x + (k % 2) * (w / 2 + 12), cy = 384 + (k / 2) * 92, cw = w / 2 - 12;
+            text(k_set[quick[k]].name, R(cx, cy, cw, 22), f_small, C(MUTED));
+            control(quick[k], R(cx, cy + 26, cw, 42));
+        }
+        if (!game_ready())
+            text(L"The game is not set up yet: see the Setup page.", R(x, 570, w, 22), f_small, C(WARN));
+        break;
+    }
+    case 1:
+        page_header(L"Graphics", L"How the 3D image is rendered. Stored in settings.ini next to the game.");
+    {
+        float y = 128;
+        for (int i : {RES, UPSCALER, FSR3Q, DLSSP, MSAA, POST, TEXPACK}) y += row(i, x, y, w);
+        break;
+    }
+    case 2:
+        page_header(L"Display & FPS", L"Frame rate, window and presentation.");
+    {
+        section(L"PRESENTATION", x, 128, w);
+        float y = 166;
+        for (int i : {FPS, WINDOW, PRESENT}) y += row(i, x, y, w);
+        section(L"IMAGE", x, y + 8, w);
+        y += 44;
+        for (int i : {SHARPEN, FXAA}) y += row(i, x, y, w);
+        break;
+    }
+    case 3:
+        page_header(L"Game", L"Changes to how the game plays and sounds.");
+    {
+        section(L"FIELD", x, 128, w);
+        float y = 166 + row(WALK, x, 166, w);
+        y += row(MAPREV, x, y, w);
+        section(L"CONTROLS", x, y + 8, w);
+        y += 46;
+        y += row(PADICONS, x, y, w);
+        section(L"AUDIO", x, y + 8, w);
+        y += 46;
+        for (int i : {MUTE, BGM}) y += row(i, x, y, w);
+        break;
+    }
+    case 4: {
+        page_header(L"Mods", L"Mods change the game's files without touching your own copy. Turn each one on or off.");
+        std::lock_guard<std::mutex> lk(g_su_lock);
+        const bool ready = is_data(g_data) && fs::exists(g_data / "romfs"), idle = !g_su.running;
+        float y = 128;
+        if (g_mods.empty()) {  // empty state: what a mod is and the one button that adds one
+            D2D1_RECT_F c = R(x, y, w, 330);
+            card(c);
+            const float mx = (c.left + c.right) / 2;
+            g_brush->SetColor(C(ACCENT, 0.12f));
+            g_rt->FillEllipse({{mx, c.top + 74}, 34, 34}, g_brush);
+            g_brush->SetColor(C(ACCENT));
+            g_rt->DrawLine({mx - 12, c.top + 74}, {mx + 12, c.top + 74}, g_brush, 3);
+            g_rt->DrawLine({mx, c.top + 62}, {mx, c.top + 86}, g_brush, 3);
+            text(L"No mods installed yet", R(c.left, c.top + 124, w, 34), f_h2, C(0xffffff), DWRITE_TEXT_ALIGNMENT_CENTER);
+            text(L"Install a fan patch, like the English / uncensor patch, from its folder of .xdelta files.",
+                 R(c.left + 60, c.top + 162, w - 120, 24), f_body, C(MUTED), DWRITE_TEXT_ALIGNMENT_CENTER);
+            const std::wstring a = ready ? L"Install patch\u2026" : L"Set up the game first", b = L"Open mods folder";
+            float aw = text_w(a, f_btn) + 44, bw = text_w(b, f_btn) + 44, bx = mx - (aw + 12 + bw) / 2;
+            if (idle) bx = button_at(bx, c.top + 212, a, ID_X + 20, true, [ready] { if (ready) install_patch(); else g_page = 6; });
+            button_at(bx, c.top + 212, b, ID_OPEN_MODS, false, [] { open_path(g_data / "mods"); });
+            run_status(c.left + 40, c.top + 268, w - 80, L"\u2713  Installed.");
+            break;
+        }
+        section(L"INSTALLED", x, y, w);
+        y += 40;
+        for (size_t k = 0; k < g_mods.size(); k++, y += 86) {
+            Mod& m = g_mods[k];
+            D2D1_RECT_F c = R(x, y, w, 74);
+            const bool h = hov(ID_MOD + (int)k);
+            rounded(c, 10, C(h ? HOVER : PANEL));
+            outline(c, 10, C(m.on ? 0x2f5a44 : LINE));
+            text(pretty(m.name), R(x + 22, y + 13, w - 200, 26), f_label, C(m.on ? TEXT : MUTED));
+            text(std::to_wstring(m.files) + (m.files == 1 ? L" file" : L" files") + L"  \u00b7  " + size_text(m.bytes) +
+                     L"  \u00b7  mods\\" + wide(m.name),
+                 R(x + 22, y + 40, w - 200, 22), f_small, C(DIM));
+            toggle(R(x + w - 110, y, 90, 74), m.on, ID_MOD + (int)k, [k] { g_mods[k].on = !g_mods[k].on; store_mods(); }, true);
+            hit(c, ID_MOD + (int)k, [k](float) { g_mods[k].on = !g_mods[k].on; store_mods(); });
+        }
+        y += 6;
+        float bx = x;
+        if (idle) bx = button_at(bx, y, ready ? L"Install patch\u2026" : L"Set up the game first", ID_X + 20, false,
+                                 [ready] { if (ready) install_patch(); else g_page = 6; });
+        button_at(bx, y, L"Open mods folder", ID_OPEN_MODS, false, [] { open_path(g_data / "mods"); });
+        y += 58;
+        y += run_status(x, y, w, L"\u2713  Installed.");
+        text(L"When two mods change the same file, the one later in A\u2013Z order wins.", R(x, y, w, 22), f_small, C(DIM));
+        g_bottom = y + 24;
+        break;
+    }
+    case 5: {
+        page_header(L"Advanced", L"Folders, logs and tools for troubleshooting.");
+        section(L"GAME FILES", x, 128, w);
+        float y = 166;
+        y += row_with(L"Game files folder", L"Where Setup put the game (link\\image.bin and romfs). Change it only after "
+                                            L"moving that folder.",
+                      x, y, w, [](D2D1_RECT_F r) {
+                          button(R(r.left + 186, r.top, 174, 40), L"Change\u2026", ID_BROWSE, false, [] { browse(); });
+                      }, is_data(g_data) ? L"\u2713  " + short_path(g_data.wstring()) : L"");
+        if (!is_data(g_data)) text(L"Not found: run Setup, or pick the folder.", R(x, y - 30, w - 400, 22), f_small, C(WARN));
+        section(L"HELP", x, y + 14, w);
+        y += 52;
+        y += row_with(L"Report a problem", L"Copies your PC and settings (no file paths) for a GitHub issue. Attach nx.log too.",
+                      x, y, w, [](D2D1_RECT_F r) {
+                          button(R(r.left, r.top, 174, 40), L"Copy system info", ID_G_BTN + 11, false, [] { copy_sysinfo(); });
+                          button(R(r.left + 186, r.top, 174, 40), L"Open last log", ID_OPEN_LOG, false, [] {
+                              ShellExecuteW(g_wnd, L"open", (g_data / "nx.log").c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                          });
+                      });
+        y += row_with(L"Folders", L"The TMSRecomp folder (settings.ini) and your F12 screenshots.", x, y, w, [](D2D1_RECT_F r) {
+            button(R(r.left, r.top, 174, 40), L"TMSRecomp folder", ID_OPEN_GAME, false, [] { open_path(g_dir); });
+            button(R(r.left + 186, r.top, 174, 40), L"Screenshots", ID_OPEN_SHOTS, false, [] { open_path(g_data / "shots"); });
+        });
+        section(L"TEXTURES", x, y + 14, w);
+        y += 52;
+        y += row(TEXDUMP, x, y, w);
+        text(L"Other settings can be added to settings.ini by hand (key = value): this window keeps them.",
+             R(x, y + 8, w, 22), f_small, C(DIM));
+        g_bottom = y + 32;
+        break;
+    }
+    case 6: draw_setup(x, w); break;
+    case 7: draw_guide(x, w); break;
+    }
+}
+
+static void paint() {
+    if (!g_rt) return;
+    g_hits.clear();
+    g_rt->BeginDraw();
+    g_rt->Clear(C(BG));
+    draw_page();
+    draw_sidebar();
+    draw_footer();
+    popup();
+    if (g_rt->EndDraw() == D2DERR_RECREATE_TARGET) {
+        if (g_hero) g_hero->Release(), g_hero = nullptr;
+        g_brush->Release(), g_brush = nullptr;
+        g_rt->Release(), g_rt = nullptr;
+    }
+}
+
+static void create_target() {
+    RECT rc;
+    GetClientRect(g_wnd, &rc);
+    float dpi = 96 * g_scale;
+    g_d2d->CreateHwndRenderTarget(D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT, {}, dpi, dpi),
+                                  D2D1::HwndRenderTargetProperties(g_wnd, {(UINT32)rc.right, (UINT32)rc.bottom}), &g_rt);
+    g_rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+    g_rt->CreateSolidColorBrush(C(TEXT), &g_brush);
+    load_hero();
+}
+
+// ------------------------------------------------------------------------------------------------ actions
+static void browse() {
+    std::wstring b = pick_folder(L"Select the game data folder (the one with link\\image.bin and romfs)");
+    if (b.empty()) return;
+    if (is_data(b)) {
+        set("data", narrow(b));
+        g_data = b;
+        scan_mods();
+        load_hero();
+        apply_icon();
+    } else {
+        MessageBoxW(g_wnd, L"That folder has no link\\image.bin and romfs (see README).", L"TMSRecomp", MB_ICONWARNING);
+    }
+}
+
+static void play() {
+    if (!game_ready() || setup_stale()) {
+        g_page = 6;
+        MessageBoxW(g_wnd, L"The game is not set up yet, or needs a rebuild after an update: Setup page.", L"TMSRecomp", MB_ICONWARNING);
+        return;
+    }
+    if (g_dirty && !save()) {
+        MessageBoxW(g_wnd, (L"Could not write " + g_ini.wstring()).c_str(), L"TMSRecomp", MB_ICONERROR);
+        return;
+    }
+    std::wstring exe = (g_dir / "tms.exe").wstring(), dir = g_dir.wstring();
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi;
+    if (!CreateProcessW(exe.c_str(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
+        MessageBoxW(g_wnd, (L"Could not start " + exe).c_str(), L"TMSRecomp", MB_ICONERROR);
+        return;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    DestroyWindow(g_wnd);
+}
+
+static int hit_at(float x, float y) {
+    for (size_t k = g_hits.size(); k-- > 0;)  // last drawn (popup) first
+        if (x >= g_hits[k].r.left && x < g_hits[k].r.right && y >= g_hits[k].r.top && y < g_hits[k].r.bottom) return (int)k;
+    return -1;
+}
+
+static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
+    switch (m) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(h, &ps);
+        if (!g_rt) create_target();
+        paint();
+        EndPaint(h, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_MOUSEMOVE: {
+        float x = GET_X_LPARAM(lp) / g_scale, y = GET_Y_LPARAM(lp) / g_scale;
+        if (g_drag >= 0) {
+            const Setting& s = k_set[g_drag];
+            float k = std::clamp((x - g_drag_track.left) / (g_drag_track.right - g_drag_track.left), 0.f, 1.f);
+            char b[16];
+            snprintf(b, 16, "%.1f", s.lo + std::round(k * (s.hi - s.lo) / s.step) * s.step);
+            if (value_of(g_drag) != b) set(s.key, b), redraw();
+            return 0;
+        }
+        int k = hit_at(x, y), id = k >= 0 ? g_hits[k].id : -1;
+        SetCursor(LoadCursorW(nullptr, id >= 0 ? IDC_HAND : IDC_ARROW));
+        if (id != g_hover) g_hover = id, redraw();
+        TRACKMOUSEEVENT t{sizeof t, TME_LEAVE, h, 0};
+        TrackMouseEvent(&t);
+        return 0;
+    }
+    case WM_MOUSELEAVE: g_hover = -1; redraw(); return 0;
+    case WM_MOUSEWHEEL:
+        if (g_max_scroll > 0) {
+            float& sc = g_scroll[g_page];
+            sc = std::clamp(sc - GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60, 0.f, g_max_scroll);
+            g_open = -1, g_hover = -1;
+            redraw();
+        }
+        return 0;
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) return TRUE;  // set in WM_MOUSEMOVE
+        break;
+    case WM_LBUTTONDOWN: {
+        float x = GET_X_LPARAM(lp) / g_scale, y = GET_Y_LPARAM(lp) / g_scale;
+        int k = hit_at(x, y);
+        bool was_open = g_open >= 0;
+        if (k >= 0) {
+            int id = g_hits[k].id;
+            if (was_open && id != ID_SET + g_open && (id < ID_POP || id >= ID_MOD)) g_open = -1;
+            auto f = g_hits[k].click;  // the hit list is rebuilt by the redraw
+            f(x);
+        } else g_open = -1;
+        redraw();
+        return 0;
+    }
+    case WM_LBUTTONUP:
+        if (g_drag >= 0) g_drag = -1, ReleaseCapture(), redraw();
+        return 0;
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE && g_open >= 0) g_open = -1, redraw();
+        else if (wp == VK_RETURN && g_open < 0) play();
+        return 0;
+    case WM_UPD:
+        if (lp == 1) {
+            MessageBoxW(h, L"Update installed. The launcher restarts now.", L"TMSRecomp", MB_ICONINFORMATION);
+            std::wstring exe = (g_dir / "launcher.exe").wstring();
+            ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, g_dir.c_str(), SW_SHOWNORMAL);
+            DestroyWindow(h);
+            return 0;
+        }
+        redraw();
+        return 0;
+    case WM_SETUP:
+        if (wp == 1 && g_su.done && g_su_extra) scan_mods();  // a Guide install: nothing of the build changed
+        else if (wp == 1 && g_su.done && is_data(g_data)) {  // finished: remember the data folder and the build inputs
+            std::ofstream(built_file(), std::ios::binary) << build_signature();
+            set("data", narrow(g_data.wstring()));
+            save();
+            scan_mods();
+            load_hero();
+            apply_icon();
+        }
+        redraw();
+        return 0;
+    case WM_ACTIVATE:  // back from the game: its first start saves the title screen (Play page picture, icon)
+        if (LOWORD(wp) != WA_INACTIVE && g_rt && !g_hero_title && !g_data.empty()) {
+            std::error_code ec;  // only file checks here: the fallback picture is not reloaded on every focus
+            for (const wchar_t* n : {L"launcher_hero.png", L"launcher_hero.jpg", L"launcher_hero.bmp"})
+                if (fs::exists(g_data / n, ec)) { load_hero(), apply_icon(), redraw(); break; }
+        }
+        break;
+    case WM_CLOSE:
+        if (g_su.running && MessageBoxW(h, L"Setup is still running. Stop it and close?", L"TMSRecomp",
+                                        MB_YESNO | MB_ICONQUESTION) != IDYES)
+            return 0;
+        su_cancel();
+        if (g_dirty) {
+            int r = MessageBoxW(h, L"Save the changed settings?", L"TMSRecomp", MB_YESNOCANCEL | MB_ICONQUESTION);
+            if (r == IDCANCEL) return 0;
+            if (r == IDYES) save();
+        }
+        DestroyWindow(h);
+        return 0;
+    case WM_DESTROY: PostQuitMessage(0); return 0;
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
+    if (const wchar_t* p = wcsstr(cmd, L"--page ")) g_page = std::clamp(_wtoi(p + 7), 0, (int)std::size(k_pages) - 1);
+    if (const wchar_t* p = wcsstr(cmd, L"--topic ")) g_topic = std::clamp(_wtoi(p + 8), 0, (int)std::size(k_topics) - 1);  // Guide topic
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    wchar_t exe[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    g_dir = fs::path(exe).parent_path();
+    g_ini = g_dir / "settings.ini";
+    load();
+    if (!game_ready() && !wcsstr(cmd, L"--page ")) g_page = 6;  // first start: build the game from the player's files
+    delete_old_files();
+    scan_mods();
+    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_d2d);
+    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&g_dw);
+    CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g_wic));
+    const auto bold = DWRITE_FONT_WEIGHT_BOLD, semi = DWRITE_FONT_WEIGHT_SEMI_BOLD, reg = DWRITE_FONT_WEIGHT_NORMAL;
+    const auto cond = DWRITE_FONT_STRETCH_CONDENSED;
+    f_brand = font(L"Bahnschrift", 27, bold, cond);
+    f_brand2 = font(L"Bahnschrift", 14, semi, cond);
+    f_nav = font(L"Bahnschrift", 17, reg);
+    f_h1 = font(L"Bahnschrift", 36, semi, cond);
+    f_caps = font(L"Bahnschrift", 12.5f, semi);
+    f_h2 = font(L"Bahnschrift", 24, semi, cond);
+    f_label = font(L"Segoe UI", 15, reg);
+    f_body = font(L"Segoe UI", 15, reg);
+    f_small = font(L"Segoe UI", 12.5f, reg);
+    f_btn = font(L"Segoe UI", 14, semi);
+    f_play = font(L"Bahnschrift", 26, bold, cond);
+
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = wndproc;
+    wc.hInstance = inst;
+    wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));  // the optional icon.ico resource (CMake), else none
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.lpszClassName = L"TMSRecompLauncher";
+    RegisterClassW(&wc);
+    POINT pt{};
+    HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+    UINT dx = 96, dy = 96;
+    using GetDpiForMonitor_t = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+    if (auto f = (GetDpiForMonitor_t)GetProcAddress(LoadLibraryW(L"shcore.dll"), "GetDpiForMonitor")) f(mon, 0, &dx, &dy);
+    g_scale = dx / 96.f;
+    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    RECT r{0, 0, (LONG)(W * g_scale), (LONG)(H * g_scale)};
+    AdjustWindowRectExForDpi(&r, style, FALSE, 0, dx);
+    g_wnd = CreateWindowExW(0, wc.lpszClassName, L"Tokyo Mirage Sessions ♯FE Encore · TMSRecomp", style,
+                            CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, nullptr);
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(g_wnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof dark);
+    COLORREF cap = RGB(0x0b, 0x0f, 0x0d);  // SIDEBG
+    DwmSetWindowAttribute(g_wnd, 35 /* DWMWA_CAPTION_COLOR */, &cap, sizeof cap);
+    apply_icon();
+    ShowWindow(g_wnd, show);
+    check_updates();
+    if (const wchar_t* p = wcsstr(cmd, L"--setup ")) {  // --setup <extracted folder | nsp> [keys target]: start at once
+        int n = 0;
+        wchar_t** a = CommandLineToArgvW(p + 8, &n);
+        if (n > 0) g_su_src = a[0];
+        if (n > 2) g_su_keys = a[1], g_su_target = a[2];
+        LocalFree(a);
+        g_page = 6;
+        su_start();
+    } else if (setup_stale()) {  // after an update: rebuild game.dll from the same game files (incremental)
+        g_su_src = g_data.wstring();
+        g_page = 6;
+        su_start();
+    }
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    return 0;
+}

@@ -1,0 +1,160 @@
+# Internal functions of TMS #FE Encore 1.0.0 (main) that the runtime hooks or probes: `0xADDR name`.
+# Each gets a hook slot (HLE_FN) and a probe slot (PROBE_FN, NX_PROBE=name,...). Re-run lift.py after editing.
+0x005d7e1c game_log            # (category mask, format, ...): the game's debug log, text dropped in retail
+0x0069d0f8 game_vsnprintf      # (buf, size, format, va_list)
+0x0069d3c4 criErr_Notify       # (level, message): CRI middleware error report
+0x0067bfa4 snd_play_cue        # sound manager: starts a cue, logs "Acb:%s, Cue:%s" through game_log
+0x004578dc bgm_crossfade       # references "_CrossFadeBgmCore"
+0x00697a8c cri_pcm_output_create  # (config*, work, worksize): checks channels 2/6, stores handle at 0x101d32c
+0x00691a88 cri_pcm_to_s16         # (6, float* ch[6], samples, out channels, [sp] out, [sp+4] size)
+0x0069d4d8 criErr_NotifyCode      # (level, message, error code)
+0x0069d774 criErr_Notify1         # (level, format, a)
+0x0069d868 criErr_Notify2         # (level, format, a, b)
+0x0069d660 criErr_Notify3         # (level, format, a, b, [sp] c)
+0x006a1488 cri_server_sleep       # CRI Server Manager: sleeps the rest of the server period
+0x0063755c cri_streamer_start     # reports E2009031604 "Failed to start streamer"
+0x006bc418 cri_fs_loader_exec     # loader state machine step (server); reports E2008071741 "Invalid loader status"
+0x00636590 cri_strm_a             # calls cri_streamer_start
+0x00637910 cri_strm_b             # calls cri_streamer_start
+0x00632d28 cri_strm_create_outer  # calls 0x632e34 (reports "Failed to create streamer")
+0x00632e34 cri_strm_create
+0x0063750c cri_strm_c
+0x00637ea4 cri_strm_d
+0x005ae33c lua_AtPrintf           # Lua binding AtPrintf / print (L): empty in retail
+0x005ae344 lua_AtConsoleOut       # Lua binding AtConsoleOut (L): empty in retail
+0x005ae34c lua_AtTraceOut         # Lua binding AtTraceOut (L): empty in retail
+0x005b4ca8 script_error           # (L, kind, function, message, [sp] extra): script error report + traceback, text dropped
+0x00530440 luaG_errormsg          # (L): Lua raises the error object at L->top - 1
+0x00351c94 flag_on                # (id): sets story/system flag bit id (flags+0xa4); Lua FlagOn
+0x00354674 flag_off               # (id): clears flag bit id; Lua FlagOff
+0x0055d72c gfx_set_present_interval  # (gfx, n): stores n at gfx+0x58c0; the game sets 2 (30 fps), one path sets 1
+0x0055d51c gfx_get_present_interval  # (gfx): the game's frame step (float(n), 0 -> 1) for animation/field updates
+0x005acac0 script_resume_all  # (script manager): lua_resume every running event script once (one game frame of WaitForCnt)
+0x0020ba14 fade_update  # (fade manager): both screen fades +rate (+0x48 = 1/frames at 30 Hz) per call
+0x005c0508 anim_update  # (anim scene): advances animations by float(present interval) x speed (+0x98) 60 Hz frames
+0x004e3974 anim_policy_loop  # g3d PlayPolicy_Loop (s0 frame+step, s1 start, s2 end): wraps; the caller's lr = animation stepping code
+0x004e3958 anim_policy_once  # g3d PlayPolicy_Onetime (s0 frame+step, s1 start, s2 end): clamps
+0x005563c8 model_anim_update  # (s0 dt seconds, model): advances the model's skeletal/material/visibility animations by dt / (1/60) frames
+0x00555ab0 model_skel_update  # (s0 dt seconds, model): skeletal animation part of model_anim_update (also called directly)
+0x005acfdc lua_set_number  # (s0 value, mgr, key, table name): mgr's Lua table.key = value; the action manager 0x5b9144 sets info.delta = dt x speed before resuming its scripts
+0x003e54c8 enemy_param_store  # (params): copies the EnemyServerParam.lua values (0x18c bytes, see hle_sys.cpp) into the field enemy table
+0x003e30d8 enemy_param_get    # (): the field enemy table (symbol AI: per-frame move speeds, frame counts)
+0x005b7d28 action_group_update  # (s0 dt, group, model): dt x group speed (+0xc68) -> action_update for each of 0x100 actions
+0x005b9144 action_update  # (s0 dt, action): info.delta = dt x speed (+0x190), resumes the action's scripts, steps its animation
+0x005bc10c cut_update  # (s0 dt, cut): info.delta = dt, frame count +0x84 += 1, cut time +0x88 += dt (cutGetTime), resumes cut scripts
+0x002d0268 btl_task_step  # (task): battle sequence task: +0x10 delay frames -1 per step, +0x20 steps per update; at 0 runs +0x38 (+0x14 times), then +0x40
+0x0028042c btl_proc_advance    # (process): battle process state timer +0x18 += step +0x34 (once per update; 0x28041c sets state +0x10, timer 0)
+0x002d0014 btl_seq_update  # (root task): scheduler entry of the battle sequence task tree (unless paused: vt+0x34 -> children via 0x2d03ac, each btl_task_step)
+0x00304664 btl_apply_action  # (?, action rec): applies an action (actor unit id +4, target +8, skill +0xc) to the units
+0x005bddd0 task_run_phase  # (scheduler, phase): runs every task of the phase list (vt+0x14 update), removes finished ones
+0x0045f824 tm_move_rote_sprite  # Lua TM_MoveRoteSprite(sprite, angle, frames[, ease]): rotation tween +0x54 start, +0x68 end, +0x90 counter, +0x94 frames
+0x0045f6b0 tm_move_sprite  # Lua TM_MoveSprite(sprite, x, y, frames[, ease]): move tween +0x44 start, +0x58 end, +0x6c counter, +0x70 frames
+0x0045f9ac tm_move_scale_sprite  # Lua TM_MoveScaleSprite: scale tween +0x84 counter, +0x88 frames
+0x0045fafc tm_fade_sprite  # Lua TM_FadeSprite: fade tween +0x78 counter, +0x7c frames
+0x00246318 ui_manager_update  # (manager task): updates every UI widget (vt+8: menus, HUD panels; frame counters +1 per call), removes finished ones; stores the present interval at +0x10
+0x0054c9bc pad_repeat  # (pad): held mask +0x10 unchanged -> countdown +0x44 -1 per call, at 0 repeat bits +0x20 = mask, countdown = interval +0x4c (first: delay +0x48); new presses +0x18 always in +0x20
+0x0054ca24 pad_repeat_bits  # (pad): +0x24 = presses +0x18 | buttons whose hold counter (+0x5c + 4i, 26) - delay +0x48 is >= 0 and a multiple of interval +0x4c
+0x0054ca78 pad_hold_count  # (pad): per-button hold counters +0x5c + 4i += 1 while held, 0 when released (26 buttons)
+0x003c31c8 cam_free_update  # (controller vt+0x24, vtable 0x7e0248): field camera: stick smoothed (0x3c2cc4: +0x1c/+0x20, keep = settings +0xcc), yaw speed settings +0x50 / 10 per frame; settings = +8
+0x003c8d90 actor_move_update  # (actor, ?) field/cut actor job: pos +0xc += move delta +0x6c/+0x70/+0x74 (with collision), delta cleared after unless +0xd8; script deltas arrive on 30 Hz resumes
+0x004a5618 field_spawn_timer  # (field enemy manager task): enemy respawn countdown (manager +0x10 +0x51dec, 30 Hz frames: -1 per call, -3 while field global +8 == 0), at 0 respawns and reloads 30 x (91..600)
+0x003bf19c hud_pulse_draw  # (map task draw, r0 = sprite object): pulsing marker sprite drawn while obj +0x20 is the current target; angle +0x36c += literal 0x3bf320 (pi/30) per draw
+0x002c4108 btl_setup_units  # (battle, encount): spawns units, then the opening: encount +0x18 bit 0x20 (advantage contact) -> btl_open_chance >= 50 player first (|1), >= 85 |0x41; else < 2 |0x42, 2..5 |2 (enemy first)
+0x002a0694 btl_open_chance  # (party?, level?, rand 0..99): opening roll of btl_setup_units (only caller)
+0x00242574 info_window_update  # (widget vt+8, vtable 0x7d23b0; Lua UI.OpenInfomation/WaitInfomation): tutorial info window: state +8 (0 open, 1 wait 4, 2 input: closes on input_trigger(0x40) unless *0x9ec398 != 0, 3 close, 4 done)
+0x0025c970 input_trigger  # (button mask): input object (**0x25c98c-rel) vt+0x10: newly pressed?
+0x004a1754 title_scene_update  # (task cb, r0 = scene; scene +0x14 = title menu): menu update 0x49d504 -> choice (-1 none) -> 0x49c420(choice) starts it
+0x0058f04c fx_dof_render  # post effect vf5 (vtable 0x7e9168, manager *0x9f2904 +0x18): the manager calls vf5 only while effect +0x1c (enable) is set
+0x005904ec fx_glare_render  # post effect vf5 (vtable 0x7e9208, manager +0x44, Lua PostEffectGlare*): bloom
+0x005911a0 fx_glow_render  # post effect vf5 (vtable 0x7e9228, manager +0x48, Lua PostEffectGlow*)
+0x00594814 fx_vignette_render  # post effect vf5 (vtable 0x7e93c8, manager +0x60, Lua PostEffectVignette*)
+0x0058f958 fx_fog_render  # post effect vf5 (vtable 0x7e91a8, manager +0x1c, Lua PostEffectFog*)
+0x0058f5d8 fx_edge_render  # post effect vf5 (vtable 0x7e9188, manager +0x24, Lua PostEffectEdge*)
+0x002e9540 btl_ui_update  # (battle UI task): updates every battle HUD part (COMBO number 0x2ea044/0x2eb924, timeline 0x2edea0, target markers...), each counting 30 Hz frames
+0x0024e5b0 party_hud_update  # (party portraits HUD task, field/battle/camp): blink/slide animators 0x24aad8 count 30 Hz frames
+0x002b21c8 btl_wheel_input  # (battle obj, &selection, list): command wheel input per frame: up/down held counter +0x195ac steps every 10 calls, delay +0x19660; A confirms (returns 1)
+0x00303290 btl_weak_mark_draw  # (unit): draws the "!" weakness marker over a unit while the skill list is open (per frame, per unit); pulse counter u16 unit+0xaca +1 per call (4..0x13 loop)
+0x0030df68 btl_unit_color_update  # (unit): per frame, steps the unit's colour / alpha tweens (unit+0x60c.. 0x2ce764 / 0x2ce490: counter +1 per call, t = counter / frames): target flash pulse
+0x00483120 result_update  # (RESULTS screen task, phase 0): state machine; counts 30 Hz frames
+0x00483b1c result_parts_update  # (RESULTS screen task, phase 26): panels, NEW SKILL!, sparkles; FFWD hold (X)
+0x0031b7dc levelup_update  # (level-up / skill screen task, phase 0)
+0x0031bef4 levelup_parts_update  # (level-up / skill screen task, phase 26)
+0x0026ebfc skill_learn_update  # (skill inheritance screen task, phase 0)
+0x00318010 result_flow_update  # (post-battle screens flow task, phase 0)
+0x0047f964 result_bg_update  # (results background task, phase 0)
+0x0047fc5c result_bg_parts_update  # (results background task, phase 26)
+0x0040b594 player_walk  # (player, ...): field walk step (per frame while walking; dt literal 0x40b694)
+0x0040b6fc player_run  # (player, ...): field run step (dt literal 0x40b7fc)
+0x0047146c field_play_update  # (field manager state 5 = camp menu open; vtable 0x7e6454 slot +0xc): state 1 opens the camp, 2 waits for it to close (camp mgr *0x9f3dfc +0x14 = 0), then resumes or (Load: mgr +0x10 == 2) leaves with 0x46c1a0(6) + 0x46ed90(obj, 8)
+0x0047345c field_roam_update  # (field manager state 1 = free roam; vtable 0x7e654c slot +0xc; manager 0x46b45c holds the state objects at +0x28..): leave with 0x46c1a0(next scene; 4 = title) + 0x46ed90(obj, 8) like the event-end state 0x47203c
+0x00266b88 save_screen_update  # (camp save screen; load screen = 0x2621b8, from the save object task 0x26900c): input + slot list (0x266cbc, short counters +0x1c), star field 0x26cb64 (+0x124 per call); returns 1 when closed
+0x002621b8 load_screen_update  # (load screen, from the title LOAD state update 0x4a07e8 case 4 and 0x337c58): state machine, star field 0x26cb64, +8 += 1 per call (SELECT bubble pulse: draw 0x263840 uses +8 % 18); returns 1 when closed
+0x00318e40 camp_wipe_update  # (camp open/close wipe task; draw 0x318ef8): state +0xc (0 wait, 2 open, 3 close, 4, 5 ring), +0xe wipe steps to 0x10/0xc, +0x10 ring angle; +1 per call, returns 1
+0x00313ac8 camp_update  # (camp menu manager, from task 0x31324c): state machine; state 6 runs the open screen's vt+0x14 (top menu 0x34d760: frame counters +0x1c/+0x8c that the draw 0x34ddf8 animates from, 30 Hz frames)
+0x0025fce0 bgm_play_name  # (s0-s2, r0, r1, r2 = cue name string, r3): starts a BGM by its SoundIdTable name (0x42e694 name -> index); battles start their music here (0x2ddd0c from battle start 0x2c6388 with the encount BGM name)
+0x0025f7c8 bgm_restore  # (r0, r1, s0, r2 slot?, r3, stack): restores a pushed BGM cue (field music after a battle); custom music ends here (hle_sys.cpp)
+0x0025fbe0 bgm_play  # (s0-s2 volume/fade, r0, r1, r2 sound table index = SoundIdTable.lua order (table *0x9f3c48, 0x90 bytes, names), r3): starts a BGM (Lua PlayBgm 0x457304 and native callers)
+0x0033c0a0 camp_settings_update  # (S): camp > System > Settings screen update; S+4 state (2 browsing), S+0x124 cursor row, rows at S+0x1c+i*0x18 (camp_settings.cpp)
+0x0025e37c sound_volume_set  # (float vol, float ?, channel): Settings screen volume preview (rows 0-2)
+0x0034eaf8 camp_settings_input  # (S): Settings screen input code (0 A, 1 B, 2 Y defaults, 8/0xe up, 9/0xf down, 10/0x10 left, 0xb/0x11 right)
+0x002efdb0 btl_banner_requests  # (banner part): pending action-banner requests (+0x28: 24 x {unit, kind, ?}) -> banner queue (+0x148, 0x34 each); then 0x2f0238 starts the next
+0x004a7088 field_enemy_spawn  # (group desc, deferred): spawns one field enemy symbol group (map load 0x4a6c74, respawn timer 0x4a5618, 0x4a7564); returns -1 when none
+0x0025fed4 sound_play_cue  # (kind 0/1/2, cue name): plays a sound cue; the Settings screen plays the voice preview with it when row 2 changes
+0x002f1cac btl_skill_panel_open  # (panel, unit_skill*, unit, ?, flag): early return if panel+0x28 == unit && +0x20 == skill; 0x18b = close, 0xdc = special
+0x002f13b8 btl_skill_panel_update  # +4 state (1 open, 2 closing: +0x1c counts 5..0 then +0x28/+0x20 = -1)
+0x0029049c btl_enemy_action_banner  # once per action (+0xa8), enemy path: panel open + 0x2f2118
+0x002f2118 btl_skill_panel_show
+0x006c7634 mana_timer_advance  # (timer): CRI Mana timer object (ctor 0x6c72a0, vtable 0x9ee570 slot 8) manual-mode tick: +0x48 u64 count++ unless +0x1c paused; time = count * +0x38 / +0x40 (GetTime 0x6c74e4, +0x10 == 1 manual)
+0x002cb2d4 btl_add_reward  # (battle, enemy level, EXP, money): per defeated enemy (and Lua btlSetExpMoney): battle +0x528 EXP total, +0x568 money (x float +0xa0), +0x52c.. per-member EXP by level gap; EXP / money multipliers (hle_sys.cpp)
+0x002c3c1c btl_force_mastery  # (battle, character id, amount): Lua btlSetForceMastery (only caller 0x429870): battle +0x548 + 2 * member += amount (tutorial / event Mastery); NOT scaled by the Mastery multiplier (hle_sys.cpp)
+0x003ce438 chr_motion_update  # (s0 dt, chr): character action blend: weight +0x11f8 += step +0x11fc (= 1 / (blend seconds x 30), set by 0x3ce298 from _chrPlayAction 0x41ebfc) once per call, then 0x3ce58c / 0x3cfbc8 with dt; actions +0x11f0 new / +0x11f4 old (hle_sys.cpp: step x dt*30)
+0x002c6ca8 btl_main  # (battle): battle main state machine (+0 state, +0x18 timer); state 0xc = victory wait: 30 frames then (button 0x20 or victory sequence done, **0x9ef790 vt+0xc) -> 0xd = result flow start 0x318a30
+0x0021929c phys_step  # (s0 dt, model node): pose sync + the model's physics (vt+0x20 of model+0x81c) for a character
+0x0056bd00 phys_update  # (s0 dt, physics 0x20c obj, vtable 0x7e8940 +0x20): cloth/hair chains; dt x timescale +0x120 (actSetPhysicsTimerParam)
+0x004e51c0 mat_anim_eval  # (anim obj): g3d material anim (shader params / texture patterns / visibility per material) at frame **(obj+4) (controller {frame, start, end, ?, policy, step}); +0x2c = last evaluated frame (skips if same). Called by model_anim_update for model +0x4c list
+0x00555c40 model_mat_update  # (s0 dt seconds, model): steps the model's material anims (+0x4c count, +0x50[] list) by dt / (1/60) frames, then mat_anim_eval each; callers 0x3a4410 (dt x model speed), 0x3d1698
+0x003a4410 model_obj_update  # (obj, info): vtable 0x7dea9c; info+0xc = dt (x model speed list +0xf8) -> model_skel_update / 0x555b98 / model_mat_update / 0x555d0c / 0x555dbc
+0x004e8dd4 mat_eval_a  # (s0 frame, mat anim info, out, ...): material anim channel 1 (no cache), from mat_anim_eval
+0x004e8c74 mat_eval_a_cached  # channel 1 with key cache (+0x20), from mat_anim_eval
+0x004e8fc8 mat_eval_b  # material anim channel 2, from mat_anim_eval
+0x004e8f14 mat_eval_b_cached
+0x004e768c anim_curve_float  # (s0 frame, curve, key cache): g3d float anim curve -> s0 = +0x24 offset + value x +0x20 scale; curve +0x10 flags (bits 4-6 type, 0x300 / 0x3000 pre / post wrap), +0x18 / +0x1c frame range; material shader params (mat_eval_a_cached)
+0x004e77d0 anim_curve_int  # (s0 frame, curve, key cache): g3d int anim curve -> r0 (+0x24 int offset); bone visibility 0x4e4214
+0x0027f290 skill_copy      # (table, out record, skill id, r3, stack: weapon id): 0x84-byte record copy with weapon stats merged; 35 callers, damage routines 0x2b8bc8..
+0x00301ca0 btlui_p24  # battle HUD part (object at btl_ui +0x24), called by btl_ui_update
+0x002efb08 btlui_p30  # battle HUD part (object at btl_ui +0x30), called by btl_ui_update
+0x002f4688 btlui_p1c  # battle HUD part (object at btl_ui +0x1c), called by btl_ui_update
+0x002edea0 btlui_p10  # battle HUD part (object at btl_ui +0x10), called by btl_ui_update
+0x002f62f0 btlui_p14  # battle HUD part (object at btl_ui +0x14), called by btl_ui_update
+0x002f9a20 btlui_p18  # battle HUD part (object at btl_ui +0x18), called by btl_ui_update
+0x002f0c1c btlui_p28  # battle HUD part (object at btl_ui +0x28), called by btl_ui_update
+0x002f0750 btlui_p2c  # battle HUD part (object at btl_ui +0x2c), called by btl_ui_update
+0x002f9e68 btlui_p34  # battle HUD part (object at btl_ui +0x34), called by btl_ui_update
+0x002ea044 btlui_p38  # battle HUD part (object at btl_ui +0x38): Session COMBO number (0x2ea0ac adds a combo, 0x2eb7a0 digits), called by btl_ui_update
+0x002ea1d8 btlui_p3c  # battle HUD part (object at btl_ui +0x3c), called by btl_ui_update
+0x002faaa0 btlui_p40  # battle HUD part (object at btl_ui +0x40), called by btl_ui_update
+0x002e9b58 btlui_p44  # battle HUD part (object at btl_ui +0x44), called by btl_ui_update
+0x002fee7c btlui_p48  # battle HUD part (object at btl_ui +0x48), called by btl_ui_update
+0x002fdb80 btlui_p4c  # battle HUD part (object at btl_ui +0x4c), called by btl_ui_update
+0x002fb420 btlui_p50  # battle HUD part (object at btl_ui +0x50), called by btl_ui_update
+0x002fc630 btlui_p54  # battle HUD part (object at btl_ui +0x54), called by btl_ui_update
+0x004a338c map_mgr_update  # (map manager): Topic + minimap task, every frame; frame counters: Topic open +0x1b0 state +0x1b4 0..4, diamonds strip scroll +0x8d4, blink tables +0x8dc..
+0x004accf0 notify_anim_tick  # (obj): field Topic notification ("CALL" ring) counters +8..+0x2c, +0x374: +1 per call, called once per frame from map_mgr_update (via 0x4acdc4); +0x14 loops 120..238 = ring text
+0x002e9664 btl_ui_draw  # (btl ui): battle HUD draw phase (task phase 33, every frame): 19 part draws (+0x30 0x2efbf0, +0x1c 0x2f4848, ... +0x34 0x2f9f78, ...); the Session COMBO / GOOD pop advances per call
+0x0047ab48 records_task_update  # (task, phase 0; RECORDS screen from the WALL of FAME, singleton ctor 0x47ad04): runs the screen manager 0x47b05c (input + bubble ring counters +0x50..+0x6c, +1/+2 per call, rings lerped by 0x23f904 over 0x3c0 / 0x780 frames); always returns 1
+0x00372284 unity_task_update  # (task, phase 0, vtable 0x7de6f0; made when Tiki's Bloom Palace menu opens): state +0xc 0 = wait for load 0x37131c, 1 = run the Unity (Fusion) screen 0x386868 (Carnage Unity cards / weapon list, background rings per call); always returns 1
+0x0038fe58 unity2_task_update  # (task, made by 0x38fc84 for Bloom Palace facility types 2-5 (0x36cf64 switch; type 1 = Carnage Unity 0x3720a4)): runs the manager 0x39a444 whose screens (ctors 0x39eea4 / 0x390818 / 0x39bc40, same widgets + facility bg as Unity) are the later Unity menus; always returns 1
+0x003df4fc vehicle_update  # (vehicle): Shibuya traffic car, virtual; per call: speed +0x34 eased to target +0x94, pos +4 += speed x dir (no dt), steering, then actor_set_pos 0x3c853c on the car actor +0xb4: Switch steps it at 30 Hz
+0x003d6e2c mob_mgr_update  # (crowd manager): town crowd (mob) walkers, run from field task 0x46b7f0; per call: removes finished walkers, spawns one, steers + places each walker (0x3d4b8c -> 0x3d53dc -> actor_set_pos): Switch steps it at 30 Hz
+0x003c853c actor_set_pos  # (actor, vec3*): sets the actor position +0xc (cut scripts via Lua 0x41a894, crowd walkers via 0x3d53dc, cars via vehicle_update)
+0x003c8734 actor_set_dir  # (actor, vec3* dir): yaw +0x1c = atan2(x, z); crowd walker step 0x3d64b0 calls it on its actor each crowd update
+0x0049c420 scene_change  # (scene id): next game scene; 0x25 = game over -> title (battle task end 0x2909c8 after a loss), 0xe after RESULTS
+0x002909c8 btl_task_end  # (battle task): end states +0x18: 0 wait for the battle, lost (R+8 == 2) -> fade 1 -> scene 0x25; else 3 -> result flow -> scene 0xe
+0x00427644 lua_btlSetMapColorScale  # Lua C function (L): battle map colour scale (btl_game_over.lua dims to 0.3)
+0x00427530 lua_btlSetMapLightScale  # Lua C function (L): battle map light scale
+0x00429610 lua_btlPlaySpriteAnim  # Lua C function (L): battle 2D sprite anim (GAME OVER: gameover_0x.stsp, ends black over every window)
+0x0020bc0c screen_fade  # (?, frames, colour ARGB, kind): full-screen fade (battle task end after a loss: 0, 0x1e, 0xff000000, 3)
+0x0023d774 ui_draw_sprite  # (sprite id, float pos[2]*, alpha): 2D sprite; settings draw 0x33cb14 row backgrounds (lr 0x33cccc: 0x4e6a/0x4e6b table kind, 0x4e6c/0x4e6d selected slider/choice)
+0x0023ce80 ui_draw_gauge  # (s0-s5 floats, part id, alpha): 2D gauge fill; settings draw 0x33cb14 slider bar (lr 0x33cd80, row in r9)
+0x0023c8e4 ui_draw_part  # (s0 x, s1 y, part id, alpha): 2D layout part; settings draw 0x33cb14 slider knob (lr 0x33cda0, row in r9)
+0x006dbc5c mana_frame_copy  # (dec, desc, src): CRI Mana copies one decoded MPV (MPEG-1 / Sofdec.Prime) frame into the app planes; desc = 3 x {ptr, w, h, pitch} Y / U / V (hle_movie.cpp 4K swap)

@@ -1,0 +1,50 @@
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs	2026-10-22 20:02:56.858087700 +0700
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs	2026-10-22 20:03:02.973656500 +0700
+@@ -8,7 +8,7 @@
+ {
+     static class AstOptimizer
+     {
+-        public static void Optimize(StructuredProgramContext context)
++        public static void Optimize(StructuredProgramContext context, bool foldElseIf = true)
+         {
+             AstBlock mainBlock = context.CurrentFunction.MainBlock;
+ 
+@@ -39,7 +39,7 @@
+                 }
+             }
+ 
+-            RemoveEmptyBlocks(mainBlock);
++            RemoveEmptyBlocks(mainBlock, foldElseIf);
+         }
+ 
+         private static bool IsWorthPropagating(IAstNode source)
+@@ -84,7 +84,7 @@
+             }
+         }
+ 
+-        private static void RemoveEmptyBlocks(AstBlock mainBlock)
++        private static void RemoveEmptyBlocks(AstBlock mainBlock, bool foldElseIf)
+         {
+             Queue<AstBlock> pending = new();
+ 
+@@ -129,7 +129,7 @@
+                         parent.Remove(block);
+                     }
+                 }
+-                else if (isIf && parent.Type == AstBlockType.Else && parent.Count == (hasElse ? 2 : 1))
++                else if (foldElseIf && isIf && parent.Type == AstBlockType.Else && parent.Count == (hasElse ? 2 : 1))
+                 {
+                     AstBlock parentOfParent = parent.Parent;
+ 
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs	2026-10-22 20:02:56.857083900 +0700
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs	2026-10-22 20:07:22.906209100 +0700
+@@ -70,7 +70,8 @@
+ 
+                 GotoElimination.Eliminate(context.GetGotos());
+ 
+-                AstOptimizer.Optimize(context);
++                // SPIR-V codegen has no ElseIf: keep "else { if }" nested there
++                AstOptimizer.Optimize(context, foldElseIf: targetLanguage != TargetLanguage.Spirv);
+ 
+                 context.LeaveFunction();
+             }

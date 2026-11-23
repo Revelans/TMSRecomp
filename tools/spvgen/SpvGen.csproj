@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Builds the runtime's own compute shaders (Sharpen.cs) with Ryujinx's MIT SPIR-V builder from a local checkout
+       (RyuDir, default private/third_party/ryubing) and writes them as C arrays:
+       dotnet run, project tools/spvgen, argument runtime/src/sharpen_spv.h -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RyuDir Condition="'$(RyuDir)' == ''">$(MSBuildThisFileDirectory)..\..\private\third_party\ryubing</RyuDir>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(RyuDir)\src\Spv.Generator\Spv.Generator.csproj" />
+  </ItemGroup>
+</Project>

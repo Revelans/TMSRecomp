@@ -1,0 +1,16 @@
+; game.dll exports: the tables tms.exe binds at start (runtime/src/dispatch.cpp game_load)
+LIBRARY game.dll
+EXPORTS
+    g_guest_funcs DATA
+    g_guest_func_count DATA
+    g_hook_names DATA
+    g_hook_count DATA
+    g_hook_aliases DATA
+    g_hook_alias_count DATA
+    g_thunks DATA
+    g_thunk_count DATA
+    g_hooks DATA
+    g_probes DATA
+    g_modules DATA
+    g_module_count DATA
+    g_image_size DATA

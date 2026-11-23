@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Maxwell -> SPIR-V sidecar for the runtime. Uses Ryujinx's MIT shader translator from a local checkout
+       (RyuDir, default private/third_party/ryubing); nothing from it is copied into this repository. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RyuDir Condition="'$(RyuDir)' == ''">$(MSBuildThisFileDirectory)..\..\private\third_party\ryubing</RyuDir>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(RyuDir)\src\Ryujinx.Graphics.Shader\Ryujinx.Graphics.Shader.csproj" />
+  </ItemGroup>
+</Project>
