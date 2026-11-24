@@ -139,7 +139,7 @@ struct Setting {
     std::vector<Opt> opts;  // DROP; TOGGLE: {off, on}
     float lo = 0, hi = 0, step = 0;
 };
-enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, NSET };
+enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, NSET };
 static const Setting k_set[NSET] = {
     {"fps", "60", DROP, L"Frame rate",
      L"The game's logic runs at this rate. 60 is the most tested. Above 60 the game keeps its speed and only gets "
@@ -215,6 +215,26 @@ static const Setting k_set[NSET] = {
     {"all_difficulties", "1", TOGGLE, L"Unlock all difficulties",
      L"Friendly and Lunatic can be chosen from the start: New Game and System > Settings (Friendly .. Lunatic, also "
      L"mid-game). Normally Friendly comes after a Game Over on Easy and Lunatic only after clearing the game.",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"aspect", "16:9", DROP, L"Aspect ratio",
+     L"Ultrawide: the 3D view gets wider (more to see at the sides) while menus and the HUD stay 16:9 in the middle. "
+     L"Auto follows your screen. A picture of another shape than the screen gets black bars, never stretched.",
+     {{"16:9", L"16:9 · the game's own"}, {"auto", L"Auto · your screen's shape"}, {"21:9", L"21:9 · ultrawide"}, {"32:9", L"32:9 · super ultrawide"}}},
+    {"button_layout", "switch", DROP, L"Button layout",
+     L"Switch: the right face button confirms and the bottom one cancels, as on the Switch. Xbox / PC: the bottom "
+     L"button confirms (A/B and X/Y swapped); button prompts follow. Restart the game after a change.",
+     {{"switch", L"Switch · right button confirms"}, {"xbox", L"Xbox / PC · bottom button confirms"}}},
+    {"resist_marker", "1", TOGGLE, L"Resist markers",
+     L"In battle a foe that resists the highlighted skill gets a shield where the game shows \"!\" for a weakness (also "
+     L"in the target panel), and a resisted hit shows RESIST like WEAK. Also in the in-game menu (F1 / L3 + R3).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"mouse_camera", "1", TOGGLE, L"Mouse turns the camera",
+     L"While the game window has focus the mouse pointer is captured and moving it turns the camera (like the right "
+     L"stick). The F1 menu or Alt+Tab frees the pointer.",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"mouse_sensitivity", "1.0", SLIDER, L"Mouse sensitivity", L"How far the camera turns for the same mouse movement.",
+     {}, 0.2f, 3.0f, 0.1f},
+    {"mouse_invert_y", "0", TOGGLE, L"Invert mouse up / down", L"Moving the mouse up turns the camera down.",
      {{"0", L"Off"}, {"1", L"On"}}},
 };
 
@@ -894,7 +914,7 @@ static D2D1_RECT_F g_drag_track;
 enum { ID_NAV = 100, ID_SET = 1000, ID_POP = 2000, ID_MOD = 3000, ID_PLAY = 10, ID_SAVE, ID_UPDATE, ID_NOTES,
        ID_BROWSE, ID_OPEN_GAME, ID_OPEN_SHOTS, ID_OPEN_MODS, ID_OPEN_LOG, ID_CHECK,
        ID_SU_SRC, ID_SU_KEYS, ID_SU_TARGET, ID_SU_SHADERS, ID_SU_DLSS, ID_SU_DLSS_RUN, ID_SU_RUN, ID_SU_CANCEL,
-       ID_G_TOPIC = 4000, ID_G_BTN = 4100, ID_X = 4200 };  // ID_X: page buttons below
+       ID_G_TOPIC = 4000, ID_G_BTN = 4100, ID_X = 4200, ID_KEY = 5000 };  // ID_X: page buttons below
 // Scrolling pages draw shifted up by g_scroll[page] and clipped above the footer: hits move and clip with them.
 static float g_scroll[8], g_max_scroll, g_bottom;
 static bool g_clip;
@@ -1889,6 +1909,80 @@ static void draw_page() {
     }
 }
 
+// ------------------------------------------------------------------------------------------------ key bindings
+// Game page: three key slots per Switch button / stick direction (settings.h k_key_targets). Click a slot, then press a
+// key or a mouse button (or turn the wheel); Esc cancels, Delete clears the slot.
+static int g_cap = -1;  // the slot waiting for a key: target * 3 + slot
+static std::vector<std::string> key_slots(size_t t) {
+    std::string v = get((std::string("key_") + k_key_targets[t].name).c_str(), k_key_targets[t].def) + ",";
+    std::vector<std::string> out;
+    for (size_t a = 0, b; (b = v.find(',', a)) != std::string::npos && out.size() < 3; a = b + 1)
+        if (std::string n = trim(v.substr(a, b - a)); !n.empty() && _stricmp(n.c_str(), "none")) out.push_back(n);
+    out.resize(3);
+    return out;
+}
+static void set_slot(int cap, const std::string& name) {
+    const size_t t = cap / 3;
+    auto v = key_slots(t);
+    for (auto& o : v) if (!name.empty() && !_stricmp(o.c_str(), name.c_str())) o.clear();  // no key twice in one row
+    v[cap % 3] = name;
+    std::string out;
+    for (auto& o : v) if (!o.empty()) out += (out.empty() ? "" : ", ") + o;
+    set((std::string("key_") + k_key_targets[t].name).c_str(), out.empty() ? "none" : out);
+}
+#ifdef _WIN32
+// a key as SDL names it (what the game reads back with SDL_GetScancodeFromName)
+static std::string key_name(WPARAM vk, LPARAM lp) {
+    const bool ext = (lp >> 24) & 1;
+    if (vk >= 'A' && vk <= 'Z') return std::string(1, (char)vk);
+    if (vk >= '0' && vk <= '9') return std::string(1, (char)vk);
+    if (vk >= VK_F1 && vk <= VK_F12) return "F" + std::to_string(vk - VK_F1 + 1);
+    if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) return "Keypad " + std::to_string(vk - VK_NUMPAD0);
+    switch (vk) {
+    case VK_RETURN: return ext ? "Keypad Enter" : "Return";
+    case VK_SPACE: return "Space"; case VK_TAB: return "Tab"; case VK_BACK: return "Backspace";
+    case VK_SHIFT: return MapVirtualKeyW((lp >> 16) & 0xff, MAPVK_VSC_TO_VK_EX) == VK_RSHIFT ? "Right Shift" : "Left Shift";
+    case VK_CONTROL: return ext ? "Right Ctrl" : "Left Ctrl";
+    case VK_MENU: return ext ? "Right Alt" : "Left Alt";
+    case VK_UP: return "Up"; case VK_DOWN: return "Down"; case VK_LEFT: return "Left"; case VK_RIGHT: return "Right";
+    case VK_INSERT: return "Insert"; case VK_HOME: return "Home"; case VK_END: return "End";
+    case VK_PRIOR: return "PageUp"; case VK_NEXT: return "PageDown"; case VK_CAPITAL: return "CapsLock";
+    case VK_OEM_MINUS: return "-"; case VK_OEM_PLUS: return "="; case VK_OEM_4: return "["; case VK_OEM_6: return "]";
+    case VK_OEM_5: return "\\"; case VK_OEM_1: return ";"; case VK_OEM_7: return "'"; case VK_OEM_3: return "`";
+    case VK_OEM_COMMA: return ","; case VK_OEM_PERIOD: return "."; case VK_OEM_2: return "/";
+    case VK_MULTIPLY: return "Keypad *"; case VK_ADD: return "Keypad +"; case VK_SUBTRACT: return "Keypad -";
+    case VK_DECIMAL: return "Keypad ."; case VK_DIVIDE: return "Keypad /";
+    }
+    return "";
+}
+#endif
+static float draw_keybinds(float x, float y, float w) {
+    const float cw = 150, gap = 10, c0 = x + w - 3 * cw - 2 * gap;
+    for (size_t t = 0; t < std::size(k_key_targets); t++, y += 44) {
+        text(k_key_targets[t].label, R(x, y, c0 - x - 12, 36), f_label, C(TEXT), DWRITE_TEXT_ALIGNMENT_LEADING,
+             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        auto v = key_slots(t);
+        for (int k = 0; k < 3; k++) {
+            const int cap = (int)t * 3 + k, id = ID_KEY + cap;
+            D2D1_RECT_F r = R(c0 + k * (cw + gap), y, cw, 36);
+            const bool h = hov(id), on = g_cap == cap;
+            rounded(r, 4, C(on ? 0x1c2621 : h ? HOVER : PANEL));
+            outline(r, 4, C(on ? ACCENT : h ? EDGE_HI : LINE));
+            text(on ? std::wstring(L"Press a key\u2026") : v[k].empty() ? std::wstring(L"\u2014") : wide(v[k]), r, f_small,
+                 C(on ? ACCENT : v[k].empty() ? DIM : TEXT), DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            hit(r, id, [cap](float) { g_cap = g_cap == cap ? -1 : cap; });
+        }
+    }
+    y += 6;
+    button_at(x, y, L"Reset keys to defaults", ID_X + 30, false, [] {
+        g_cap = -1;
+        for (auto& kt : k_key_targets) set((std::string("key_") + kt.name).c_str(), kt.def);
+    });
+    text(L"Click a slot, then press a key or mouse button. Esc cancels, Delete clears it. Pads keep working as before.",
+         R(x, y + 52, w, 22), f_small, C(DIM));
+    return y + 80;
+}
+
 static void draw_page_body() {
     float x = SIDE + 48, w = W - SIDE - 96;
     switch (g_page) {
@@ -1919,7 +2013,7 @@ static void draw_page_body() {
     {
         section(L"PRESENTATION", x, 128, w);
         float y = 166;
-        for (int i : {FPS, WINDOW, PRESENT}) y += row(i, x, y, w);
+        for (int i : {FPS, WINDOW, ASPECT, PRESENT}) y += row(i, x, y, w);
         section(L"IMAGE", x, y + 8, w);
         y += 44;
         for (int i : {SHARPEN, FXAA}) y += row(i, x, y, w);
@@ -1931,12 +2025,17 @@ static void draw_page_body() {
         section(L"FIELD", x, 128, w);
         float y = 166 + row(WALK, x, 166, w);
         for (int i : {MAPREV, FIELDCOS}) y += row(i, x, y, w);
-        section(L"DIFFICULTY", x, y + 8, w);
+        section(L"BATTLE", x, y + 8, w);
         y += 46;
-        y += row(ALLDIFF, x, y, w);
+        for (int i : {ALLDIFF, RESMARK}) y += row(i, x, y, w);
         section(L"CONTROLS", x, y + 8, w);
         y += 46;
         y += row(PADICONS, x, y, w);
+        y += row(BTNLAYOUT, x, y, w);
+        section(L"KEYBOARD & MOUSE", x, y + 8, w);
+        y += 46;
+        for (int i : {MOUSECAM, MOUSESENS, MOUSEINV}) y += row(i, x, y, w);
+        y = draw_keybinds(x, y + 10, w);
         section(L"AUDIO", x, y + 8, w);
         y += 46;
         for (int i : {MUTE, BGM}) y += row(i, x, y, w);
@@ -2183,6 +2282,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     }
     case WM_MOUSELEAVE: g_hover = -1; redraw(); return 0;
     case WM_MOUSEWHEEL:
+        if (g_cap >= 0) {
+            set_slot(g_cap, GET_WHEEL_DELTA_WPARAM(wp) > 0 ? "WheelUp" : "WheelDown");
+            g_cap = -1, redraw();
+            return 0;
+        }
         if (g_max_scroll > 0) {
             float& sc = g_scroll[g_page];
             sc = std::clamp(sc - GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 60, 0.f, g_max_scroll);
@@ -2193,7 +2297,22 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) return TRUE;  // set in WM_MOUSEMOVE
         break;
+    case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: case WM_XBUTTONDOWN:
+        if (g_cap >= 0) {
+            set_slot(g_cap, m == WM_RBUTTONDOWN ? "Mouse2" : m == WM_MBUTTONDOWN ? "Mouse3" : HIWORD(wp) == XBUTTON1 ? "Mouse4" : "Mouse5");
+            g_cap = -1, redraw();
+        }
+        return m == WM_XBUTTONDOWN ? TRUE : 0;
     case WM_LBUTTONDOWN: {
+        if (g_cap >= 0) {  // a click on another slot moves the capture there; elsewhere it binds the left button
+            float cx = GET_X_LPARAM(lp) / g_scale, cy = GET_Y_LPARAM(lp) / g_scale;
+            int hk = hit_at(cx, cy);
+            if (hk < 0 || g_hits[hk].id < ID_KEY || g_hits[hk].id == ID_KEY + g_cap) {
+                set_slot(g_cap, "Mouse1");
+                g_cap = -1, redraw();
+                return 0;
+            }
+        }
         float x = GET_X_LPARAM(lp) / g_scale, y = GET_Y_LPARAM(lp) / g_scale;
         int k = hit_at(x, y);
         bool was_open = g_open >= 0;
@@ -2209,7 +2328,20 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         if (g_drag >= 0) g_drag = -1, ReleaseCapture(), redraw();
         return 0;
+    case WM_SYSKEYDOWN:  // Alt (and F10) arrive here
+        if (g_cap < 0) break;
+        [[fallthrough]];
     case WM_KEYDOWN:
+        if (g_cap >= 0) {
+            if (wp == VK_DELETE) set_slot(g_cap, "");
+            else if (wp != VK_ESCAPE) {
+                const std::string n = key_name(wp, lp);
+                if (n.empty()) return 0;  // a key the game cannot read back: keep waiting
+                set_slot(g_cap, n);
+            }
+            g_cap = -1, redraw();
+            return 0;
+        }
         if (wp == VK_ESCAPE && g_open >= 0) g_open = -1, redraw();
         else if (wp == VK_RETURN && g_open < 0) play();
         return 0;
@@ -2436,6 +2568,11 @@ int main(int argc, char** argv) {
                 break;
             }
             case SDL_EVENT_MOUSE_WHEEL:
+                if (g_cap >= 0 && e.wheel.y != 0) {  // key binding capture (Game page)
+                    set_slot(g_cap, e.wheel.y > 0 ? "WheelUp" : "WheelDown");
+                    g_cap = -1, g_need_redraw = true;
+                    break;
+                }
                 if (g_max_scroll > 0) {
                     float& sc = g_scroll[g_page];
                     sc = std::clamp(sc - e.wheel.y * 60, 0.f, g_max_scroll);
@@ -2443,6 +2580,14 @@ int main(int argc, char** argv) {
                 }
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+                if (g_cap >= 0) {  // key binding capture: a click on another slot moves it, else the button is bound
+                    int hk = hit_at(e.button.x, e.button.y);
+                    if (e.button.button != SDL_BUTTON_LEFT || hk < 0 || g_hits[hk].id < ID_KEY || g_hits[hk].id == ID_KEY + g_cap) {
+                        if (e.button.button >= 1 && e.button.button <= 5) set_slot(g_cap, "Mouse" + std::to_string(e.button.button));
+                        g_cap = -1, g_need_redraw = true;
+                        break;
+                    }
+                }
                 if (e.button.button != SDL_BUTTON_LEFT) break;
                 int k = hit_at(e.button.x, e.button.y);
                 bool was_open = g_open >= 0;
@@ -2459,6 +2604,17 @@ int main(int argc, char** argv) {
                 if (e.button.button == SDL_BUTTON_LEFT && g_drag >= 0) g_drag = -1, ReleaseCapture(), g_need_redraw = true;
                 break;
             case SDL_EVENT_KEY_DOWN:
+                if (g_cap >= 0) {  // key binding capture: SDL's own key names, as the game reads them back
+                    if (e.key.repeat) break;
+                    if (e.key.scancode == SDL_SCANCODE_DELETE) set_slot(g_cap, "");
+                    else if (e.key.scancode != SDL_SCANCODE_ESCAPE) {
+                        const char* n = SDL_GetScancodeName(e.key.scancode);
+                        if (!n || !*n) break;
+                        set_slot(g_cap, n);
+                    }
+                    g_cap = -1, g_need_redraw = true;
+                    break;
+                }
                 if (e.key.key == SDLK_ESCAPE && g_open >= 0) g_open = -1, g_need_redraw = true;
                 else if (e.key.key == SDLK_RETURN && g_open < 0) play();
                 break;

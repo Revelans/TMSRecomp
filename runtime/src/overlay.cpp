@@ -26,6 +26,8 @@
 
 #include "rt.h"
 
+namespace vk { float wide_factor(); }
+
 namespace rt {
 
 // ------------------------------------------------------------------------------------------------ settings
@@ -197,6 +199,13 @@ static void apply_fps(int i) {
     else set_fps(n);
 }
 static void apply_res(int i) { save_setting("res", k_res[i]); g_restart_note = true; }
+static const char* const k_aspect[4] = {"16:9", "auto", "21:9", "32:9"};
+static void apply_aspect(int i) { save_setting("aspect", k_aspect[i]); g_restart_note = true; }
+static int aspect_index() {
+    const char* a = getenv("NX_ASPECT");
+    for (int i = 0; i < 4; i++) if (a && !_stricmp(a, k_aspect[i])) return i;
+    return 0;
+}
 static void apply_window(int i) {
     save_setting("window", i ? "window" : "borderless");
     ui_set_fullscreen(i == 0);
@@ -316,6 +325,9 @@ static std::vector<Item> build_items() {
          L"Above 60 fps: menu and HUD motion glides between the 60 Hz steps (same speed, shown up to 16 ms later). Off: plain 60 Hz steps.",
          [](int c) { set_ui_smooth(c != 0); save_setting("ui_smooth", c ? "1" : "0"); }},
         {L"Resolution", {L"720p", L"1080p", L"1440p", L"4K", L"8K"}, ri, L"Internal render resolution. Applies after a restart. Above the screen size it supersamples (anti-aliasing): 4K on a 1080p screen, 8K on a 4K screen (needs ~5 GB of video memory).", apply_res},
+        {L"Aspect ratio", {L"16:9", L"Auto", L"21:9", L"32:9"}, aspect_index(),
+         L"Picture shape. 21:9 / 32:9 (ultrawide): the 3D view gets wider (more to see at the sides), menus and HUD stay 16:9 in the middle. Auto: your screen's shape. Applies after a restart.",
+         apply_aspect},
         {L"Display", {L"Borderless", L"Window"}, win && !strcmp(win, "window") ? 1 : 0, L"Borderless fullscreen or a window (F11 / Alt+Enter also switch).", apply_window},
         {L"Bloom", onoff, fx_enabled(FX_BLOOM), L"Glare around bright lights (the game's glare pass).", [](int c) { apply_fx(FX_BLOOM, c); }},
         {L"Glow", onoff, fx_enabled(FX_GLOW), L"Soft glow on emissive surfaces (the game's glow pass).", [](int c) { apply_fx(FX_GLOW, c); }},
@@ -401,6 +413,9 @@ static std::vector<Item> build_items() {
         {L"Overworld costume", onoff, env_on("NX_FIELD_COSTUME", false),
          L"On: outside battle (town, dungeons, story scenes) party members wear the costume equipped in Equip > Costume, as in battle. Off: their story clothes (the game's rule). Applies when a character is next shown.",
          [](int c) { save_setting("field_costume", c ? "1" : "0"); }},
+        {L"Resist markers", onoff, env_on("NX_RESIST_MARKER", true),
+         L"Battle: a foe that resists the highlighted skill gets a shield where the game shows \"!\" for a weakness (also in the target panel); a resisted hit shows RESIST like WEAK. Switches at once.",
+         [](int c) { save_setting("resist_marker", c ? "1" : "0"); }},
         {L"Autosave after battles", onoff, env_on("NX_AUTOSAVE", true),
          L"After each battle, once you walk again, the game is saved to slot 20 (your own slots are never touched). Load it like any save.", apply_autosave},
         {L"Exit game", {}, 0, L"Close the game. Save first: progress since the last save is lost.", apply_exit},
@@ -660,6 +675,11 @@ bool overlay_update(void* hwnd, uint64_t buttons, int ly, bool f1) {
     POINT org{0, 0};
     ClientToScreen((HWND)hwnd, &org);
     const float s = std::max(0.5f, (cr.bottom - cr.top) / 1080.0f);
+    // the game's 16:9 area in the window: the picture (16:9 x aspect factor) fitted with bars by vk fit_blit, its 16:9
+    // middle (ultrawide); the pill sits there, not in a black bar (user 21:9 test s104)
+    const float pa = 16.0f / 9 * vk::wide_factor(), cw_ = (float)cr.right, ch_ = (float)cr.bottom;
+    const float ph = std::fabs(cw_ / ch_ - pa) < pa * 0.01f ? ch_ : std::min(ch_, cw_ / pa);
+    const int ui_left = (int)((cw_ - std::min(cw_, ph * 16 / 9)) / 2), ui_bottom = (int)((ch_ + ph) / 2);
     const bool visible = IsWindowVisible((HWND)hwnd) && !IsIconic((HWND)hwnd);
 #else
     // layers in window pixels from the window's corner: frame_overlay maps them onto the frame
@@ -747,10 +767,12 @@ bool overlay_update(void* hwnd, uint64_t buttons, int ly, bool f1) {
     } else if ((title || camp) && !menu && visible) {
         static bool pill_camp = false;
         int w = (int)((camp ? 330 : 300) * s), h = (int)(56 * s);
-        const bool redraw = !g_hint_layer.shown || g_hint_layer.w != w || pill_camp != camp;
-        pill_camp = camp;
+        static int pill_x = 0, pill_y = 0;
+        const int px = org.x + ui_left + (int)(40 * s), py = org.y + ui_bottom - (int)((camp ? 120 : 150) * s);
+        const bool redraw = !g_hint_layer.shown || g_hint_layer.w != w || pill_camp != camp || px != pill_x || py != pill_y;
+        pill_camp = camp, pill_x = px, pill_y = py;
         if (redraw)
-            layer_show(g_hint_layer, org.x + (int)(40 * s), org.y + cr.bottom - (int)((camp ? 120 : 150) * s), w, h, [&] {
+            layer_show(g_hint_layer, px, py, w, h, [&] {
                 fill(0, 0, (float)w, (float)h, h / 2.0f, D2D1::ColorF(0, 0, 0, 0.55f));
                 fill(10 * s, 10 * s, 36 * s, 36 * s, 18 * s, k_white);
                 text(L"−", 10 * s, 8 * s, 36 * s, 36 * s, 30 * s, D2D1::ColorF(0, 0, 0, 1), DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER);

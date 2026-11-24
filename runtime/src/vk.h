@@ -70,6 +70,7 @@ struct Image {
     Image* twin = nullptr;   // upscaling: the other size of this screen-size target (hi <-> lo), nullptr while upscaling is off
     bool from_pool = false;  // contents came from guest memory
     float scale = 1;         // render targets: res_scale(), or the FSR 3 scene scale (lo twins); w, h are the scaled size
+    float sx = 1;            // ultrawide: extra width factor of a widened 16:9 screen target (w = game width * sx * scale)
     uint32_t pool_bytes = 0;  // guest storage read by the upload
     uint64_t checked = 0;     // submit serial of the last write-watch check
     std::map<uint64_t, VkImageView> views;  // sampled views with a swizzle / view type (texture views)
@@ -95,6 +96,7 @@ void pack_released(Image* im);  // vk_texture.cpp: a replaced image goes away (d
 void defer_destroy(VkImage image, VkImageView view, std::map<uint64_t, VkImageView> views, VkDeviceMemory mem, VkDeviceSize off, VkDeviceSize size);
 VkImageView sampled_view(nvn::Texture* t, Image* im, const nvn::TexView& v);  // vk.cpp
 uint32_t res_scale();  // vk.cpp: NX_RES / NX_RES_SCALE, render target scale
+float wide_factor();   // vk.cpp: setting aspect (NX_ASPECT) over 16:9: 1 = the game's 16:9, 1.3125 = 21:9 (1280 -> 1680)
 uint64_t vram_bytes();  // vk.cpp: largest device-local heap (NX_VRAM_MB pretends a smaller GPU, for tests)
 bool weak_gpu();        // vk.cpp: integrated GPU or under 4 GB of VRAM (weak-PC defaults: res auto, UHD pack auto)
 bool upload_from_pool(VkCommandBuffer cb, nvn::Texture* t, Image* im);  // vk_texture.cpp

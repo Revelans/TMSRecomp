@@ -891,13 +891,14 @@ NVN(nvnQueueSubmitCommands) {  // (queue, count, handles*)
 NVN(nvnQueueFlush) {}
 NVN(nvnQueueFinish) { render_drain(); vk::gpu_wait(vk::gpu_last_submitted(), UINT64_MAX); }
 
+namespace nvn { std::unordered_set<uint32_t> g_window_tex; }
 NVN(nvnWindowInitialize) {  // builder: numTextures @8, textures** @0x10, nativeWindow @0x14, interval-1 @0x18
     Window& w = make<Window>(c->r[0]);
     uint32_t b = c->r[1];
     w.ntex = std::min<uint32_t>(4, ld32(b + 8));
-    for (uint32_t i = 0; i < w.ntex; i++) w.textures[i] = ld32(ld32(b + 0x10) + 4 * i);
+    for (uint32_t i = 0; i < w.ntex; i++) w.textures[i] = ld32(ld32(b + 0x10) + 4 * i), nvn::g_window_tex.insert(w.textures[i]);
     w.interval = ld32(b + 0x18) + 1;
-    log("nvn: window with %u textures, present interval %u", w.ntex, w.interval);
+    log("nvn: window with %u textures (%08x %08x), present interval %u", w.ntex, w.textures[0], w.textures[1], w.interval);
     c->r[0] = 1;
 }
 NVN(nvnWindowFinalize) { destroy(c->r[0]); }

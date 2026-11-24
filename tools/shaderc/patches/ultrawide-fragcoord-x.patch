@@ -1,0 +1,15 @@
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitAttribute.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitAttribute.cs
+@@ -179,6 +179,12 @@
+                     // because the shader code is not expecting scaled values.
+                     res = context.FPDivide(res, context.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.RenderScale), Const(0)));
+ 
++                    // TMSRecomp ultrawide: widened render targets stretch the game's x; ViewportSize.z = that factor (1 otherwise)
++                    if (op.Imm10 == AttributeConsts.PositionX)
++                    {
++                        res = context.FPDivide(res, context.Load(StorageKind.ConstantBuffer, SupportBuffer.Binding, Const((int)SupportBufferField.ViewportSize), Const(2)));
++                    }
++
+                     if (op.Imm10 == AttributeConsts.PositionY && context.TranslatorContext.Options.TargetApi != TargetApi.OpenGL)
+                     {
+                         // If YNegate is enabled, we need to flip the fragment coordinates vertically, unless

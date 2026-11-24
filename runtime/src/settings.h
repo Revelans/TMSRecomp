@@ -1,6 +1,19 @@
 #pragma once
 // Release version (the launcher compares it with GitHub release tags).
-static const char k_version[] = "0.1.1";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
+static const char k_version[] = "0.1.2";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
+
+// Keyboard / mouse bindings (ui.cpp poll_input, launcher Game page): settings.ini key_<name> = up to 3 names, comma
+// separated; "none" = unbound. Names: SDL key names (K, Return, Left Shift, Keypad 4...), Mouse1..Mouse5, WheelUp / WheelDown.
+struct KeyTarget { const char* name; const wchar_t* label; const char* def; };
+static const KeyTarget k_key_targets[] = {
+    {"a", L"A \u00b7 confirm / talk", "K, Return, Mouse1"}, {"b", L"B \u00b7 cancel / back", "J, Backspace, Mouse2"},
+    {"x", L"X \u00b7 sword strike", "I"}, {"y", L"Y \u00b7 menu", "U"},
+    {"l", L"L", "Q"}, {"r", L"R", "E"}, {"zl", L"ZL", "1"}, {"zr", L"ZR", "3"},
+    {"plus", L"+ \u00b7 Topic / pause", "Space"}, {"minus", L"\u2212 \u00b7 map", "Tab"},
+    {"l3", L"L3 \u00b7 left stick click", "none"}, {"r3", L"R3 \u00b7 right stick click", "Mouse3"},
+    {"up", L"D-pad up", "Up"}, {"down", L"D-pad down", "Down"}, {"left", L"D-pad left", "Left"}, {"right", L"D-pad right", "Right"},
+    {"ls_up", L"Move forward", "W"}, {"ls_down", L"Move back", "S"}, {"ls_left", L"Move left", "A"}, {"ls_right", L"Move right", "D"},
+    {"rs_up", L"Camera up", "none"}, {"rs_down", L"Camera down", "none"}, {"rs_left", L"Camera left", "none"}, {"rs_right", L"Camera right", "none"}};
 
 // settings.ini written next to tms.exe on the first run (by tms.exe or the launcher). "key = value" -> NX_KEY.
 static const char k_default_settings[] =
@@ -29,12 +42,15 @@ static const char k_default_settings[] =
     "; battle_retry = 0: no \"Retry the battle?\" after a party wipe (default 1: retry with the battle's starting HP / EP / items)\n"
     "; item_max99 = 0: consumables keep the game's stock caps (Life Stone 40, Patra Stone 90, Magic Mirror 5...; default 1: 99 each)\n"
     "; map_reveal = 1: every Idolasphere floor shows its whole layout on the minimap / map when entered (default 0)\n"
+    "; aspect: 16:9 (default, the game's), 21:9 / 32:9 ultrawide (wider 3D view, HUD and menus 16:9 in the middle), auto = the screen's shape\n"
     "; field_costume = 1: outside battle (field, dungeons, story scenes) party members wear their equipped costume (default 0: story clothes)\n"
+    "; resist_marker = 0: no resist shield over foes / in the target panel and no RESIST popup on resisted hits (default 1)\n"
     "; all_difficulties = 0: Friendly / Lunatic stay locked until the game unlocks them (default 1: all five selectable)\n"
     "; ko_revive = 0: members who fell stay at 0 HP after a battle (default 1: they get up with 1 HP once the battle is won or escaped)\n"
     "; upscaler: fsr1 (default: edge-adaptive upscale when res is below the window size) or bilinear\n"
     "; sharpen: 0 (off) .. 100, contrast-adaptive sharpening; fx_fxaa / fx_bloom / fx_glow / fx_dof / fx_vignette /\n"
     ";   fx_fog / fx_outline = 0 turn that effect off; pad_icons: auto, switch, playstation, xbox\n"
+    "; button_layout: switch (default: right face button = confirm, as on the Switch) or xbox (bottom = confirm, A/B and X/Y swapped)\n"
     "; fx_fxaa = 2: SMAA anti-aliasing (our pass) in place of the game's FXAA (1, default); 0 = none\n"
     ";   3: AMD FSR 3 temporal anti-aliasing at full size (amd_fidelityfx_*_vk.dll next to tms.exe; else SMAA)\n"
     ";   4: NVIDIA DLSS / DLAA (RTX GPU + nvngx_dlss.dll next to tms.exe; else FSR 3)\n"
@@ -45,5 +61,10 @@ static const char k_default_settings[] =
     ";   smooth edges themselves)\n"
     "; tex_pack: auto (default: on unless integrated GPU or under 4 GB VRAM), 1 on, 0 off (UHD texture pack, <data>\\textures\\pack)\n"
     "; voice_subs = 0 turns the English battle voice subtitles off (subtitles_en.tsv next to tms.exe)\n"
+    "; key_<button> = keyboard / mouse keys for a Switch button or stick direction, up to 3, comma separated (\"none\" = unbound):\n"
+    ";   a b x y l r zl zr plus minus l3 r3 up down left right ls_up ls_down ls_left ls_right rs_up rs_down rs_left rs_right\n"
+    ";   names: K, Return, Space, Left Shift, Keypad 4, F5..., Mouse1 (left) .. Mouse5, WheelUp, WheelDown (launcher: Game page)\n"
+    "; mouse_camera = 0: the mouse does not turn the camera (default 1: captured while the game has focus; F1 menu frees it);\n"
+    ";   mouse_sensitivity: 0.2 .. 3.0 (default 1.0); mouse_invert_y = 1 inverts up / down\n"
     "; In game: F1 or L3 + R3 opens the settings menu\n"
     "; data: the folder with link\\image.bin and romfs (found next to the build folder, or asked for once)\n";

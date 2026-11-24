@@ -110,6 +110,7 @@ int sharpen_setting();    // overlay.cpp: setting sharpen (0 off .. 100), the pr
 // pad_icons.cpp: button icons by controller (setting pad_icons auto|switch|playstation|xbox)
 extern std::atomic<int> g_pad_kind;  // ui.cpp sets it for the open pad: 0 Switch / other, 1 PlayStation, 2 Xbox
 int pad_icons_setting();             // 0 auto, 1 switch, 2 playstation, 3 xbox
+bool button_layout_xbox();           // setting button_layout = xbox: bottom face button = A (confirm), left = X
 void set_pad_icons(int s);           // menu: saves the setting
 int pad_icon_style();                // icons to show now: 0 Switch, 1 PlayStation, 2 Xbox
 bool pad_icon_atlas_size(uint32_t w, uint32_t h);  // some atlas with button faces has this size (hash it)
@@ -128,7 +129,7 @@ uint64_t movie_fp(const uint8_t* p, uint32_t row, uint32_t rows, uint32_t stride
 bool movie_hd_any();
 bool movie_hd_plane(uint64_t fp, std::shared_ptr<std::vector<uint8_t>>* nv12, size_t* off, uint32_t* w, uint32_t* h);
 bool is_resist_atlas(uint64_t hash);  // level-0 hash of an atlas with the badge letters
-bool resist_icon_atlas(uint64_t hash, uint32_t w, uint32_t h, uint8_t* rgba);  // draws the icons over it
+bool resist_icon_atlas(uint64_t hash, uint32_t w, uint32_t h, uint8_t* rgba, bool icons);  // draws the icons (and the RESIST popup) over it
 bool resist_icon_cell(uint64_t hash, float u, float v);  // texture coordinate inside one of that atlas's icon cells
 // subs.cpp: battle voice subtitles (setting voice_subs). subs_voice: the game set a voice file to play (game log);
 // subs_frame (present path): the bitmap to blend over a frame of that size now, null = none.
@@ -141,6 +142,7 @@ std::shared_ptr<const SubsBitmap> frame_overlay(uint32_t fw, uint32_t fh);
 void set_subs_enabled(bool on);
 void subs_notice(const std::wstring& text);  // a short line of ours in the subtitle spot (1.5 s)
 constexpr uint64_t k_button_atlas_hash = 0x34c763427410e392ull;  // the common button atlas
+void sprite_command(const char* args);  // NX_CONTROL "spr bank sheet n": log 2D sprite records (main.cpp)
 void dump_command(const char* args);   // NX_CONTROL "dump lo hi file": write committed guest memory lo..hi to file (main.cpp)
 extern std::atomic<uint32_t> g_uidraw30;  // debug: btl_ui_draw part draws on 30 Hz ticks (hle_sys.cpp)
 void task30_command(const char* args);  // NX_CONTROL "task30 <update fn hex>" (0 = clear): debug, tasks with that update step on 30 Hz ticks (hle_sys.cpp)

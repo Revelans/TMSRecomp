@@ -5,6 +5,7 @@
 #include "rt.h"
 #include <chrono>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 namespace nvn {
@@ -64,6 +65,8 @@ struct CmdBuf { std::vector<Cmd> cmds; bool recording = false; uint64_t chunk = 
 
 struct Queue { std::vector<uint32_t> pending; };
 struct Window { uint32_t ntex = 0, textures[4] = {}, next = 0, interval = 1; };
+extern std::unordered_set<uint32_t> g_window_tex;
+extern bool g_ui_phase;  // vk_replay.cpp: ultrawide UI phase of the frame being recorded  // guest NVNtexture addresses the game presents (ultrawide: UI targets)
 
 extern std::mutex g_lock;
 template <class T> T* get(uint32_t guest);

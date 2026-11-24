@@ -48,6 +48,10 @@ void set_pad_icons(int s) {
     save_setting("pad_icons", k_icon_names[s]);
     g_pad_icons = s;
 }
+bool button_layout_xbox() {
+    static const bool on = [] { const char* v = getenv("NX_BUTTON_LAYOUT"); return v && !_stricmp(v, "xbox"); }();
+    return on;
+}
 int pad_icon_style() {
     int s = pad_icons_setting();
     return s == 0 ? g_pad_kind.load() : s - 1;
@@ -179,18 +183,22 @@ struct Painter {
         if (!plain) rt->DrawEllipse(e, k, sw);
         release(w), release(k);
     }
+    // the physical button a game button sits on, as a positional kind (FACE_A = east ... FACE_Y = west):
+    // button_layout = xbox swaps A/B and X/Y (ui.cpp)
+    static int pos(int k) { return k <= FACE_Y && button_layout_xbox() ? k ^ 1 : k; }
     void face(const Cell& c, int style) {
         float cx = c.x + c.w / 2.0f, cy = c.y + c.h / 2.0f, r = c.w / 2.0f;
         disc(cx, cy, r);
         if (style == 2) {  // Xbox letters in their colours
             static const wchar_t* const letter[] = {L"B", L"A", L"Y", L"X"};
             static const uint32_t col[] = {0xD8262B, 0x3E9B2F, 0xE0A800, 0x2B6CD6};
-            text(letter[c.k], D2D1::RectF(c.x, c.y + r * 0.04f, c.x + c.w, c.y + c.h), r * 1.25f, tint(col[c.k]));
+            const int k = pos(c.k);
+            text(letter[k], D2D1::RectF(c.x, c.y + r * 0.04f, c.x + c.w, c.y + c.h), r * 1.25f, tint(col[k]));
             return;
         }
         float sw = r * 0.2f, g = r * 0.42f;  // PlayStation symbols, stroked
         ID2D1SolidColorBrush* b = nullptr;
-        switch (c.k) {
+        switch (pos(c.k)) {
             case FACE_A:  // circle
                 b = brush(tint(0xE0464B));
                 rt->DrawEllipse({{cx, cy}, g, g}, b, sw);
@@ -614,16 +622,18 @@ int pad_icons_selftest(const char* dir) {
 // centre, measured on the dumps (2048 scale; the game's own _US atlases without the English mod are the same layout at
 // half size). Both atlas sizes are in k_atlases too, so pad_icon_atlas_size keeps their level 0 for hashing.
 namespace {
-enum Res { R_WK, R_RS, R_NU, R_DR, R_RP, R_COUNT };
-const char* const k_res_files[R_COUNT] = {"weak", "resist", "null", "absorb", "repel"};
-const uint32_t k_res_colour[R_COUNT] = {0xE02020, 0x9A9A9A, 0xB060E0, 0x50C050, 0x30A0F0};
-struct RCell { int cx, cy, size; Res r; };
+enum Res { R_WK, R_RS, R_NU, R_DR, R_RP, R_POPUP, R_COUNT };
+const char* const k_res_files[R_COUNT] = {"weak", "resist", "null", "absorb", "repel", "resist_popup"};
+const uint32_t k_res_colour[R_COUNT] = {0xE02020, 0x9A9A9A, 0xB060E0, 0x50C050, 0x30A0F0, 0};
+struct RCell { int cx, cy, size; Res r; int h = 0; };  // h: height when not square
 // 48 = the whole sprite (Skill Inheritance drawlog 11-02: 24 px quads at 720p, Wk uv from (452,34), Rs from (402,184))
 const RCell k_status_res[] = {{428, 58, 48, R_DR}, {476, 58, 48, R_WK}, {428, 108, 48, R_RP}, {427, 158, 48, R_NU},
                               {426, 208, 48, R_RS}};
 // battle badges: 48 = the whole sprite (target panel drawlog 11-02: 24 px quads at 720p, uv from (2,174) for Wk)
 const RCell k_battle_res[] = {{26, 150, 48, R_DR}, {74, 150, 48, R_RP}, {122, 150, 48, R_NU}, {170, 150, 48, R_RS},
-                              {26, 198, 48, R_WK}, {128, 982, 60, R_RP}, {213, 982, 60, R_NU}, {301, 982, 60, R_DR}};
+                              {26, 198, 48, R_WK}, {128, 982, 60, R_RP}, {213, 982, 60, R_NU}, {301, 982, 60, R_DR},
+                              {240, 152, 84, R_RS},  // our own, in empty space: the resist marker over foes (s106, hle_sys resist_mark)
+                              {480, 300, 204, R_POPUP, 92}};  // our own: the RESIST hit popup (same size as WEAK, hle_sys btl_dmg_popup_draw)
 struct RAtlas { uint64_t hash; uint32_t w, h; const RCell* cells; size_t n; int div; };
 #define RATLAS(h, w, ht, c, d) {h, w, ht, c, sizeof(c) / sizeof(c[0]), d}
 const RAtlas k_res_atlases[] = {
@@ -641,10 +651,10 @@ const RAtlas k_res_atlases[] = {
 };
 std::atomic<int> g_resist_icons{-1};
 
-// icon k at size x size, BGRA premultiplied; empty when there is no file
+// icon k at size x size (w x h: the whole picture, not cropped), BGRA premultiplied; empty when there is no file
 #ifndef _WIN32
 // Linux: PNG through cairo, cropped to a square around its alpha bounds, scaled with a good filter
-std::vector<uint8_t> load_icon(int k, int size) {
+std::vector<uint8_t> load_icon(int k, int size, int h) {
     std::vector<uint8_t> out;
     const std::string name = std::string(k_res_files[k]) + ".png";
     std::filesystem::path path = std::filesystem::path(g_data_dir) / "resist_icons" / name;
@@ -666,6 +676,18 @@ std::vector<uint8_t> load_icon(int k, int size) {
         for (int x = 0; x < iw; x++)
             if (px[(size_t)y * st + x * 4 + 3] > 24) x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
     int cx = 0, cy = 0, side = std::min(iw, ih);
+    if (h) {  // the whole picture at size x h (RESIST popup)
+        draw::Canvas cv(size, h);
+        cv.clear();
+        cairo_scale(cv.cr, (double)size / iw, (double)h / ih);
+        cairo_set_source_surface(cv.cr, img, 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cv.cr), CAIRO_FILTER_BEST);
+        cairo_paint(cv.cr);
+        cairo_surface_destroy(img);
+        out.resize((size_t)size * h * 4);
+        for (int y = 0; y < h; y++) memcpy(out.data() + (size_t)y * size * 4, cv.data() + (size_t)y * cv.stride(), (size_t)size * 4);
+        return out;
+    }
     if (x1 >= x0) {
         side = std::min({std::max(x1 - x0, y1 - y0) + 1, iw, ih});
         cx = std::clamp((x0 + x1 + 1 - side) / 2, 0, iw - side), cy = std::clamp((y0 + y1 + 1 - side) / 2, 0, ih - side);
@@ -683,7 +705,7 @@ std::vector<uint8_t> load_icon(int k, int size) {
     return out;
 }
 #else
-std::vector<uint8_t> load_icon(int k, int size) {
+std::vector<uint8_t> load_icon(int k, int size, int h) {
     std::vector<uint8_t> out;
     // <data>\resist_icons wins (player override), else the set shipped next to tms.exe (user's own art, repo data/)
     const std::string name = std::string(k_res_files[k]) + ".png";
@@ -712,7 +734,7 @@ std::vector<uint8_t> load_icon(int k, int size) {
         cv->GetSize(&iw, &ih);
         std::vector<uint8_t> full((size_t)iw * ih * 4);
         WICRect rc{0, 0, (INT)iw, (INT)ih};
-        if (iw && ih && SUCCEEDED(cv->CopyPixels(nullptr, iw * 4, (UINT)full.size(), full.data()))) {
+        if (!h && iw && ih && SUCCEEDED(cv->CopyPixels(nullptr, iw * 4, (UINT)full.size(), full.data()))) {
             int x0 = (int)iw, y0 = (int)ih, x1 = -1, y1 = -1;
             for (int y = 0; y < (int)ih; y++)
                 for (int x = 0; x < (int)iw; x++)
@@ -724,8 +746,8 @@ std::vector<uint8_t> load_icon(int k, int size) {
             }
         }
         if (SUCCEEDED(f->CreateBitmapClipper(&cl)) && SUCCEEDED(cl->Initialize(cv, &rc)) && SUCCEEDED(f->CreateBitmapScaler(&sc)) &&
-            SUCCEEDED(sc->Initialize(cl, size, size, WICBitmapInterpolationModeFant))) {
-            out.resize((size_t)size * size * 4);
+            SUCCEEDED(sc->Initialize(cl, size, h ? h : size, WICBitmapInterpolationModeFant))) {
+            out.resize((size_t)size * (h ? h : size) * 4);
             if (FAILED(sc->CopyPixels(nullptr, size * 4, (UINT)out.size(), out.data()))) out.clear();
         }
     }
@@ -753,20 +775,25 @@ bool resist_icon_cell(uint64_t hash, float u, float v) {
         if (a.hash != hash) continue;
         const float x = u * a.w * a.div, y = v * a.h * a.div;  // in the cells' 2048-scale units
         for (size_t i = 0; i < a.n; i++)
-            if (fabsf(x - a.cells[i].cx) < a.cells[i].size / 2.0f && fabsf(y - a.cells[i].cy) < a.cells[i].size / 2.0f) return true;
+            if (a.cells[i].r != R_POPUP && fabsf(x - a.cells[i].cx) < a.cells[i].size / 2.0f && fabsf(y - a.cells[i].cy) < a.cells[i].size / 2.0f) return true;
     }
     return false;
 }
-// rgba: RGBA8, straight alpha, changed in place
-bool resist_icon_atlas(uint64_t hash, uint32_t w, uint32_t h, uint8_t* rgba) {
+// rgba: RGBA8, straight alpha, changed in place. icons: the badge icons too (else only the RESIST popup, which is
+// drawn whatever the setting). Returns whether anything was drawn.
+bool resist_icon_atlas(uint64_t hash, uint32_t w, uint32_t h, uint8_t* rgba, bool icons) {
+    bool drawn = false;
     for (const RAtlas& a : k_res_atlases) {
         if (a.hash != hash || a.w != w || a.h != h) continue;
         for (size_t i = 0; i < a.n; i++) {
             const RCell& c = a.cells[i];
-            const int size = c.size / a.div, x0 = c.cx / a.div - size / 2, y0 = c.cy / a.div - size / 2;
-            if (x0 < 0 || y0 < 0 || x0 + size > (int)w || y0 + size > (int)h) continue;
-            const std::vector<uint8_t> icon = load_icon(c.r, size);
-            for (int y = 0; y < size; y++)
+            if (!icons && c.r != R_POPUP) continue;
+            const int size = c.size / a.div, ch = c.h ? c.h / a.div : size, x0 = c.cx / a.div - size / 2, y0 = c.cy / a.div - ch / 2;
+            if (x0 < 0 || y0 < 0 || x0 + size > (int)w || y0 + ch > (int)h) continue;
+            const std::vector<uint8_t> icon = load_icon(c.r, size, c.h ? ch : 0);
+            if (icon.empty() && c.r == R_POPUP) continue;  // no file: leave the empty space
+            drawn = true;
+            for (int y = 0; y < ch; y++)
                 for (int x = 0; x < size; x++) {
                     uint8_t* d = rgba + ((size_t)(y0 + y) * w + x0 + x) * 4;
                     if (!icon.empty()) {  // BGRA premultiplied -> RGBA straight
@@ -783,9 +810,8 @@ bool resist_icon_atlas(uint64_t hash, uint32_t w, uint32_t h, uint8_t* rgba) {
                     d[3] = (uint8_t)(255 * std::clamp(R - r + 0.5f, 0.0f, 1.0f));
                 }
         }
-        return true;
     }
-    return false;
+    return drawn;
 }
 
 }  // namespace rt

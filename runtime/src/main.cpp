@@ -358,6 +358,32 @@ void rt::profile_start() {
     }).detach();
 }
 
+// NX_CONTROL "spr bank sheet n" (debug): the game's 2D sprite records (id = bank * 10^7 + sheet * 10^4 + index; lookup
+// 0x59c1a0, manager pointer at 0x9f3320): index, then the 0x70-byte record's first 16 words (rect floats / ints)
+void rt::sprite_command(const char* args) {
+    int bank = 0, sheet = 0, n = 0;
+    if (sscanf(args, "%d %d %d", &bank, &sheet, &n) != 3) return;
+    const uint32_t m = ld32(0x9f3320);
+    if (!m) { log("spr: no sprite manager"); return; }
+    const uint32_t t = ld32(m + 8), b0 = t ? ld32(t + bank * 0xc) : 0, bk = b0 >= 0x10000000 ? ld32(b0 + 0x10) : 0,
+                   recs = bk >= 0x10000000 ? ld32(bk + sheet * 0x30 + 0x10) : 0;
+    log("spr: manager %08x table %08x b0 %08x bank %08x records %08x", m, t, b0, bk, recs);
+    if (!recs) return;
+    for (int i = 0; i < n; i++) {
+        const uint32_t r = recs + i * 0x70;
+        std::string s;
+        char b[32];
+        for (int k = 0; k < 28; k++) {
+            const uint32_t w = ld32(r + 4 * k);
+            float f;
+            memcpy(&f, &w, 4);
+            if (w > 0x3000000 && w < 0x50000000) snprintf(b, sizeof b, " %g", f);
+            else snprintf(b, sizeof b, " %x", w);
+            s += b;
+        }
+        log("spr %d: %s", i, s.c_str());
+    }
+}
 void rt::dump_command(const char* args) {  // pages that are not committed are written as zeros (snap4.sh, framecount.py)
     unsigned lo = 0, hi = 0;
     char path[260] = "";

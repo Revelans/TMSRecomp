@@ -28,6 +28,7 @@
 using namespace rt;
 using namespace vk;
 
+namespace rt { extern std::atomic<int64_t> g_btl_open_ms; }  // hle_sys.cpp: steady-clock ms of the last battle opening
 namespace nvn {
 
 struct Binding { uint64_t addr = 0, size = 0; };
@@ -597,6 +598,17 @@ static std::string pt_target() {  // the pass's first colour (or depth) target: 
     return b;
 }
 
+bool g_ui_phase = false;  // ultrawide: the frame's draws are UI now
+static bool g_draw_picture;  // ultrawide: bind_resources saw a 16:9 picture texture (title / menu artwork, movie frame)
+static bool g_draw_rendered;  // ultrawide: a texture this draw samples was rendered by the GPU (minimap mask, screen copies)
+static uint32_t g_ui_target;  // ultrawide: the texture the game copies into a window texture (scene + UI), 0 before the first
+// ultrawide width factor of the bound render targets (1 unless they are widened 16:9 screen targets)
+static float rt_sx() {
+    for (uint32_t i = 0; i < g_st.ncolors; i++)
+        if (Image* im = image_of(g_st.colors[i])) return im->sx;
+    Image* d = image_of(g_st.depth);
+    return d ? d->sx : 1;
+}
 // scale of the bound render targets (res_scale() or 1; all targets of a pass share it: same NVN flags)
 static float rt_scale() {
     for (uint32_t i = 0; i < g_st.ncolors; i++)
@@ -617,7 +629,7 @@ struct SupportBuffer {
     int32_t tfe_offset[4], tfe_vertex_count[4];
 };
 static_assert(sizeof(SupportBuffer) == 1392, "Ryujinx SupportBuffer layout");
-static VkDescriptorBufferInfo support_buffer(const std::vector<float>& key) {  // rt scale, vp w, vp h, frag count, scales
+static VkDescriptorBufferInfo support_buffer(const std::vector<float>& key) {  // rt scale, vp w, vp h, frag count, x factor, scales
     static std::map<std::vector<float>, VkDescriptorBufferInfo> made;
     static VkBuffer buf = VK_NULL_HANDLE;
     static uint8_t* map = nullptr;
@@ -654,11 +666,11 @@ static VkDescriptorBufferInfo support_buffer(const std::vector<float>& key) {  /
     sb.viewport_inverse[2] = 1;
     sb.viewport_size[0] = w;
     sb.viewport_size[1] = h;
-    sb.viewport_size[2] = 1;
+    sb.viewport_size[2] = key[4];  // FragCoord.x divisor besides the scale (ultrawide sx; translator patch)
     sb.frag_scale_count[0] = (int32_t)key[3];
     for (int i = 0; i < 73; i++) sb.render_scale[i][0] = 1;
     sb.render_scale[0][0] = s;
-    for (size_t i = 4; i < key.size() && i - 3 < 73; i++) sb.render_scale[i - 3][0] = key[i];
+    for (size_t i = 5; i < key.size() && i - 4 < 73; i++) sb.render_scale[i - 4][0] = key[i];
     memcpy(map + used, &sb, sizeof sb);
     VkDescriptorBufferInfo info{buf, used, sizeof(SupportBuffer)};
     used += slot;
@@ -1655,6 +1667,32 @@ static bool temporal_ready(uint32_t w, uint32_t h) {
     return ok;
 }
 static void scene_cam_bind(uint32_t a, uint64_t size) {
+    static int camlog = getenv("NX_CAM_LOG") ? atoi(getenv("NX_CAM_LOG")) : 0;  // debug: N camera blocks logged
+    if (camlog > 0 && size == 736 && g_st.colors[0]) {
+        camlog--;
+        std::string m;
+        for (int i = 0; i < 128; i++) { char b[24]; snprintf(b, sizeof b, "%s%g", i % 16 ? " " : "\n  ", ldf(a + 4 * i)); m += b; }
+        log("cam: block %08x target %ux%u frame %u:%s", a, g_st.colors[0]->width, g_st.colors[0]->height, (uint32_t)g_present_no, m.c_str());
+        // debug NX_CAM_FIND=frame: at that frame, guest words equal to this block's P00 with P11 5 floats later
+        static uint32_t find_at = getenv("NX_CAM_FIND") ? atoi(getenv("NX_CAM_FIND")) : 0;
+        if (find_at && g_present_no >= find_at) {
+            find_at = 0;
+            const uint32_t p00 = ld32(a + 4 * 56), p11 = ld32(a + 4 * 61);
+            MEMORY_BASIC_INFORMATION mi;
+            int n = 0;
+            for (uint8_t* p = (uint8_t*)GUEST_BASE; p < (uint8_t*)GUEST_BASE + 0x100000000ull && VirtualQuery(p, &mi, sizeof mi);
+                 p = (uint8_t*)mi.BaseAddress + mi.RegionSize) {
+                if (mi.State != MEM_COMMIT || (mi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) continue;
+                const uint32_t* w = (const uint32_t*)mi.BaseAddress;
+                for (size_t i = 0; i + 5 < mi.RegionSize / 4 && n < 40; i++)
+                    if (w[i] == p00 && w[i + 5] == p11) {
+                        const uint32_t ga = (uint32_t)((uint8_t*)&w[i] - (uint8_t*)GUEST_BASE);
+                        if (ga >> 24 == (a >> 24) || ga >> 24 == (a >> 24) + 1 || ga >> 24 == (a >> 24) - 1) continue;  // uniform rings
+                        log("cam: P00 copy at %08x%s", ga, ga >= a && ga < a + 736 ? " (this block)" : ""), n++;
+                    }
+            }
+        }
+    }
     if (size != 736 || !g_st.colors[0] || rt::fsr3_setting() == 0) return;
     const float w = ldf(a), h = ldf(a + 4);
     if (w != (float)g_st.colors[0]->width || h != (float)g_st.colors[0]->height) return;
@@ -1898,6 +1936,8 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
     for (auto* st : pv->stages) nres += st->t.res.size();
     g_log_bindings = g_log_draws > 0;
     g_draw_jitter = false;
+    g_draw_picture = false;
+    g_draw_rendered = false;
     bufs.reserve(nres + 1);
     imgs.reserve(nres * 4);
     thread_local std::vector<float> tex_scale[6];  // per Ryujinx stage, in the shader's texture order
@@ -2030,6 +2070,11 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                     if (was) begin_rendering(cb);
                 }
                 tex_scale[st.stage].push_back(t ? (float)im->scale : 1.0f);
+                if (im && im->written && !im->from_pool) g_draw_rendered = true;
+                // ultrawide: a fragment texture that is a 16:9 picture (>= 640 x 360, not a widened screen target)
+                if (st.stage == 5 && t && t->width >= 640 && t->height >= 360 && (int)(t->width * 9) - (int)(t->height * 16) <= (int)t->height &&
+                    (int)(t->height * 16) - (int)(t->width * 9) <= (int)t->height && im->sx == 1)
+                    g_draw_picture = true;
                 imgs.push_back({sampler_of(s), t ? sampled_view(t, im, tv) : im->view, VK_IMAGE_LAYOUT_GENERAL});
                 w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 w.descriptorCount = 1;
@@ -2043,7 +2088,9 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
     bool compute = !pv->stages.empty() && pv->stages[0]->stage == 0;
     float rs = compute ? 1.0f : (float)rt_scale();
     thread_local std::vector<float> key;
-    key.assign({rs, g_st.vp.width, g_st.vp.height, (float)tex_scale[5].size()});
+    // ultrawide (s104): shaders that address screen copies by gl_FragCoord (Unity / Mirage fades and ghosts, weapon
+    // reveal) expect the game's 1280 wide x; a widened target's x is divided by its factor as well (patched translator)
+    key.assign({rs, g_st.vp.width, g_st.vp.height, (float)tex_scale[5].size(), compute ? 1.0f : rt_sx()});
     for (float x : compute ? tex_scale[0] : tex_scale[5]) key.push_back(x > 1 && rs > 1 ? -x : x);
     if (!compute) key.insert(key.end(), tex_scale[1].begin(), tex_scale[1].end());
     bufs.push_back(support_buffer(key));
@@ -2089,6 +2136,189 @@ void stats_flush_impl() {
 // without a match (new, flipbook step) or that jumped far stays as drawn: a wrong pair can only last one tick.
 struct UiSprite { uint64_t key; float x[4], y[4], col[4][4]; };
 static std::vector<UiSprite> g_ui_t0, g_ui_t1;  // sprites of the previous tick, of the current one
+// ultrawide field HUD corners (s105, user screenshot): the day chain (one ring picture in two 108 x 108 quads at
+// -72..144 x -5..103, made to be cut by the screen edge) with the day circle, digit, partner portrait and sparkles sits
+// in the top-left; the SCENE banner (920..1290 x 14..78, runs past the edge), radar diamonds and area-name text in the
+// top-right, the party panel below it in dungeons. Centred, their edge cut lands inside the picture. While the chain or
+// the SCENE banner was drawn in the last 3 frames (the field HUD is up; battle and menus have neither), UI draws whose screen box lies in one of those corners move to the
+// real screen edge: 0 = left, 2 = right, 1 = centred (everything else).
+static uint32_t g_chain_frame = ~0u, g_pane_frame = ~0u;  // last frames with the chain / SCENE banner, with a screen-size pane
+static float g_ui_box[5];  // ultrawide: the last field_hud_anchor draw box in game pixels (x0, x1, model x scale, x offset) + valid (36-byte panes)
+static int field_hud_anchor(const Cmd& k, uint32_t stride) {
+    // plain draws: first, count; indexed text (op 21): glyph quads, 4 vertices per 6 indices from the base vertex
+    const bool idx = k.op == OP_DRAW_INDEXED && stride == 28;
+    g_ui_box[4] = 0;
+    if (k.op != OP_DRAW && !idx) return 1;
+    const uint32_t first = idx ? k.a[5] : k.a[1], n = idx ? k.a[2] / 6 * 4 : k.a[2];
+    const uint32_t u = (uint32_t)g_st.ubuf[0][1].addr, v0 = (uint32_t)g_st.vbuf[0].addr + stride * first;
+    if (!u || !g_st.vbuf[0].addr || n < 4 || n > 512) return 1;
+    // screen position in game pixels: 36-byte panes = model rows 0 / 1 (+ ortho 2/1280 at float 16); 28-byte text =
+    // a ready-made matrix (rows 0 / 1 in clip space, x scale 2/1280)
+    float m[8];
+    for (int i = 0; i < 8; i++) m[i] = ldf(u + 4 * i);
+    bool clip;
+    if (stride == 36 && ld32(u + 64) == 0x3acccccd) clip = false;
+    else if (stride == 28 && ld32(u) == 0x3acccccd) clip = true;
+    else return 1;
+    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+    for (uint32_t i = 0; i < n; i++) {
+        const float vx = ldf(v0 + stride * i), vy = ldf(v0 + stride * i + 4);
+        float x = m[0] * vx + m[1] * vy + m[3], y = m[4] * vx + m[5] * vy + m[7];
+        if (clip) x = (x + 1) * 640, y = (1 - y) * 360;
+        x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+    }
+    if (!clip && m[1] == 0 && m[0] > 0) g_ui_box[0] = x0, g_ui_box[1] = x1, g_ui_box[2] = m[0], g_ui_box[3] = m[3], g_ui_box[4] = 1;
+    // the chain: 12 vertices, identity model, 216 x 108 starting left of the screen near the top
+    if (!clip && n == 12 && m[0] == 1 && m[5] == 1 && m[1] == 0 && m[4] == 0 && x0 < 0 && x0 > -108 &&
+        fabsf(x1 - x0 - 216) < 0.5f && fabsf(y1 - y0 - 108) < 0.5f && y0 < 20)
+        g_chain_frame = g_present_no;
+    // ... and its spin-in when the CALL ring opens (18 vertices, 7 frames, to -64..189 x -158..148; user video 11-24)
+    if (!clip && n == 18 && m[0] == 1 && m[5] == 1 && m[1] == 0 && m[4] == 0 && x0 < 20 && y0 < 0 && x1 < 200 && y1 < 160)
+        g_chain_frame = g_present_no;
+    // the SCENE banner (dungeons show no chain): 12 vertices, identity model, top right, running past the right edge
+    if (!clip && n == 12 && m[0] == 1 && m[5] == 1 && m[1] == 0 && m[4] == 0 && x0 >= 900 && x1 > 1280 && y1 <= 95)
+        g_chain_frame = g_present_no;
+    static const int alog = getenv("NX_UW_ANCHOR_LOG") ? atoi(getenv("NX_UW_ANCHOR_LOG")) : 0;  // debug: UI draw boxes near the top corners (2: all)
+    if ((alog && y0 < 480 && (x0 < 400 || x1 > 880)) || alog >= 2)
+        log("uw anchor: frame %u n %u m %.3f %.3f %.3f %.3f box %.1f %.1f %.1f %.1f%s", g_present_no, n, m[0], m[1], m[3], m[7], x0, y0, x1, y1, clip ? " text" : "");
+    if (g_chain_frame == ~0u || g_present_no - g_chain_frame > 3) return 1;  // 3: gone with the HUD (battle, menus)
+    if (g_pane_frame != ~0u && g_present_no - g_pane_frame <= 3) return 1;  // Topic menu / dim over the field: its own layout
+    if (x1 <= 200 && y1 <= 160) return 0;  // 200 / 160: the CALL portrait pops to 72..153 x 10..91, the spin-in to 189 x 148
+    if (x0 >= 900 && y1 <= 500) return 2;  // SCENE banner, radar, area name, party panel (dungeons; third member to y 488)
+    return 1;
+}
+
+// ultrawide: host-visible ring of vertex memory for extra UI draws (grid / edge extension); 1 MiB, reused after ~100+
+// frames (well past the frames in flight). Returns the write pointer; *buf / *off for vkCmdBindVertexBuffers.
+static uint8_t* ui_ring(uint32_t need, VkBuffer* out_buf, VkDeviceSize* out_off) {
+    static VkBuffer buf = VK_NULL_HANDLE;
+    static uint8_t* map = nullptr;
+    static uint32_t used = 0;
+    const uint32_t cap = 1 << 20;
+    if (!buf) {
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = cap;
+        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        VKC(vkCreateBuffer(dev, &bci, nullptr, &buf));
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(dev, buf, &req);
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(phys, &mp);
+        const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        uint32_t t = 0;
+        while (t < mp.memoryTypeCount && !((req.memoryTypeBits >> t & 1) && (mp.memoryTypes[t].propertyFlags & want) == want)) t++;
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, t};
+        VkDeviceMemory m;
+        VKC(vkAllocateMemory(dev, &ai, nullptr, &m));  // own allocation: mapped once, no block shared with other maps
+        VKC(vkBindBufferMemory(dev, buf, m, 0));
+        void* p;
+        VKC(vkMapMemory(dev, m, 0, cap, 0, &p));
+        map = (uint8_t*)p;
+    }
+    if (used + need > cap) used = 0;
+    *out_buf = buf, *out_off = used;
+    uint8_t* p = map + used;
+    used += (need + 255) & ~255u;
+    return p;
+}
+
+// ultrawide: a centred pane (36-byte vertices, axis-aligned model) that runs past one 16:9 edge (RESULTS: Exp / Money /
+// Items bars and the FOUND! stripe to x 1460, the MAIN CAST band from x -92; s107) is clipped there (clip space ends at the
+// 16:9 edge). Drawn again into that side bar only: vertices shifted by the bar width S toward the middle, viewport moved
+// back by S, so the part past the edge shows as it is (no stretch, no seam). stretch (a pane across the whole width: HELP
+// bar -10..1290, its pill inside stays put): only the vertices inside the 16:9 area shift, so the pane's end reaches the
+// screen edge (its texture stretches in the bar; fine for plain bars).
+static void ui_edge_extend(VkCommandBuffer cb, const Cmd& k, const VkViewport& vp, const VkRect2D& sc, float rs, float ox, int side, bool stretch) {
+    const uint32_t n = k.a[2], v0 = (uint32_t)g_st.vbuf[0].addr + 36 * k.a[1];
+    const float S = ox / rs, d = side * S / g_ui_box[2];  // side -1: left bar, 1: right bar; d in model units
+    VkBuffer buf;
+    VkDeviceSize off;
+    uint8_t* out = ui_ring(36 * n, &buf, &off);
+    for (uint32_t i = 0; i < n; i++) {
+        for (int j = 0; j < 9; j++) { const uint32_t v = ld32(v0 + 36 * i + 4 * j); memcpy(out + 36 * i + 4 * j, &v, 4); }
+        float x;
+        memcpy(&x, out + 36 * i, 4);
+        const float px = g_ui_box[2] * x + g_ui_box[3];  // game pixels
+        if (!stretch || (side > 0 ? px <= 1280 : px >= 0)) x -= d;
+        memcpy(out + 36 * i, &x, 4);
+    }
+    VkViewport v2 = vp;
+    v2.x += side * S * rs;
+    VkRect2D c2 = sc;
+    // the bar: [edge, edge + ox) in target pixels (the draw's own scissor is the 16:9 area: its x range is not used)
+    const float edge = side > 0 ? ox + 1280 * rs : 0;
+    c2.offset.x = (int32_t)floorf(edge), c2.extent.width = (uint32_t)ceilf(ox);
+    vkCmdSetViewport(cb, 0, 1, &v2);
+    vkCmdSetScissor(cb, 0, 1, &c2);
+    vkCmdBindVertexBuffers(cb, 0, 1, &buf, &off);
+    vkCmdDraw(cb, n, 1, 0, 0);
+    GuestBuffer gb = guest_buffer(g_st.vbuf[0].addr);
+    if (gb.buf) vkCmdBindVertexBuffers(cb, 0, 1, &gb.buf, &gb.offset);
+    vkCmdSetViewport(cb, 0, 1, &vp);
+    vkCmdSetScissor(cb, 0, 1, &sc);
+}
+
+// ultrawide SELECT checker (see the call in draw()): vertices for the bar in a host-visible ring of its own memory
+static void ui_grid_extend(VkCommandBuffer cb, const Cmd& k, const VkViewport& vp, const VkRect2D& sc, float rs, float ox) {
+    const uint32_t ub = (uint32_t)g_st.ubuf[0][1].addr, v0 = (uint32_t)g_st.vbuf[0].addr + 36 * k.a[1];
+    // identity model (floats 0, 5 = 1; 1, 3, 4, 7, 12, 13 = 0) + ortho x scale 2 / 1280 (float 16): vertices are game pixels
+    if (!ub || !g_st.vbuf[0].addr || g_st.streams.empty() || g_st.streams[0] != 36 || ld32(ub + 64) != 0x3acccccd || ldf(ub) != 1 ||
+        ldf(ub + 20) != 1 || ldf(ub + 4) != 0 || ldf(ub + 12) != 0 || ldf(ub + 16) != 0 || ldf(ub + 28) != 0 || ldf(ub + 48) != 0 || ldf(ub + 52) != 0)
+        return;
+    // tiles: the first one's size; full ones start on its grid, cropped ones (right / bottom end, e.g. a 66 x 60 piece at a
+    // half step) are smaller; the grid must start left of x = 0
+    const uint32_t nq = k.a[2] / 6;
+    float w = 0, h = 0, gx = 0, gy = 0;
+    auto on = [](float v, float p) { const float r = fmodf(fabsf(v), p); return r < 0.01f || p - r < 0.01f; };
+    for (uint32_t q = 0; q < nq; q++) {
+        float a = 1e9f, b = -1e9f, c = 1e9f, d = -1e9f;
+        for (uint32_t i = 0; i < 6; i++) {
+            const float x = ldf(v0 + 36 * (6 * q + i)), y = ldf(v0 + 36 * (6 * q + i) + 4);
+            a = std::min(a, x), b = std::max(b, x), c = std::min(c, y), d = std::max(d, y);
+        }
+        if (q == 0) w = b - a, h = d - c, gx = a, gy = c;
+        const bool full = b - a > w - 0.01f && d - c > h - 0.01f;
+        if (w < 16 || h < 16 || b - a > w + 0.01f || d - c > h + 0.01f || (full && !(on(a - gx, w) && on(c - gy, h))) || a < gx - 0.01f) return;
+    }
+    if (gx >= 0 || gx <= -w || nq < 8) return;  // 8+: a real tile grid (SELECT: 15-22); the field day chain (2 quads) is one picture
+    const int reps = (int)ceilf((ox / rs + gx) / w);  // tiles per row left of the first one, up to the target's edge
+    if (reps < 0 || reps > 64) return;
+    // first-column tiles (start at gx < 0, clipped at the 16:9 edge) again as they are (r = 0) and at gx - r w; shifted
+    // right by the bar width T so they sit inside the viewport (clip space ends at the 16:9 edge), viewport moved left by T
+    const float T = ox / rs;
+    uint32_t nv = 0;
+    VkBuffer buf;
+    VkDeviceSize off;
+    uint8_t* out = ui_ring(36 * 6 * nq * (reps + 1), &buf, &off);
+    for (uint32_t q = 0; q < nq; q++) {
+        bool first = true;  // a first-column tile: no vertex right of gx + w
+        for (uint32_t i = 0; i < 6; i++) first &= ldf(v0 + 36 * (6 * q + i)) <= gx + w + 0.01f;
+        if (!first) continue;
+        for (int r = 0; r <= reps; r++)
+            for (uint32_t i = 0; i < 6; i++, nv++) {
+                uint8_t* o = out + 36 * nv;
+                for (int j = 0; j < 9; j++) { const uint32_t v = ld32(v0 + 36 * (6 * q + i) + 4 * j); memcpy(o + 4 * j, &v, 4); }
+                float x;
+                memcpy(&x, o, 4);
+                x += T - r * w;
+                memcpy(o, &x, 4);
+            }
+    }
+    if (!nv) return;
+    VkViewport v2 = vp;
+    v2.x -= T * rs;
+    VkRect2D c2 = sc;
+    c2.offset.x = 0, c2.extent.width = (uint32_t)floorf(ox);
+    vkCmdSetViewport(cb, 0, 1, &v2);
+    vkCmdSetScissor(cb, 0, 1, &c2);
+    vkCmdBindVertexBuffers(cb, 0, 1, &buf, &off);
+    vkCmdDraw(cb, nv, 1, 0, 0);
+    GuestBuffer gb = guest_buffer(g_st.vbuf[0].addr);
+    if (gb.buf) vkCmdBindVertexBuffers(cb, 0, 1, &gb.buf, &gb.offset);
+    vkCmdSetViewport(cb, 0, 1, &vp);
+    vkCmdSetScissor(cb, 0, 1, &sc);
+}
+
 struct UiMatch { std::vector<uint32_t> idx; };  // unused ones first
 static std::unordered_map<uint64_t, UiMatch> g_ui_match;  // g_ui_t0 by key
 static std::vector<uint8_t> g_ui_used;
@@ -2342,15 +2572,87 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
     // and with it the winding, so the game's front-face / cull settings keep their meaning.
     VkViewport vp = g_st.vp;
     const float rs = rt_scale();  // the game's pixels -> target pixels
-    vp.x *= rs, vp.y *= rs, vp.width *= rs, vp.height *= rs;
+    // ultrawide: widened targets stretch the game's x over their width (scene, post, the FXAA pass that brings the scene
+    // into the window texture); the UI (every other draw into a window texture) keeps the game's 16:9 in the middle
+    // The game draws scene and UI into the same target and copies it to the window: the UI phase starts after the FXAA
+    // draw (tone-mapped scene in) and lasts to the present; a frame without that draw (menus, title) is all UI once no
+    // FXAA draw came for 3 frames. Centred: the UI's layout draws (triangles, 36-byte vertices) into the main target (the
+    // FXAA output); full-screen passes after FXAA (4-vertex strips, 24-byte vertices) and draws into other widened
+    // targets (the minimap's, composited later by a centred layout quad) stretch like the scene.
+    const float sx = rt_sx();
+    if (vk::wide_factor() > 1 && g_st.colors[0] && sx == 1) {  // ultrawide debug: big targets drawn into that stay 16:9-sized
+        static std::unordered_set<uint32_t> seen;
+        Texture* t = g_st.colors[0];
+        if (t->width >= 320 && t->height >= 180 && seen.size() < 64 && seen.insert(t->guest).second)
+            log("uw: draw into unwidened %08x %ux%u fmt %d flags %x target %d", t->guest, t->width, t->height, (int)t->format, t->flags, (int)t->target);
+    }
+    bool ui = false;
+    int corner = 1;  // ultrawide UI placement: 0 left edge, 1 centred, 2 right edge (field_hud_anchor)
+    if (vk::wide_factor() > 1) {
+        static uint32_t phase_frame = ~0u, last_fxaa = 0;
+        if (phase_frame != g_present_no) phase_frame = g_present_no, g_ui_phase = g_present_no - last_fxaa > 3;
+        const bool fx = fxaa_frag(pv) != 0;
+        // UI vertex formats (s103 log): layout panes 36 bytes (triangle lists, or 4-vertex strips for sprites), text glyphs
+        // 28 bytes; full-screen passes are 24-byte strips (-1..1). A 36-byte 4-vertex pane as big as the screen (fades,
+        // flashes) stretches over the width when a 3D scene is under it.
+        const uint32_t stride = g_st.streams.empty() ? 0 : g_st.streams[0];
+        // 12 / 8-byte vertices after FXAA: 2D effects (battle start banner: a picture cut into triangles, and its shatter;
+        // a transition near the first field load); none during battle (s107 log). 16:9 art: centred, not stretched
+        // (depth test off: at 4K / without FXAA the whole frame counts as UI phase and the 3D scene is 12-byte too; s107b)
+        const bool depth_on = g_st.depth && (g_st.ds[0] & 1);
+        bool layout = stride == 36 || stride == 28 || stride == 20 || ((stride == 12 || stride == 8) && !depth_on);
+        // ... and its SURPRISE ATTACK / FIRST STRIKE text: 16-byte instanced sprites (op 22), within ~6 s of the battle opening
+        // (btl_open_chance). Only then: the same kind of draw is field / battle 3D effects at other times (s107 log)
+        if (stride == 16 && k.op == OP_DRAW_INSTANCED) {
+            const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            layout = !depth_on && ::rt::g_btl_open_ms && now - ::rt::g_btl_open_ms < 6000;
+        }
+        // a 4-vertex strip, or a 6-vertex triangle pair (Topic / Bloom Palace dim pane -10..1290 x -10..730, s104)
+        const uint32_t nv = k.a[0] == 5 && k.a[2] == 4 ? 4 : k.a[0] == 4 && k.a[2] == 6 && stride != 20 ? 6 : 0;
+        if (layout && nv && g_st.vbuf[0].addr) {
+            const uint32_t vb = (uint32_t)g_st.vbuf[0].addr;
+            float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+            for (uint32_t i = 0; i < nv; i++) {
+                const float x = ldf(vb + i * stride), y = ldf(vb + i * stride + 4);
+                x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+            }
+            // a screen-size pane: artwork / movie frames (a 16:9 picture texture: title, camp background) stay 16:9 in the
+            // middle; fades, flashes and screen copies (a widened target) stretch
+            // (pixels, or -1..1 clip space: the white loading pane / fade, 28-byte vs 00979000, user video s104)
+            // (exactly -1..1: minimap pieces use small local coordinates such as -17..17)
+            auto unit = [](float lo, float hi) { return lo <= -0.99f && lo >= -1.01f && hi >= 0.99f && hi <= 1.01f; };
+            if ((x1 - x0 >= 1270 && y1 - y0 >= 710) || (unit(x0, x1) && unit(y0, y1)))
+                layout = g_draw_picture, g_pane_frame = g_present_no;  // a menu dim / fade: field HUD corners off (field_hud_anchor)
+        } else if (stride == 20) {
+            layout = false;  // 20-byte vertices: only the screen-size movie quads above
+        }
+        const bool dtest = g_st.depth && (g_st.ds[0] & 1);  // debug log only
+        ui = sx > 1 && g_ui_phase && !fx && layout && g_st.colors[0] && g_st.colors[0]->guest == g_ui_target;
+        if (ui && (stride == 36 || stride == 28)) corner = field_hud_anchor(k, stride);
+        if (fx) last_fxaa = g_present_no, g_ui_phase = true;  // from the next draw on
+        static int uwlog = getenv("NX_UW_LOG") ? atoi(getenv("NX_UW_LOG")) : 0;  // debug: UI-phase draws into the main target
+        static const bool uwfx = getenv("NX_UW_LOG_FX") != nullptr;  // debug: only UI-phase draws with 12 / 8-byte vertices (effects)
+        if (uwlog > 0 && g_st.colors[0] && (!uwfx || (g_ui_phase && (stride == 12 || stride == 8 || stride == 16))) && g_present_no > (uint32_t)atoi(getenv("NX_UW_FRAME") ? getenv("NX_UW_FRAME") : "1500")) {
+            uwlog--;
+            std::string v;
+            const uint32_t vb = (uint32_t)g_st.vbuf[0].addr, stride = g_st.streams.empty() ? 0 : g_st.streams[0];
+            static const uint32_t allv = getenv("NX_UW_ALLV") ? 12 : 4;  // debug: up to 12 vertices + the model matrix
+            for (uint32_t i = 0; vb && i < std::min<uint32_t>(allv, std::max<uint32_t>(4, k.a[2])); i++) { char b[64]; snprintf(b, sizeof b, " (%g %g %g)", ldf(vb + i * stride), ldf(vb + i * stride + 4), ldf(vb + i * stride + 8)); v += b; }
+            if (allv > 4 && g_st.ubuf[0][1].addr) { char b[160]; const uint32_t u = (uint32_t)g_st.ubuf[0][1].addr; snprintf(b, sizeof b, " m [%g %g %g %g | %g %g %g %g] p0 %g", ldf(u), ldf(u + 4), ldf(u + 8), ldf(u + 12), ldf(u + 16), ldf(u + 20), ldf(u + 24), ldf(u + 28), ldf(u + 64)); v += b; }
+            log("uw: frame %u dt %d ui %d tgt %08x main %08x op %d mode %u count %u stride %u vs %08x fx %d layout %d centred %d vb %08x:%s", g_present_no, (int)dtest, (int)g_ui_phase, g_st.colors[0]->guest, g_ui_target, k.op, k.a[0], k.a[2], stride,
+                progs[0] ? (uint32_t)progs[0]->stages[0].code : 0, (int)fx, (int)layout, (int)ui, vb, v.c_str());
+        }
+    }
+    const float rsx = ui ? rs : rs * sx, ox = ui ? g_st.colors[0]->width * (sx - 1) / 2 * rs : 0, oxd = ox * corner;
+    vp.x = vp.x * rsx + oxd, vp.y *= rs, vp.width *= rsx, vp.height *= rs;
     vp.y += vp.height;
     vp.height = -vp.height;
     if (g_draw_jitter) vp.x += g_jx, vp.y += g_jy;  // FSR 3 sub-pixel jitter (scene camera draws only)
     vkCmdSetViewport(cb, 0, 1, &vp);
     VkRect2D sc = g_st.scissor;
-    sc.offset.x = (int32_t)floorf(std::max(0, sc.offset.x) * rs);
+    sc.offset.x = (int32_t)floorf(std::max(0, sc.offset.x) * rsx + oxd);
     sc.offset.y = (int32_t)floorf(std::max(0, sc.offset.y) * rs);
-    sc.extent.width = (uint32_t)ceilf(std::min<uint32_t>(sc.extent.width, 16384) * rs);
+    sc.extent.width = (uint32_t)ceilf(std::min<uint32_t>(sc.extent.width, 16384) * rsx);
     sc.extent.height = (uint32_t)ceilf(std::min<uint32_t>(sc.extent.height, 16384) * rs);
     vkCmdSetScissor(cb, 0, 1, &sc);
     static const float magenta[4] = {1, 0, 1, 1};
@@ -2424,6 +2726,17 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
         default:
             g_skip[5]++;
             return;
+    }
+    // ultrawide: a centred screen-space grid of equal tiles that starts left of the 16:9 area (dialogue SELECT banner's
+    // scrolling checker: 132 x 120 tiles from x < 0, rows cropped on the right by the ring, s105) continues into the left
+    // bar: each row's first tile repeated leftwards by the tile width (seamless), drawn once into the bar only.
+    if (ui && corner == 1 && ox > 0 && k.op == OP_DRAW && mode == 4 && k.a[2] >= 12 && k.a[2] % 6 == 0 && k.a[2] <= 600 && sc.extent.width)
+        ui_grid_extend(cb, k, vp, sc, rs, ox);
+    if (ui && corner == 1 && ox > 0 && k.op == OP_DRAW && (mode == 4 || mode == 5) && k.a[2] >= 4 && k.a[2] <= 12 && g_ui_box[4] && sc.extent.width &&
+        !g_st.streams.empty() && g_st.streams[0] == 36 && !g_draw_rendered) {  // not the minimap map pieces (they sample its mask)
+        const bool both = g_ui_box[0] < -0.5f && g_ui_box[1] > 1280.5f;  // across the whole width: HELP bar, RESULTS rule
+        if (g_ui_box[0] < 1279.5f && g_ui_box[1] > 1280.5f) ui_edge_extend(cb, k, vp, sc, rs, ox, 1, both);
+        if (g_ui_box[0] < -0.5f && g_ui_box[1] > 0.5f) ui_edge_extend(cb, k, vp, sc, rs, ox, -1, both);
     }
     g_st.drawn++;
     if (g_st.ncolors && g_st.colors[0]) g_last_rt = g_st.colors[0];
@@ -2545,6 +2858,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
             }
             case OP_COPY_TEX_TEX: {  // src texture, dst texture, regions {x, y, z, w, h, d} x2, flags
                 end_rendering(cb);
+                if (g_window_tex.count((uint32_t)k.a[2])) g_ui_target = (uint32_t)k.a[0];  // ultrawide: the frame's scene + UI target
                 Image* src = image_of(get<Texture>(k.a[0]));
                 Image* dst = image_of(get<Texture>(k.a[2]));
                 ms_flush_one(cb, "copy tex-tex", src, dst);
@@ -2555,7 +2869,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 int32_t s[6], d[6];
                 memcpy(s, k.blob.data(), 24);
                 memcpy(d, k.blob.data() + 24, 24);
-                for (int q : {0, 1, 3, 4}) s[q] = (int32_t)lround(s[q] * src->scale), d[q] = (int32_t)lround(d[q] * dst->scale);  // image pixels
+                for (int q : {0, 1, 3, 4}) s[q] = (int32_t)lround(s[q] * src->scale * (q % 3 ? 1 : src->sx)), d[q] = (int32_t)lround(d[q] * dst->scale * (q % 3 ? 1 : dst->sx));  // image pixels (x: ultrawide factor too)
                 transition(cb, src, VK_IMAGE_LAYOUT_GENERAL);
                 transition(cb, dst, VK_IMAGE_LAYOUT_GENERAL);
                 VkImageBlit b{};
@@ -2600,7 +2914,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 int32_t rg[6];
                 memcpy(rg, k.blob.data(), 24);
                 // ponytail: clears whole layers of level 0; partial regions / channel masks are logged until one shows up
-                if (rg[0] || rg[1] || (uint32_t)lround(rg[3] * im->scale) < im->w || (uint32_t)lround(rg[4] * im->scale) < im->h || (k.a[1] & 0xF) != 0xF) {
+                if (rg[0] || rg[1] || (uint32_t)lround(rg[3] * im->scale * im->sx) < im->w || (uint32_t)lround(rg[4] * im->scale) < im->h || (k.a[1] & 0xF) != 0xF) {
                     static int n = 0;
                     if (n++ < 5) log("vk: ClearTexture region %d,%d %dx%d of %ux%u, mask %#x: clearing all of it", rg[0], rg[1], rg[3], rg[4], im->w, im->h, k.a[1]);
                 }

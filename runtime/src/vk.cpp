@@ -608,6 +608,29 @@ bool weak_gpu() {
 
 // NX_RES=8k|4k|1440p|1080p|720p or NX_RES_SCALE=n (1..6): integer render scale over the game's 1280x720 (4k = 3, 1440p and
 // 1080p = 2: 1080p renders 1440p and the present blit downsamples it, 720p = 1, the default)
+// Ultrawide (setting aspect, NX_ASPECT: 16:9 default, 21:9, 32:9, auto = the desktop's shape, or a number; user request 11-24):
+// the game's 16:9 screen-size render targets are made wider by this factor; scene and post draws into them stretch over the
+// width (vk_replay.cpp draw) while the game's cameras get the wider aspect (hle_sys.cpp cam_proj_update), so the 3D image
+// shows more at the sides (Hor+). Width rounded to 8 game pixels, at most 32:9. Narrower than 16:9: 1 (the present
+// letterboxes). Read once at start.
+float wide_factor() {
+    static const float f = [] {
+        const char* e = getenv("NX_ASPECT");
+        if (!e || !*e) return 1.f;
+        double a = 16.0 / 9;
+        int x = 0, y = 0;
+        if (!_stricmp(e, "auto")) {
+            if (const SDL_DisplayMode* dm = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay()); dm && dm->h > 0) a = (double)dm->w / dm->h;
+        } else if (sscanf(e, "%d:%d", &x, &y) == 2 && x > 0 && y > 0) a = (double)x / y;
+        else if (atof(e) > 0) a = atof(e);
+        const double k = std::clamp(a / (16.0 / 9), 1.0, 2.0);
+        const int w = (int)lround(1280 * k / 8) * 8;
+        const float r = w <= 1288 ? 1.f : w / 1280.f;
+        log("vk: aspect %s -> %.4f, screen targets %d x 720 game pixels%s", e, a, (int)lround(1280 * r), r == 1 ? " (16:9)" : "");
+        return r;
+    }();
+    return f;
+}
 uint32_t res_scale() {
     static const uint32_t s = [] {
         uint32_t n = 1;
@@ -755,6 +778,14 @@ static Image* make_image(nvn::Texture* t, VkFormat fmt, bool depth, bool stencil
     if (shadow && (t->flags & 8) && res_scale() > 1 && n_shadow++ < 4) log("vk: shadow map %ux%u kept at game size", t->width, t->height);
     im->scale = force_scale > 0 ? force_scale : (t->flags & 8) && t->target == 1 && !small_post && !shadow ? (float)res_scale() : 1.f;
     im->w = (uint32_t)lround(std::max(1u, t->width) * im->scale);
+    // ultrawide: 16:9 screen-size targets (the scene, its post chain, the window textures) get wider; shadow maps and other
+    // shapes keep theirs
+    if (wide_factor() > 1 && (t->flags & 8) && t->target == 1 && t->width >= 64 && t->width * 9 == t->height * 16) {
+        im->w = (uint32_t)lround(t->width * wide_factor() * im->scale);
+        im->sx = im->w / (t->width * im->scale);
+        static int nw = 0;
+        if (nw++ < 40) log("vk: widened %08x %ux%u fmt %d flags %x depth %d (vk fmt %d)", t->guest, t->width, t->height, (int)t->format, t->flags, (int)depth, (int)fmt);
+    }
     im->h = (uint32_t)lround(std::max(1u, t->height) * im->scale);
     // NVN targets: 1D 0, 2D 1, 3D 2, 1D array 3, 2D array 4, 2D MS 5, 2D MS array 6, rectangle 7, cube 8, cube array 9
     bool array = t->target == 3 || t->target == 4 || t->target == 6 || t->target == 8 || t->target == 9;
@@ -1236,6 +1267,22 @@ static void make_staging(Image& im, uint32_t w, uint32_t h, VkFormat fmt) {
     im.layout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
+// The finished picture into the swapchain image at its own shape: a window of another shape (21:9 screen with the 16:9
+// setting, Steam Deck 16:10) gets black bars instead of a stretched picture. Within 1% of the window shape: whole window.
+static void fit_blit(VkCommandBuffer cb, VkImage dst, uint32_t sw, uint32_t sh, VkImageBlit& b) {
+    const uint32_t dw = g_swap_extent.width, dh = g_swap_extent.height;
+    const double s = std::min((double)dw / sw, (double)dh / sh);
+    uint32_t w = (uint32_t)lround(sw * s), h = (uint32_t)lround(sh * s);
+    if (w * 100 >= dw * 99 && h * 100 >= dh * 99) w = dw, h = dh;
+    const int32_t x = (int32_t)(dw - w) / 2, y = (int32_t)(dh - h) / 2;
+    if (w != dw || h != dh) {
+        static const VkClearColorValue black{};
+        const VkImageSubresourceRange r{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cb, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &r);
+    }
+    b.dstOffsets[0] = {x, y, 0};
+    b.dstOffsets[1] = {x + (int32_t)w, y + (int32_t)h, 1};
+}
 static void present_thread() {
     t_present_thread = true;
 #ifdef _WIN32
@@ -1253,6 +1300,21 @@ static void present_thread() {
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     VKC(vkCreateFence(dev, &fci, nullptr, &fence));
     VKC(vkCreateFence(dev, &fci, nullptr, &acq_fence));
+    // GitHub issue #3 (GeForce 920MX laptop, GPU-bound ~18 fps): the game ran, sound played, but only 2-8 frames per 10 s
+    // reached the screen (gaps of 7-79 s). A game queue that keeps the GPU full can starve this second queue on some
+    // GPUs / drivers. When one present's blit waits over 1 s, present on the game's own queue from then on (g_vk_lock
+    // around its submits; frames then wait behind the game's queued work). NX_PRESENT_GAME_QUEUE=1 forces it (tests).
+    bool on_game_queue = getenv("NX_PRESENT_GAME_QUEUE") != nullptr;
+    if (on_game_queue) log("vk: presenting on the game's queue (NX_PRESENT_GAME_QUEUE)");
+    auto ms_since = [](std::chrono::steady_clock::time_point t) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+    };
+    auto queue_idle = [&] {
+        std::unique_lock<std::mutex> vl(g_vk_lock, std::defer_lock);
+        if (on_game_queue) vl.lock();
+        vkQueueWaitIdle(on_game_queue ? queue : g_present_queue);
+    };
+    int slow_logs = 0;
     for (;;) {
         int i;
         {
@@ -1264,11 +1326,15 @@ static void present_thread() {
         }
         g_pres_cv.notify_all();  // vk_wait_present_taken (game thread)
         Image* src = &g_staged[i].img;
+        auto t_take = std::chrono::steady_clock::now();
         gpu_wait(g_staged[i].serial);  // the game queue's copy into the staging image
+        const double copy_ms = ms_since(t_take);
         // fixed cadence: staging can finish anywhere up to ~15 ms after the frame's tick (the game queue is shared
         // with the next frame's work), so show every frame exactly one tick after release
         const bool asap = getenv("NX_PRESENT_ASAP") || rt::fps_setting() == 0 || rt::fps_setting() > 60;
+        auto t_vs = std::chrono::steady_clock::now();
         if (!asap) rt::wait_vsync_tick(g_staged[i].tick);
+        const double vsync_ms = ms_since(t_vs);
         auto t_tick = std::chrono::steady_clock::now();
         uint32_t idx;
         // acquire with a fence waited here on the CPU: a GPU-side semaphore wait on the display's release stalled the
@@ -1277,7 +1343,7 @@ static void present_thread() {
         VkResult r = vkAcquireNextImageKHR(dev, g_swap, UINT64_MAX, VK_NULL_HANDLE, acq_fence, &idx);
         if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) VKC(vkWaitForFences(dev, 1, &acq_fence, VK_TRUE, UINT64_MAX));
         if (r == VK_ERROR_OUT_OF_DATE_KHR) {
-            vkQueueWaitIdle(g_present_queue);
+            queue_idle();
             create_swapchain();
         } else {
             VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
@@ -1291,7 +1357,7 @@ static void present_thread() {
             b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             b.srcOffsets[1] = {(int32_t)src->w, (int32_t)src->h, 1};
             b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            b.dstOffsets[1] = {(int32_t)g_swap_extent.width, (int32_t)g_swap_extent.height, 1};
+            fit_blit(cb, dst.image, src->w, src->h, b);
             vkCmdBlitImage(cb, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);
             transition(cb, &dst, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -1304,14 +1370,19 @@ static void present_thread() {
             si.signalSemaphoreCount = 1;
             si.pSignalSemaphores = &g_render_sem;
             VKC(vkResetFences(dev, 1, &fence));
-            VKC(vkQueueSubmit(g_present_queue, 1, &si, fence));
             VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
             pi.waitSemaphoreCount = 1;
             pi.pWaitSemaphores = &g_render_sem;
             pi.swapchainCount = 1;
             pi.pSwapchains = &g_swap;
             pi.pImageIndices = &idx;
-            r = vkQueuePresentKHR(g_present_queue, &pi);
+            {
+                std::unique_lock<std::mutex> vl(g_vk_lock, std::defer_lock);
+                if (on_game_queue) vl.lock();
+                VkQueue pq = on_game_queue ? queue : g_present_queue;
+                VKC(vkQueueSubmit(pq, 1, &si, fence));
+                r = vkQueuePresentKHR(pq, &pi);
+            }
             {  // display cadence every 10 s: gaps between presents (vsync ticks between the frames x 16.7 ms each)
                 using clk = std::chrono::steady_clock;
                 static clk::time_point win = clk::now(), prev = win;
@@ -1335,9 +1406,20 @@ static void present_thread() {
                     win = now; n = off = 0; worst = 0; best = 1e9; tick_to_present = 0;
                 }
             }
+            auto t_blit = std::chrono::steady_clock::now();
             VKC(vkWaitForFences(dev, 1, &fence, VK_TRUE, UINT64_MAX));
+            const double blit_ms = ms_since(t_blit);
+            if (copy_ms + vsync_ms + blit_ms > 500 && slow_logs < 20) {  // where a slow present waited (issue #3 logs)
+                slow_logs++;
+                log("present: slow frame: staging copy %.0f ms, vsync wait %.0f ms, blit %.0f ms%s", copy_ms, vsync_ms, blit_ms,
+                    on_game_queue ? " (game queue)" : "");
+            }
+            if (!on_game_queue && blit_ms > 1000) {
+                on_game_queue = true;
+                log("vk: the present queue waited %.0f ms for the GPU (starved by the game's queue): presenting on the game's queue from now on", blit_ms);
+            }
             if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) {
-                vkQueueWaitIdle(g_present_queue);
+                queue_idle();
                 create_swapchain();
             }
         }
@@ -1558,7 +1640,12 @@ static void present_async(Image* src) {
     static const uint64_t delay = getenv("NX_PRESENT_DELAY") ? strtoull(getenv("NX_PRESENT_DELAY"), nullptr, 10) : 1;
     g_staged[i].tick = rt::g_pace_tick + delay;
     const bool up = upscale_wanted(src);
-    const uint32_t ow = up ? g_swap_extent.width : src->w, oh = up ? g_swap_extent.height : src->h;
+    uint32_t ow = up ? g_swap_extent.width : src->w, oh = up ? g_swap_extent.height : src->h;
+    if (up) {  // upscale to the picture's own shape inside the window (fit_blit adds the bars)
+        const double s = std::min((double)ow / src->w, (double)oh / src->h);
+        const uint32_t w = (uint32_t)lround(src->w * s), h = (uint32_t)lround(src->h * s);
+        if (w * 100 < ow * 99 || h * 100 < oh * 99) ow = w, oh = h;
+    }
     if (st.w != ow || st.h != oh || st.format != src->format) make_staging(st, ow, oh, src->format);
     begin();
     if (up) {
@@ -1747,7 +1834,7 @@ void backend_present(Texture* t) {
     b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     b.srcOffsets[1] = {(int32_t)src->w, (int32_t)src->h, 1};
     b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    b.dstOffsets[1] = {(int32_t)g_swap_extent.width, (int32_t)g_swap_extent.height, 1};
+    fit_blit(g_cb, dst.image, src->w, src->h, b);
     vkCmdBlitImage(g_cb, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    1, &b, VK_FILTER_LINEAR);
     transition(g_cb, &dst, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);

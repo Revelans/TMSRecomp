@@ -6,13 +6,16 @@
 #ifdef _WIN32
 #include <timeapi.h>
 #include <psapi.h>
+#include <tlhelp32.h>
 #include <intrin.h>
 #endif
 
 #include <algorithm>
 #include <thread>
 
+#include "settings.h"
 #include "rt.h"
+namespace vk { float wide_factor(); }  // vk.cpp: ultrawide width factor (setting aspect)
 
 namespace nvn { void vk_wait_present_taken(double max_ms); }  // vk.cpp: the previous frame went to the display path (back-pressure)
 namespace nvn { extern std::atomic<int> g_seq_request; }  // vk_replay.cpp: NX_CONTROL "seq"
@@ -235,6 +238,7 @@ static uint64_t control_buttons(uint64_t now) {
                         else if (cmd.rfind("setpos ", 0) == 0) pos_command(cmd.c_str() + 7);
                         else if (cmd.rfind("watch", 0) == 0) watch_command(cmd.c_str() + 5);
                         else if (cmd.rfind("dump ", 0) == 0) dump_command(cmd.c_str() + 5);
+                        else if (cmd.rfind("spr ", 0) == 0) sprite_command(cmd.c_str() + 4);
                         else if (cmd.rfind("task30 ", 0) == 0) rt::task30_command(cmd.c_str() + 7);
                         else if (cmd.rfind("uidraw30 ", 0) == 0) rt::g_uidraw30 = (uint32_t)strtoul(cmd.c_str() + 9, nullptr, 16);
                         else if (cmd.rfind("poke ", 0) == 0) {  // poke addr byte (hex): one guest byte, debug
@@ -293,22 +297,108 @@ static uint64_t scripted_buttons() {
     return m;
 }
 
+// DS4Windows (Discord report 11-24, DualSense): it reads the pad itself and shows the game a virtual Xbox (or DS4) pad.
+// SDL also opened the real DualSense over HID, both fought over the device: the pad dropped for a second and its last
+// state stayed held (menus kept scrolling, Itsuki kept walking). With DS4Windows running at start, SDL leaves
+// PlayStation pads to it (HIDAPI PS4 / PS5 off) and the game takes the virtual pad; icons stay PlayStation.
+static bool ds4windows_running() {
+#ifndef _WIN32
+    return false;  // Linux: DS4Windows is a Windows tool
+#else
+    static const bool on = [] {
+        bool found = false;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap == INVALID_HANDLE_VALUE) return false;
+        PROCESSENTRY32W pe{sizeof pe};
+        for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe))
+            found = !_wcsicmp(pe.szExeFile, L"DS4Windows.exe");
+        CloseHandle(snap);
+        return found;
+    }();
+    return on;
+#endif
+}
+
+// Keyboard + mouse bindings (issue #5): settings.ini key_<target> = names, comma separated (NX_KEY_<TARGET>; settings.h
+// k_key_targets). Names: SDL key names, Mouse1..Mouse5 (left, right, middle, back, forward), WheelUp / WheelDown, none.
+struct KeyBind { uint64_t btn; int axis; int dir; };  // axis 0 none, 1 lx, 2 ly, 3 rx, 4 ry; names / defaults: settings.h k_key_targets
+static const KeyBind k_key_binds[] = {
+    {B_A, 0, 0}, {B_B, 0, 0}, {B_X, 0, 0}, {B_Y, 0, 0}, {B_L, 0, 0}, {B_R, 0, 0}, {B_ZL, 0, 0}, {B_ZR, 0, 0},
+    {B_PLUS, 0, 0}, {B_MINUS, 0, 0}, {B_LS, 0, 0}, {B_RS, 0, 0}, {B_UP, 0, 0}, {B_DOWN, 0, 0}, {B_LEFT, 0, 0}, {B_RIGHT, 0, 0},
+    {0, 2, 1}, {0, 2, -1}, {0, 1, -1}, {0, 1, 1}, {0, 4, 1}, {0, 4, -1}, {0, 3, -1}, {0, 3, 1}};
+static_assert(std::size(k_key_binds) == std::size(k_key_targets), "settings.h k_key_targets order");
+enum { MS_BUTTON = 0x10000, MS_WHEEL_UP = 0x20000, MS_WHEEL_DOWN = 0x20001 };  // codes above the scancodes: Mouse1..5, wheel
+static std::vector<int> g_bind_codes[std::size(k_key_binds)];
+static int64_t g_wheel_until[2];  // SDL ms: a wheel step holds its target this long (the game reads ~every frame; UI thread)
+static float g_mouse_acc[2];      // mouse motion since the last camera step (UI thread)
+
+static int bind_code(std::string n) {
+    while (!n.empty() && n.front() == ' ') n.erase(n.begin());
+    while (!n.empty() && n.back() == ' ') n.pop_back();
+    if (n.empty() || !_stricmp(n.c_str(), "none")) return -1;
+    if (n.size() == 6 && !_strnicmp(n.c_str(), "mouse", 5) && n[5] >= '1' && n[5] <= '5') return MS_BUTTON + (n[5] - '0');
+    if (!_stricmp(n.c_str(), "WheelUp")) return MS_WHEEL_UP;
+    if (!_stricmp(n.c_str(), "WheelDown")) return MS_WHEEL_DOWN;
+    const SDL_Scancode sc = SDL_GetScancodeFromName(n.c_str());
+    if (sc == SDL_SCANCODE_UNKNOWN) log("input: unknown key name \"%s\" in a key_ setting", n.c_str());
+    return sc == SDL_SCANCODE_UNKNOWN ? -1 : (int)sc;
+}
+
+static void load_key_binds() {
+    for (size_t i = 0; i < std::size(k_key_binds); i++) {
+        std::string env = "NX_KEY_" + std::string(k_key_targets[i].name);
+        for (auto& ch : env) ch = (char)toupper((unsigned char)ch);
+        const char* v = getenv(env.c_str());
+        const std::string list = v ? v : k_key_targets[i].def;
+        for (size_t pos = 0; pos <= list.size();) {
+            const size_t c = std::min(list.find(',', pos), list.size());
+            if (int code = bind_code(list.substr(pos, c - pos)); code >= 0) g_bind_codes[i].push_back(code);
+            pos = c + 1;
+        }
+    }
+}
+
 static void poll_input() {
     PadState p;
     p.buttons |= scripted_buttons();
     const bool* k = SDL_GetKeyboardState(nullptr);
-    struct { SDL_Scancode sc; uint64_t b; } keys[] = {
-        {SDL_SCANCODE_K, B_A}, {SDL_SCANCODE_RETURN, B_A}, {SDL_SCANCODE_J, B_B}, {SDL_SCANCODE_BACKSPACE, B_B},
-        {SDL_SCANCODE_I, B_X}, {SDL_SCANCODE_U, B_Y}, {SDL_SCANCODE_Q, B_L}, {SDL_SCANCODE_E, B_R},
-        {SDL_SCANCODE_1, B_ZL}, {SDL_SCANCODE_3, B_ZR}, {SDL_SCANCODE_SPACE, B_PLUS}, {SDL_SCANCODE_TAB, B_MINUS},
-        {SDL_SCANCODE_LEFT, B_LEFT}, {SDL_SCANCODE_UP, B_UP}, {SDL_SCANCODE_RIGHT, B_RIGHT}, {SDL_SCANCODE_DOWN, B_DOWN}};
-    for (auto& m : keys)
-        if (k[m.sc]) p.buttons |= m.b;
+    static const bool binds_loaded = (load_key_binds(), true);
+    (void)binds_loaded;
+    const SDL_MouseButtonFlags mb = SDL_GetMouseState(nullptr, nullptr);
+    const bool focus = (SDL_GetWindowFlags(g_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    const int64_t now_ms = (int64_t)SDL_GetTicks();
+    auto held = [&](int code) {
+        if (code < SDL_SCANCODE_COUNT) return k[code];
+        if (!focus) return false;
+        if (code < MS_WHEEL_UP) return (mb & SDL_BUTTON_MASK(code - MS_BUTTON)) != 0;
+        return now_ms < g_wheel_until[code - MS_WHEEL_UP];
+    };
     p.lx = g_ctl_stick[0], p.ly = g_ctl_stick[1], p.rx = g_ctl_stick[2], p.ry = g_ctl_stick[3];
-    if (k[SDL_SCANCODE_A]) p.lx = -32767;
-    if (k[SDL_SCANCODE_D]) p.lx = 32767;
-    if (k[SDL_SCANCODE_W]) p.ly = 32767;
-    if (k[SDL_SCANCODE_S]) p.ly = -32767;
+    int32_t* axes[] = {nullptr, &p.lx, &p.ly, &p.rx, &p.ry};
+    for (size_t i = 0; i < std::size(k_key_binds); i++)
+        for (int code : g_bind_codes[i])
+            if (held(code)) {
+                if (k_key_binds[i].btn) p.buttons |= k_key_binds[i].btn;
+                else *axes[k_key_binds[i].axis] = 32767 * k_key_binds[i].dir;
+            }
+    // mouse camera (mouse_camera, default 1): the pointer is captured (relative mode) while the window has focus and the
+    // F1 menu is closed; its motion becomes the right stick, one step every 16 ms (the game reads the pad per frame):
+    // 40 px in a step = full tilt at mouse_sensitivity 1.0. The game's camera turns at stick speed (not 1:1 aim).
+    static const bool replay_run = getenv("NX_REPLAY") && *getenv("NX_REPLAY");
+    static const bool mouse_cam = !replay_run && (!getenv("NX_MOUSE_CAMERA") || atoi(getenv("NX_MOUSE_CAMERA")) != 0);
+    static const float sens = getenv("NX_MOUSE_SENSITIVITY") ? (float)atof(getenv("NX_MOUSE_SENSITIVITY")) : 1.0f;
+    static const bool invert = getenv("NX_MOUSE_INVERT_Y") && atoi(getenv("NX_MOUSE_INVERT_Y")) != 0;
+    static int64_t step_at = 0;
+    static int32_t cam[2];
+    if (now_ms >= step_at) {
+        step_at = now_ms + 16;
+        for (int a = 0; a < 2; a++) {
+            const float v = g_mouse_acc[a] * sens * (32767.0f / 40.0f) * (a == 1 && !invert ? -1.0f : 1.0f);
+            cam[a] = (int32_t)std::clamp(v, -32767.0f, 32767.0f);
+            g_mouse_acc[a] = 0;
+        }
+    }
+    if (mouse_cam && (cam[0] || cam[1])) p.rx = cam[0], p.ry = cam[1];
     int n = 0;
     SDL_JoystickID* ids = SDL_GetGamepads(&n);
     static SDL_Gamepad* pad = nullptr;
@@ -316,9 +406,14 @@ static void poll_input() {
     // (touchpad = battle speed, L3+R3 = F1 menu) changed settings and quit test runs (11-01)
     static const bool replay = getenv("NX_REPLAY") && *getenv("NX_REPLAY");
     if (pad && !SDL_GamepadConnected(pad)) SDL_CloseGamepad(pad), pad = nullptr;  // unplugged: take the next one
-    if (!pad && n > 0 && !replay && (pad = SDL_OpenGamepad(ids[0]))) {
+    int pick = 0;  // DS4Windows: its virtual Xbox pad first (a real PlayStation pad may still show up through RawInput)
+    for (int i = 0; ds4windows_running() && i < n; i++) {
+        const SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[i]);
+        if (t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE) { pick = i; break; }
+    }
+    if (!pad && n > 0 && !replay && (pad = SDL_OpenGamepad(ids[pick]))) {
         SDL_GamepadType t = SDL_GetGamepadType(pad);
-        g_pad_kind = t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 ? 1
+        g_pad_kind = t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 || ds4windows_running() ? 1
                      : t >= SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO ? 0
                      : 2;  // Xbox, and generic pads (mostly XInput)
         log("input: pad \"%s\" (type %d) -> %s button icons", SDL_GetGamepadName(pad), (int)t,
@@ -326,10 +421,12 @@ static void poll_input() {
     }
     SDL_free(ids);
     if (pad) {
-        // positional mapping: the face button on the right is A, as on a Switch controller
+        // positional mapping: the face button on the right is A, as on a Switch controller; button_layout = xbox swaps
+        // A/B and X/Y (bottom = confirm, as in PC / Xbox games; pad_icons.cpp draws the prompts to match)
+        const bool xb = rt::button_layout_xbox();
         struct { SDL_GamepadButton gb; uint64_t b; } btn[] = {
-            {SDL_GAMEPAD_BUTTON_EAST, B_A}, {SDL_GAMEPAD_BUTTON_SOUTH, B_B}, {SDL_GAMEPAD_BUTTON_NORTH, B_X},
-            {SDL_GAMEPAD_BUTTON_WEST, B_Y}, {SDL_GAMEPAD_BUTTON_LEFT_STICK, B_LS}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK, B_RS},
+            {xb ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST, B_A}, {xb ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH, B_B},
+            {xb ? SDL_GAMEPAD_BUTTON_WEST : SDL_GAMEPAD_BUTTON_NORTH, B_X}, {xb ? SDL_GAMEPAD_BUTTON_NORTH : SDL_GAMEPAD_BUTTON_WEST, B_Y}, {SDL_GAMEPAD_BUTTON_LEFT_STICK, B_LS}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK, B_RS},
             {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, B_L}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, B_R},
             {SDL_GAMEPAD_BUTTON_START, B_PLUS}, {SDL_GAMEPAD_BUTTON_BACK, B_MINUS},
             {SDL_GAMEPAD_BUTTON_DPAD_LEFT, B_LEFT}, {SDL_GAMEPAD_BUTTON_DPAD_UP, B_UP},
@@ -362,7 +459,10 @@ static void poll_input() {
 #else
     void* hwnd = g_window;  // Linux: the menu is drawn into the frame (overlay.cpp), it only needs the window size
 #endif
-    if (hwnd && overlay_update(hwnd, p.buttons, p.ly, f1)) p = PadState{};
+    const bool menu = hwnd && overlay_update(hwnd, p.buttons, p.ly, f1);
+    if (menu) p = PadState{};
+    const bool capture = mouse_cam && focus && !menu;  // F1 menu open / window in the background: the pointer is free
+    if (capture != SDL_GetWindowRelativeMouseMode(g_window)) SDL_SetWindowRelativeMouseMode(g_window, capture);
     p.buttons |= overlay_buttons();
     std::lock_guard<std::mutex> l(g_ui_lock);
     g_pad = p;
@@ -438,8 +538,13 @@ static void ui_thread() {
 
     SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");  // the exe icon (resource 1) when built with one
     SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
+    if (ds4windows_running()) {  // see ds4windows_running
+        SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "0");
+        SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "0");
+        log("input: DS4Windows is running: PlayStation pads left to it, using its virtual pad");
+    }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) fatal("SDL_Init: %s", SDL_GetError());
-    g_window = SDL_CreateWindow("Tokyo Mirage Sessions #FE Encore (TMSRecomp)", 1280, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    g_window = SDL_CreateWindow("Tokyo Mirage Sessions #FE Encore (TMSRecomp)", (int)lround(1280 * vk::wide_factor()), 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);  // ultrawide: the picture's shape
     if (!g_window) fatal("SDL_CreateWindow: %s", SDL_GetError());
     // <data>/icon.ico: the launcher makes it from the player's own game (NSP icon or title screen); none = default icon
 #ifdef _WIN32
@@ -480,6 +585,8 @@ static void ui_thread() {
                 (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))))
                 SDL_SetWindowFullscreen(g_window, !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN));
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F12) g_user_shot++;
+            if (e.type == SDL_EVENT_MOUSE_MOTION) g_mouse_acc[0] += e.motion.xrel, g_mouse_acc[1] += e.motion.yrel;
+            if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0) g_wheel_until[e.wheel.y > 0 ? 0 : 1] = (int64_t)SDL_GetTicks() + 80;
             if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) {  // no mouse cursor with a pad
                 int n = 0;
                 SDL_free(SDL_GetGamepads(&n));

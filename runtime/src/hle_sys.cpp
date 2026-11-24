@@ -1,3 +1,4 @@
+#include <chrono>
 // nn::oe, nn::account, nn::time, nn::diag, nv::, glslc: the application-facing services main imports.
 // Hooked at the nn:: API level (the SDK's IPC clients behind them are never reached).
 #include "plat.h"
@@ -871,12 +872,50 @@ HLE_FN(camp_settings_fill, "camp_settings_fill") {
     c->r[0] = call_unhooked(c, "camp_settings_fill", {c->r[0], c->r[1], c->r[2], c->r[3]});
     if (all_difficulties()) st32(scr + 0x118, 1), st32(scr + 0x11c, 0), st32(scr + 0x120, 4);  // row 10: arrows, min, max
 }
+// Ultrawide (vk.cpp wide_factor, setting aspect): every perspective projection of the game's 16:9 shape (aspect 1.7778:
+// field, battle, event cameras; the scene targets are widened to match) gets the wider aspect before the matrix is built:
+// the same vertical view, more at the sides (Hor+). The object keeps the new aspect (the game sets it once), so frustum
+// culling, which reads the same object, widens too. Other aspects (square shadow / reflection cameras) stay.
+namespace vk { float wide_factor(); }
+HLE_FN(cam_proj_update, "cam_proj_update") {
+    const uint32_t p = c->r[0];
+    const float f = vk::wide_factor();
+    static const bool nocam = getenv("NX_UW_NOCAM") != nullptr;  // debug
+    if (f > 1 && ld32(p + 0xc4)) {  // debug log: each distinct camera / type / aspect once
+        static std::unordered_set<uint64_t> seen;
+        const uint64_t k = (uint64_t)p << 32 ^ ld32(p + 0xc0) << 24 ^ ld32(p + 0xa4);
+        if (seen.size() < 96 && seen.insert(k).second) {
+            float a, fov; uint32_t aw = ld32(p + 0xa4), fw = ld32(p + 0xa0); memcpy(&a, &aw, 4), memcpy(&fov, &fw, 4);
+            std::string m;
+            for (uint32_t o = 0x10; o < 0x50; o += 4) { float v; uint32_t vw = ld32(p + o); memcpy(&v, &vw, 4); char b[24]; snprintf(b, sizeof b, " %g", v); m += b; }
+            log("uw: camera seen %08x type %u fov %.3f aspect %.4f (lr %08x) m:%s", p, ld32(p + 0xc0), fov, a, c->r[14], m.c_str());
+        }
+    }
+    if (f > 1 && !nocam && ld32(p + 0xc4) && ld32(p + 0xc0) == 0) {
+        float a;
+        uint32_t w = ld32(p + 0xa4);
+        memcpy(&a, &w, 4);
+        if (fabsf(a - 16.f / 9) < 0.01f) {
+            static int n = 0;
+            if (n++ < 40) { float fov; uint32_t fw = ld32(p + 0xa0); memcpy(&fov, &fw, 4); log("uw: camera %08x fov %.3f aspect -> wide (lr %08x)", p, fov, c->r[14]); }
+            a = 16.f / 9 * f;
+            memcpy(&w, &a, 4);
+            st32(p + 0xa4, w);
+        }
+    }
+    call_unhooked(c, "cam_proj_update", {p});
+}
+namespace rt { extern std::atomic<int> g_shot_request; std::atomic<int64_t> g_btl_open_ms{0}; }  // g_btl_open_ms: steady-clock ms of the last battle opening (vk_replay: start banner text)
+using rt::g_shot_request;
 HLE_FN(btl_open_chance, "btl_open_chance") {
     g_autosave_armed = true;
     g_battle_lost = false;
     levels_snapshot();
     const bool on = !getenv("NX_FIRST_STRIKE") || atoi(getenv("NX_FIRST_STRIKE")) != 0;  // the settings menu changes it
     int32_t r = (int32_t)call_unhooked(c, "btl_open_chance", {c->r[0], c->r[1], c->r[2]});
+    if (const char* f = getenv("NX_OPEN_FORCE")) r = atoi(f);  // debug: force the opening roll (< ~10 surprise, >= ~90 first strike)
+    if (getenv("NX_UW_ARM_BATTLE")) { _putenv("NX_UW_FRAME=0"); g_shot_request += 120; }  // debug: draw log + 120 frame shots from here
+    rt::g_btl_open_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();  // ultrawide: start banner text (vk_replay)
     log("battle: opening chance %d (contact flags %04x)", r, g_open_flags);
     if (on && (g_open_flags & 0x20) && r < 50) r = 50;
     c->r[0] = (uint32_t)r;
@@ -1393,10 +1432,21 @@ HLE_FN(field_roam_update, "field_roam_update") {
         }
     }
     // towns only: kind 0 = Shibuya, Harajuku, interiors (f0xx); kind 1 = Idolaspheres (d0xx), never left this way
-    const bool town = kind == 0 && lm;
+    // Bloom Palace (f003_03) is not on the Tokyo Map: opening it there broke the map's Lua ("attempt to index field '?'
+    // (a nil value)") and the map took no input (user 11-24 nx.log); no fast travel or map from it (vanilla: its door)
+    const bool town = kind == 0 && lm && !(area == 3 && sub == 3);
     g_travel_mask = town ? travel_mask(kind, area, sub) : 0;
     overlay_roam_seen(town);
     if (const int i = overlay_take_travel_request(); i >= 0) {
+        if (i >= 100 && i < 164 && town) {  // debug (NX_CONTROL "travel 1NN" only): warp to f003_NN, no checks
+            const Cpu keep = *c;
+            gcall(c, 0x46c1b4, {0, 3, (uint32_t)(i - 100), 1000});
+            gcall(c, 0x46ed90, {obj, 8});
+            *c = keep;
+            log("field: debug warp to f003_%02d", i - 100);
+            c->r[0] = 0;
+            return;
+        }
         if (i < (int)std::size(k_shops) && (g_travel_mask >> i & 1)) {
             const Cpu keep = *c;
             gcall(c, 0x46c1b4, {0, 3, (uint32_t)k_shops[i].sub, 1000});  // RequestChangeMap(FIELD, 3, n, 1000)
@@ -1557,16 +1607,118 @@ HLE_FN(btl_wheel_input, "btl_wheel_input") {
 // The "!" weakness marker over enemies while the skill list is open (before a target is picked): its draw function steps
 // the pulse counter u16 unit+0xaca once per call, i.e. per frame (user 10-30: too fast above 60). Keep the counter on
 // frames that are not a 60 Hz tick (a reset to 0 by the game stays).
+// Resist marker (user 11-24): affinity byte unit+0x85a+element (element = highlighted skill record +0x12): 0-2 weak
+// ("!"), 3 normal, 4-6 resist, 7 null, 8 repel, 9 drain (matched to the target panel badges by poking, s106). When the
+// game drew nothing and the value is a resist, the same draw runs again with the value read as weak and the "!" sprite
+// records (bank 45 sheet 0 #527 / #528) showing the Rs badge's uv (#800; the user's shield when resist_icons is on).
+// The game's own checks (unknown affinity, guard buffs, skills that ignore affinity) still apply in that second run.
+static uint32_t battle_sprite(uint32_t index) {  // bank 45 sheet 0 record, 0 when the battle HUD is not loaded
+    const uint32_t m = ld32(0x9f3320), t = m ? ld32(m + 8) : 0, b0 = t ? ld32(t + 45 * 0xc) : 0,
+                   bk = b0 >= 0x10000000 ? ld32(b0 + 0x10) : 0, recs = bk >= 0x10000000 ? ld32(bk + 0x10) : 0;
+    return recs >= 0x10000000 ? recs + index * 0x70 : 0;
+}
+// The "!" sprite records #527 / #528 showing the resist shield while this lives: uv = the 84 px shield painted into
+// empty atlas space (pad_icons k_battle_res) when resist icons are on, else the small Rs letters (#800); colour white
+// (the "!" records are tinted green). ok = false when the battle HUD is not loaded.
+struct ResistSprites {
+    uint32_t m1 = battle_sprite(527), m2 = battle_sprite(528), rs = battle_sprite(800);
+    uint8_t s1[0x58], s2[0x58];  // record +0x18 uv, +0x30 four corner colours (RGBA floats)
+    bool ok = m1 && m2 && rs;
+    ResistSprites() {
+        if (!ok) return;
+        float uv[4] = {198 / 2048.0f, 110 / 2048.0f, 282 / 2048.0f, 194 / 2048.0f};
+        if (!rt::resist_icons_on()) memcpy(uv, GPTR(rs + 0x18), 16);
+        memcpy(s1, GPTR(m1 + 0x18), 0x58), memcpy(s2, GPTR(m2 + 0x18), 0x58);
+        for (uint32_t m : {m1, m2}) {
+            memcpy(GPTR(m + 0x18), uv, 16);
+            for (int k = 0; k < 16; k++) st32(m + 0x30 + 4 * k, 0x3f800000);  // 1.0f
+        }
+    }
+    ~ResistSprites() {
+        if (ok) memcpy(GPTR(m1 + 0x18), s1, 0x58), memcpy(GPTR(m2 + 0x18), s2, 0x58);
+    }
+};
+// setting resist_marker (default 1): resist marker, target panel resist icon and RESIST popup
+static bool resist_marker_on() { return !getenv("NX_RESIST_MARKER") || atoi(getenv("NX_RESIST_MARKER")) != 0; }
+static bool resist_mark(Cpu* c, uint32_t unit, uint16_t counter) {
+    const uint16_t id = ld16(unit + 0xac8);  // highlighted skill id, 0 = none
+    const uint32_t table = ld32(ld32(0x9ef4c4));  // skill table; record = table + 0xc + id * 0x84 (0x27f280)
+    if (id == 0 || !table || !resist_marker_on()) return false;
+    const uint32_t skill = table + 0xc + id * 0x84;
+    const uint32_t aff = unit + 0x85a + (int16_t)ld16(skill + 0x12);
+    const uint8_t v = ld8(aff);
+    if (v < 4 || v > 6) return false;
+    ResistSprites sprites;
+    if (!sprites.ok) return false;
+    const uint32_t hp_bar = ld32(unit + 0xab4);  // the HP gauge part of the function ran in the first call
+    st32(unit + 0xab4, 0), st8(aff, 2), st16(unit + 0xaca, counter);
+    const Cpu keep = *c;
+    call_unhooked(c, "btl_weak_mark_draw", {unit});
+    *c = keep;
+    st32(unit + 0xab4, hp_bar), st8(aff, v);
+    return true;
+}
+// Target panel affinity icon (user 11-24): the disc left of the target's name, (panel, x, y, kind, [sp] ?) with kind =
+// the affinity value as the panel decided it (0xffff unknown): 0-2 green disc + "!", 3-6 the plain star disc, 7-9 red
+// disc + Nu / Rp / Dr. A resist (4-6) is drawn as kind 0 with the "!" records showing the shield (ResistSprites).
+HLE_FN(btl_target_aff_icon, "btl_target_aff_icon") {
+    const uint16_t kind = (uint16_t)c->r[3];
+    if (kind >= 4 && kind <= 6 && resist_marker_on()) {
+        ResistSprites sprites;
+        if (sprites.ok) {
+            call_unhooked(c, "btl_target_aff_icon", {c->r[0], c->r[1], c->r[2], 0});
+            return;
+        }
+    }
+    call_unhooked(c, "btl_target_aff_icon", {c->r[0], c->r[1], c->r[2], c->r[3]});
+}
+// RESIST hit popup (user 11-24): the game marks a resisted hit with popup flag 0x4 (+0x58) but draws nothing for it
+// (0x2 WEAK, 0x8 BLOCK = null, 0x100 CRITICAL). Such a popup is drawn as a WEAK one with the WEAK sprite record (bank 45
+// sheet 0 #490) pointing at our RESIST art (pad_icons k_battle_res, painted into empty atlas space, same size); the
+// damage number below it stays.
+HLE_FN(btl_dmg_popup_draw, "btl_dmg_popup_draw") {
+    const uint32_t p = c->r[0], flags = ld32(p + 0x58), weak = battle_sprite(490);
+    if ((flags & 0xe) == 0x4 && weak && resist_marker_on()) {
+        const float uv[4] = {378 / 2048.0f, 254 / 2048.0f, 582 / 2048.0f, 346 / 2048.0f};
+        uint8_t keep[16];
+        memcpy(keep, GPTR(weak + 0x18), 16), memcpy(GPTR(weak + 0x18), uv, 16);
+        st32(p + 0x58, flags | 0x2);
+        c->r[0] = call_unhooked(c, "btl_dmg_popup_draw", {c->r[0], c->r[1], c->r[2]});
+        st32(p + 0x58, (ld32(p + 0x58) & ~0x2u) | (flags & 0x2));
+        memcpy(GPTR(weak + 0x18), keep, 16);
+        return;
+    }
+    static const bool debug = getenv("NX_DEBUG_BATTLE") != nullptr;
+    if (debug) {
+        static std::map<uint32_t, uint32_t> seen;
+        const uint32_t key = ld32(p + 0x58) ^ ld32(p + 0x50) << 12;
+        if (seen[p] != key + 1) {
+            seen[p] = key + 1;
+            std::string w;
+            for (int i = 0; i < 0x80; i += 4) w += std::to_string(i) + ":" + std::to_string((int32_t)ld32(p + i)) + " ";
+            log("battle: popup %08x flags %x value %d: %s", p, ld32(p + 0x58), (int32_t)ld32(p + 0x50), w.c_str());
+        }
+    }
+    c->r[0] = call_unhooked(c, "btl_dmg_popup_draw", {c->r[0], c->r[1], c->r[2]});
+}
 HLE_FN(btl_weak_mark_draw, "btl_weak_mark_draw") {
     const uint32_t unit = c->r[0];
     const uint16_t before = ld16(unit + 0xaca);
     const bool hold = fps_setting() != 30 && g_ui_gate != 0 && !ui_tick_due(unit + 0xaca);
     c->r[0] = call_unhooked(c, "btl_weak_mark_draw", {unit});
+    if (ld16(unit + 0xaca) == 0) resist_mark(c, unit, before), c->r[0] = 1;
     if (hold && ld16(unit + 0xaca) != 0) st16(unit + 0xaca, before);
     static const bool debug = getenv("NX_DEBUG_BATTLE") != nullptr;
     if (debug) {  // pulse steps per second over all units
         static std::set<uint32_t> units;
-        if (units.size() < 16 && units.insert(unit).second) log("battle: weak marker unit %08x", unit);
+        if (units.size() < 16 && units.insert(unit).second) {
+            std::string a;
+            for (int i = 0; i < 24; i++) a += std::to_string(ld8(unit + 0x85a + i)) + " ";
+            log("battle: weak marker unit %08x affinities %s", unit, a.c_str());
+            if (const char* t = getenv("NX_AFF_TEST"))  // debug: comma list, element i gets value i (both copies)
+                for (int i = 0; i < 12 && *t; i++, t += strcspn(t, ",") + (t[strcspn(t, ",")] != 0))
+                    st8(unit + 0x85a + i, (uint8_t)atoi(t)), st8(unit + 0x866 + i, (uint8_t)atoi(t));
+        }
         static int steps = 0;
         static uint32_t t0 = GetTickCount();
         steps += ld16(unit + 0xaca) != before;

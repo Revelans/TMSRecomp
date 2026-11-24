@@ -17,3 +17,4 @@ tools/texextract/fasttex.lib
 tools/texextract/fasttex.exp
 tools/spvgen/bin/
 tools/spvgen/obj/
+HANDOFF.md

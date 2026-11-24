@@ -77,7 +77,7 @@ const PageRow k_pages[4][11] = {
         {L"Revive at 1 HP after battles", false, "On: members who fell get up with 1 HP after a won or escaped battle."},
         {L"Carry 99 of each item", false, "On: every consumable stocks up to 99. Off: the game's limits (40, 20, 5...)."},
         {L"Overworld costume", false, "On: outside battle the party wears the costume equipped for battle."},
-        {nullptr, false, ""},
+        {L"Resist markers", false, "Shield over foes that resist the skill, RESIST on resisted hits."},
         {nullptr, false, ""},
         {nullptr, false, ""},
         {nullptr, false, ""},

@@ -39,7 +39,7 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.1 beta.** It is tested until the chapter 2 Idolasphere with
+> **v0.1.2 beta.** It is tested until the chapter 2 Idolasphere with
 > saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
 > PCs: bug reports are very welcome.
 
@@ -62,7 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
-- [What's new in v0.1.1](#whats-new-in-v011)
+- [What's new in v0.1.2](#whats-new-in-v012)
 - [Requirements](#requirements)
 - [Installing and playing](#installing-and-playing)
 - [Updating](#updating)
@@ -88,6 +88,8 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
   animation and the camera run at the chosen rate; the game keeps its original speed.
 - Internal resolution from 720p (the game's own) to 4K, and 8K supersampling; Auto picks one for your screen and GPU.
 - Borderless fullscreen or window (F11 / Alt+Enter switches while playing).
+- **Ultrawide** 21:9 and 32:9 (or Auto: your screen's shape): a wider 3D view, HUD and menus stay 16:9 in the middle,
+  field HUD in the screen corners. Never stretched: other shapes get black bars.
 - VSync modes: Mailbox (no tearing, low latency), classic VSync, **VRR** (G-SYNC / FreeSync: VSync plus a frame cap
   3 fps under your refresh rate) and Off.
 - Even frame pacing: a dedicated present thread, pipeline prewarm and a shader cache built during setup, so new areas
@@ -118,7 +120,13 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - First strike on downed field enemies, hide field enemies, weakness / resistance icons in battle, detailed skill help.
 - English subtitles for the Japanese battle voices.
 - Random battle music: the game's own tracks, your own `.adx` music folder, or both, with matching victory themes.
-- Button prompts for Switch, PlayStation or Xbox controllers (Auto detects your pad).
+- Button prompts for Switch, PlayStation or Xbox controllers (Auto detects your pad), and a **Button layout** option:
+  Switch (right face button confirms) or Xbox / PC (bottom button confirms).
+- **Resist markers**: a shield over foes that resist the highlighted skill (also in the target panel) and a RESIST popup
+  on resisted hits, next to the game's own weakness "!" and WEAK.
+- **Keyboard and mouse**: every button can be rebound (up to 3 keys each, mouse buttons and wheel too), and the mouse
+  turns the camera (sensitivity, invert). Launcher > Game > Keyboard & mouse.
+- DS4Windows works: its virtual pad is used and the real PlayStation pad is left to it.
 - Menus and dialogue stay at their original pace at any frame rate, with optional smoothing above 60 fps.
 
 **Launcher**
@@ -130,6 +138,23 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.2
+
+- **Ultrawide** (new): Aspect ratio 21:9, 32:9 or Auto (launcher > Display & FPS). The 3D view gets wider; HUD and menus
+  stay 16:9 in the middle; the field HUD (minimap, CALL ring, party panel) sits in the screen corners; bars and the
+  battle RESULTS panels continue to the screen edges. Fixed pictures (title screen, camp background, Tokyo Map, battle
+  start cut-in) stay 16:9 in the middle instead of stretching. Default 16:9 is unchanged.
+- **Keyboard and mouse** (new): rebind every button and stick direction (up to 3 keys each, mouse buttons and wheel
+  too) on the launcher's Game page, or `key_<button>` in `settings.ini`. The mouse turns the camera while the game has
+  focus (F1 menu or Alt+Tab frees the pointer); sensitivity and invert settings.
+- **Resist markers** (new, on by default): when a skill is highlighted, foes that resist it get a shield where the game
+  shows "!" for a weakness, also in the target panel's circle; a resisted hit shows a RESIST popup like WEAK.
+- **Button layout** (new): Xbox / PC makes the bottom face button confirm (A/B and X/Y swapped); prompts follow.
+- **DS4Windows**: with DS4Windows running, the game uses its virtual pad (fixes a pad that dropped and kept a button held).
+- **Linux (experimental)**, contributed by XCyrexX: a native Linux build from source. See [Linux](#linux-experimental).
+- Possible fix for a blank / frozen picture with working audio (issue #3), not confirmed yet.
+- After updating, the first battles and areas stutter once while the new shaders compile.
 
 ## What's new in v0.1.1
 
@@ -204,15 +229,19 @@ is optional; the game works the same without them. The UHD textures can be turne
 | Action | Keyboard | Controller |
 |---|---|---|
 | Move | W A S D | left stick |
-| Camera | arrow keys | right stick |
-| A / B (confirm / back) | K or Enter / J or Backspace | A / B (Nintendo layout: right face button is A) |
+| Camera | mouse (or keys you bind) | right stick |
+| A / B (confirm / back) | K, Enter or left click / J, Backspace or right click | A / B (Switch layout: right face button is A; Button layout = Xbox / PC swaps them) |
 | X / Y | I / U | X / Y |
+| L / R, ZL / ZR | Q / E, 1 / 3 | L / R, ZL / ZR |
+| D-pad | arrow keys | D-pad |
 | + / - | Space / Tab | + / - (Start / Select) |
 | Settings menu | F1 | L3 + R3 |
 | Screenshot | F12 (saved to `<game files>\shots`) | |
 | Window / fullscreen | F11 or Alt+Enter | |
 
-In the Y menu, (-) offers Return to Title or Quit Game.
+In the Y menu, (-) offers Return to Title or Quit Game. Every keyboard / mouse key can be changed on the launcher's Game
+page (Keyboard & mouse), or in `settings.ini` with `key_<button> = Key, Key, Key` (SDL key names such as `K`, `Return`,
+`Left Shift`, `Keypad 4`, plus `Mouse1` .. `Mouse5`, `WheelUp`, `WheelDown`, `none`).
 
 ## Settings
 
@@ -236,6 +265,11 @@ stored in `settings.ini` next to `tms.exe` as `key = value`; any key can also be
 | `fx_bloom`, `fx_glow`, `fx_dof`, `fx_vignette`, `fx_fog`, `fx_outline`, `fx_char_rim` | 0 turns the effect off | |
 | `tex_pack` | auto (default), 1, 0 | UHD texture pack |
 | `pad_icons` | auto (default), switch, playstation, xbox | button prompts |
+| `button_layout` | switch (default), xbox | which face button confirms |
+| `aspect` | 16:9 (default), auto, 21:9, 32:9 | ultrawide |
+| `resist_marker` | 1 (default), 0 | resist shield / RESIST popup in battle |
+| `key_a` .. `key_rs_right` | key names, comma separated | keyboard / mouse bindings (see [Controls](#controls)) |
+| `mouse_camera`, `mouse_sensitivity`, `mouse_invert_y` | 1, 1.0 (0.2 .. 3.0), 0 | mouse turns the camera |
 | `walk_speed` | 1.0 (default) .. 3.0 | field walk speed |
 | `map_reveal` | 0 (default), 1 | reveal dungeon maps |
 | `field_costume` | 0 (default), 1 | overworld costume |

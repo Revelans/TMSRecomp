@@ -74,6 +74,8 @@
 0x0024e5b0 party_hud_update  # (party portraits HUD task, field/battle/camp): blink/slide animators 0x24aad8 count 30 Hz frames
 0x002b21c8 btl_wheel_input  # (battle obj, &selection, list): command wheel input per frame: up/down held counter +0x195ac steps every 10 calls, delay +0x19660; A confirms (returns 1)
 0x00303290 btl_weak_mark_draw  # (unit): draws the "!" weakness marker over a unit while the skill list is open (per frame, per unit); pulse counter u16 unit+0xaca +1 per call (4..0x13 loop)
+0x002ffef8 btl_target_aff_icon  # (panel, x, y, kind, [sp]): target panel affinity disc left of the name; kind = affinity value (0-2 "!", 3-6 star disc, 7-9 Nu/Rp/Dr, 0xffff "?"), from 0x3014d8
+0x002ee3c0 btl_dmg_popup_draw  # (popup, i, ?): one damage popup over a unit; flags u32 +0x58: 0x2 WEAK (sprite 45/0/490), 0x8 BLOCK (492), 0x100 CRITICAL (491); +0x50 number
 0x0030df68 btl_unit_color_update  # (unit): per frame, steps the unit's colour / alpha tweens (unit+0x60c.. 0x2ce764 / 0x2ce490: counter +1 per call, t = counter / frames): target flash pulse
 0x00483120 result_update  # (RESULTS screen task, phase 0): state machine; counts 30 Hz frames
 0x00483b1c result_parts_update  # (RESULTS screen task, phase 26): panels, NEW SKILL!, sparkles; FFWD hold (X)
@@ -111,6 +113,7 @@
 0x004a0a30 title_menu_return  # same flag mirror on return to the title menu
 0x0043009c lua_IsSysDiffFriendlyUnlock  # Lua: pushes system +0xa6b96
 0x004300d4 lua_IsSysDiffLunaticUnlock  # Lua: pushes system +0xa6b95 (set to 1 at game clear, 0x269708)
+0x0057b02c cam_proj_update  # (projection): engine projection object; if dirty (+0xc4) builds the 4x4 at +0x10 / +0x50 by type +0xc0: 0 perspective (fov y +0xa0, aspect +0xa4, near +0xa8, far +0xac), 1 ortho (size +0x98 / +0x9c), 2..4 off-centre ortho (+0x90..); then 0x2dc520 (+0x50). Ultrawide: aspect (hle_sys.cpp)
 0x003506fc costume_default_row  # (character id 1001..1010): PlayerDefaultCostumeTable row (12 bytes: id, s16 costume +4, s16 flag that must be on +8, s16 flag that must be off +10; -1 = none) for the story state = the clothes outside battle; callers: model loader 0x3cc560 (via 0x3cc6b4) and reload check 0x407ea4; Overworld costume setting (hle_sys.cpp)
 0x002c3c1c btl_force_mastery  # (battle, character id, amount): Lua btlSetForceMastery (only caller 0x429870): battle +0x548 + 2 * member += amount (tutorial / event Mastery); NOT scaled by the Mastery multiplier (hle_sys.cpp)
 0x003ce438 chr_motion_update  # (s0 dt, chr): character action blend: weight +0x11f8 += step +0x11fc (= 1 / (blend seconds x 30), set by 0x3ce298 from _chrPlayAction 0x41ebfc) once per call, then 0x3ce58c / 0x3cfbc8 with dt; actions +0x11f0 new / +0x11f4 old (hle_sys.cpp: step x dt*30)

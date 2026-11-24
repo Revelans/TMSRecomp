@@ -3,7 +3,12 @@
 Static recompilation of Tokyo Mirage Sessions #FE Encore (Switch) to a native Windows program.
 
 ## PORTABILITY RULE (user 2026-11-10, firm): "This must not only work on my machine." Players have every kind of GPU/CPU (NVIDIA, AMD, Intel, old and new, low VRAM). The point of a recomp port is that EVERYONE can play: no low fps, no crash, no stutter, smooth and optimised. Several other ports (GOW3, Gravity Rush 1/2, Drakengard 3, MediEvil, Crash NF, Bloodborne) are stable and good; we must not ship a bad recomp. Every feature needs a capability check + safe fallback (vendor-specific paths like DLSS/NGX optional), sane defaults for weak PCs, no hard dependency on the user's own setup (drivers, installed runtimes, paths, caches).
-## RESUME HERE: v0.1.0-beta PUBLISHED 2026-11-24 at github.com/godofknife/TMSRecomp (branch `public` = the pushed history, noreply identity; never push this history). Read "Milestone 5, session 102" at the END first (2026-11-24: Overworld costume setting field_costume (verified slot 20: field / battle / back), Hard difficulty formula from the code, all_difficulties unlock + launcher rows; NEXT: user playtest, more v0.1.1 fixes, then publish v0.1.1 per "v0.1.1 queue").
+## RESUME HERE (s107b, 2026-11-25; 4K battle regression fixed): branch feat/ultrawide-1124, NOTHING pushed. Read "Milestone 5, session 107" at the END. Done: battle start banner + its SURPRISE / FIRST STRIKE text centred 16:9 at ultrawide; panes past the 16:9 edge (RESULTS bars, FOUND!, MAIN CAST, HELP bars, Topic lines) continue into the side bars. Next: new ZIP for the user, then v0.1.2 release (title / Tokyo Map stay fixed pictures, user OK).
+## Previous RESUME (s106b, 2026-11-24): branch feat/ultrawide-1124, NOTHING pushed. Read "Milestone 5, session 105" at the END (s106 = resist). Done: SELECT banner, field corner HUD (+ CALL pop, 3rd member), button_layout, DS4Windows fix, resist marker / panel icon / RESIST popup + setting resist_marker. Next: user retest (ZIP 11-24 late), then v0.1.2 release. Tokyo Map white band: explained, not changed.
+## Previous RESUME (s104, 2026-11-24 ~15:30): branch feat/ultrawide-1124, last 5278bd9, NOTHING pushed / released. Read "Milestone 5, session 104" at the END (summary + open list). NEXT: SELECT banner fix (matrix-aware, user said build it), then user retest at 21:9, then v0.1.2 release per release-checklist memory (Drive test build for issue #3 first).
+## Previous RESUME (s104: issue #3 present-queue fallback committed, read s104 at the END): branch feat/ultrawide-1124 (from perf/lows-1121 after v0.1.1-beta). Read "Milestone 5, session 103" at the END first (ultrawide 21:9 behind NX_ASPECT / launcher "Aspect ratio", default 16:9 unchanged; 06:00 run re-verified field at 21:9 + default 1280x720; NEXT: user tests on a real 21:9 screen, then the s103 "Open" list, README + release notes on OK).
+## Previous RESUME: v0.1.1-beta PUBLISHED 2026-11-24 (public f637961 = main; release asset TMSRecomp-v0.1.1.zip, notes private/release_notes_v0.1.1.md; user verified difficulty + overworld costume; ticket-NSP setup fix waits for the Reddit user). Read "Milestone 5, session 102" at the END first. Next release: version above 0.1.1, same steps.
+## Previous RESUME: v0.1.0-beta PUBLISHED 2026-11-24 at github.com/godofknife/TMSRecomp (branch `public` = the pushed history, noreply identity; never push this history). Read "Milestone 5, session 102" at the END first (2026-11-24: Overworld costume setting field_costume (verified slot 20: field / battle / back), Hard difficulty formula from the code, all_difficulties unlock + launcher rows; NEXT: user playtest, more v0.1.1 fixes, then publish v0.1.1 per "v0.1.1 queue").
 ## Previous RESUME: v0.1.0-beta PUBLISHED 2026-11-24 at github.com/godofknife/TMSRecomp (branch `public` = the one pushed commit, noreply 7660956+godofknife@users.noreply.github.com; push future releases from a commit on top of `public`, never this history). Read "Milestone 5, session 101" at the END first (2026-11-23 evening: user playtest OK except a RAM leak, 51 GB private after ~40 battles at 4K; fixed: shared descriptor-set / pipeline layouts, e858815; NEXT: user re-check of RAM, then GitHub upload).
 ## Previous RESUME: read "Milestone 5, session 100" at the END first (2026-11-23 overnight: fresh-ZIP NSP setup OK, reveal-map retry fix, crash batch 4x676 s 0 crashes; optimisation measured after the encode: GPU-bound at the Shibuya spot, no safe change; ALL DONE; NEXT: user playtest + GitHub upload). Before that: session 99 (2026-11-23, user asleep: DLSS model setting, VRR mode, TMS icon + launcher picture from the player's own game, reveal-map setting, no-mod check; ALL DONE + regression OK; NEXT: user playtest, then GitHub upload (private/RELEASE_GITHUB.md)).
 ## Previous RESUME: read "Milestone 5, session 98" at the END first (2026-11-22, launcher Guide page + one-click installs, P5R key dropped (custom_bgm_key); NEXT: user playtest of the release ZIP, then fresh-history GitHub upload (private/RELEASE_GITHUB.md)).
@@ -5759,3 +5764,302 @@ IFileOpenDialog (Explorer style), README "Use your emulator save" (untested with
   title key when there is no ticket. Verified with a ticketed NSP (Catherine update 0100BF00112C0800) and prod.keys alone:
   without --tik no exefs, with it exefs extracted (its romfs fails: update NCA = patch romfs, needs the base; expected).
   setup.py changed: players' launchers rebuild game.dll after the update.
+
+## Milestone 5, session 103 (2026-11-24 04:00-, user asleep; branch feat/ultrawide-1124): ULTRAWIDE (21:9)
+
+USER 11-24 (Reddit request): "Ultrawide support (21:9) and then Linux support. Complete work and no issue." Then: "do
+ultrawide first ... As long as the ultrawide does not break anything we build so far". Linux: answered (no Linux / WSL /
+Wine on this PC; Proton path first, needs the Deck user's nx.log). Scheduled run tms-recomp-ultrawide-0601 continues.
+
+### Design (setting aspect = env NX_ASPECT: unset / 16:9 = today exactly; 21:9, 32:9, auto, or a number)
+- vk.cpp wide_factor(): F = aspect / (16/9), clamped 1..2, width rounded to 8 game px (21:9: 1280 -> 1680, F 1.3125).
+- vk.cpp make_image: every 16:9 render target (flags 8, 2D, width*9 == height*16, width >= 64: scene, depth, post chain,
+  window textures, minimap RT) gets w = width * F * scale; Image::sx = F. Shadow maps etc. keep their size.
+- vk_replay.cpp draw: viewport / scissor x scaled by scale * sx (stretch over the width), so full-screen post passes, the
+  scene and texelFetch passes line up (support-buffer render_scale stays uniform: game-space x simply runs to 1680).
+  Copies (OP_COPY_TEX_TEX blit coords, buffer->image full-region check) x by sx.
+- Hor+: names.txt cam_proj_update 0x57b02c (engine projection object: type +0xc0 0 = perspective, fov y +0xa0, aspect
+  +0xa4, near / far +0xa8 / +0xac, dirty +0xc4); hle_sys.cpp hook sets aspect 16:9 -> 16:9 * F before the matrix is built
+  (kept in the object: frustum culling widens too). Found via the 736-byte scene camera uniform (floats 56..71 P, 72..87
+  P^-1, 88..103 VP; debug NX_CAM_LOG=n logs blocks, NX_CAM_FIND=frame scans guest memory for P00/P11 copies) + `watch`.
+- UI: the game draws scene AND UI into one target and copies it into a window texture (nvnWindowInitialize textures,
+  g_window_tex): that copy's source = g_ui_target. UI phase of a frame = after the FXAA draw (fxaa_frag), or the whole
+  frame when no FXAA draw came for 3 frames (menus / title). Centred (viewport x + width * (F - 1) / 2, no stretch): draws
+  into g_ui_target in the UI phase with 36-byte vertices (layout panes: triangle lists or 4-vertex strips) or 28-byte
+  (text glyphs), except a 4-vertex pane spanning >= 1270 x 710 (fades: stretched). Full-screen passes after FXAA (24-byte
+  strips -1..1) and the minimap's own 16:9 target stretch. Debug NX_UW_LOG=n NX_UW_FRAME=f logs UI-phase draws (vertices).
+- Present (vk.cpp fit_blit, both present paths; FSR 1 output too): picture keeps its shape inside the window (black
+  bars). This also fixes today's stretched 16:9 picture on 21:9 / 16:10 screens (16:9 screens: unchanged, < 1% = full).
+- Verified (uw18, slot 20 5F, 21:9 at 720p): wide field, Itsuki correct proportions, HUD centred 16:9, minimap intact
+  (private/uw_field_21x9.png). Commit 3e91658.
+- More rules after uw18 (commit after 3e91658): bind_resources sets g_draw_picture when a fragment texture is a 16:9
+  picture >= 640x360 that is not a widened target; a screen-size 4-vertex pane (36 / 28 / 20-byte vertices) is centred
+  (16:9) when it samples such a picture (title illustration + logo, camp background movie: vs 009cf000, 20-byte quad),
+  stretched otherwise (fades, flashes, screen copies). 20-byte vertices otherwise stretch. Text glyphs (28 bytes) centre.
+  UI mask target bc936150 (R8, fmt 1) is widened and its draws stretch (minimap disc correct).
+- Hor+ log (NX_ASPECT + "uw: camera" lines, first 40): camera 788951e0 fov 1.047 is re-set to 16:9 by the game every
+  frame (hook re-widens it each time; fine). NX_UW_NOCAM=1 (debug) disables the hook.
+- Verified at 21:9 (720p, window): field (uw18, uwc4), battle incl. cut-ins (uwb1), camp menu (uwc4_2: background
+  pillarboxed, grey sides), Settings page (uwc1_2), title (uwt6: pillarboxed, white sides from the stretched glow pane);
+  FSR 3 Quality (uwf3) and DLSS Quality (uwf4) at 1080p = 3360x1440: correct, HUD centred (lo twins widen through
+  make_image). Default (no aspect): field identical to before (uwd1), no "vk: aspect" line.
+- Setting: launcher Display & FPS page row "Aspect ratio" (16:9 / Auto / 21:9 / 32:9, key aspect), F1 row (restart
+  note), settings.ini comment. NOT added to the native PC pages yet (restart-only setting; F1 + launcher enough?).
+
+- Later checks (05:00): battle start transition + battle dialogue + enemy info at 21:9 (uwb2 contact sheet): render,
+  HUD centred; the start cut-in banner (party faces on triangles) fills the full width, art maybe slightly wide (review vs
+  16:9). Loading screen (uwp1): white panel 16:9 centred, dark grey sides. Dungeon "Rooftop Stairs" correct. 32:9
+  (uws1): 2560 x 720 game px, Hor+, HUD centred. Window mode now opens at 1280*F x 720 (ui.cpp; not seen: rig windows
+  start minimized).
+
+### Open (for the next run)
+- Not tested yet at 21:9: a story event / cutscene in the field, Topic / dialogue boxes in the field, victory + results
+  screen, Bloom Palace (Unity screens), shop / Tokyo map, a story movie (MovieHD + the game's), fade to black between
+  areas (side bars must fade too), Auto, borderless on a real 21:9 screen (user), SMAA path, MSAA.
+- Battle start cut-in banner: compare with a 16:9 shot (stretched art?).
+- Side areas in menu frames show stretched full panes (grey camp, white title): maybe black instead.
+- vk.cpp log_lo prints 1280-based sizes (cosmetic).
+- README + release notes when the user OKs (release-checklist memory).
+
+- 06:00 run (scheduled, short): field slot 20 at NX_ASPECT=21:9 re-checked (shot uwn1: 1680x720, Hor+, HUD centred, minimap ok);
+  default run (uwn2) = 1280x720 shot, no "vk: aspect" line. No code changes. Open list above unchanged (cutscenes, victory,
+  shop, movies, fade-to-black, Auto, SMAA/MSAA still untested at 21:9).
+
+## Milestone 5, session 104 (2026-11-24): GitHub issue #3, frozen picture with sound on a GeForce 920MX
+- Report: i3-7100U + GeForce 920MX laptop, 720p. Title fine, gameplay picture frozen, audio + input keep running.
+  Logs (nx_20261124_071715 / 072252): game frames 15-20/s (GPU-bound, ~28 ms GPU wait per frame) but "present:" only
+  2-8 per 10 s, gaps 7-79 s. Present thread timing ("tick to present" 1.2 ms) puts the stall before acquire or in the
+  blit fence wait: the second present queue (same family) starved by the always-full game queue on that GPU / driver.
+- Fix (vk.cpp present_thread): when one present's blit fence waits over 1 s, switch to presenting on the game's own
+  queue (g_vk_lock around submit + present + idle; log "vk: the present queue waited ... presenting on the game's
+  queue from now on"). Faster GPUs never hit it. NX_PRESENT_GAME_QUEUE=1 forces it (tests). New log line
+  "present: slow frame: staging copy / vsync wait / blit ms" (first 20 presents over 500 ms) tells where a stall sits.
+- Verified (forced mode, b20 Daitama field): 4K uncapped 134-143 fps shown vs 137-150 default, no hang; 720p fps 30
+  steady 33.3 ms cadence, 0 off-cadence; shot pqG30 correct. NOT verified: the automatic switch itself (starvation does
+  not happen on this RTX). Rig agent_scripts/pq3.sh / pq3b.sh.
+- Reporter workaround before a release: NX_SYNC_PRESENT=1 (old inline path) via a .bat. Ask them for a new nx.log with
+  the next build ("slow frame" lines show if the guess is right).
+- Separate, not looked at: one 8 s hitch in "texture write checks" in the same log.
+- Launcher bug (user, test ZIP): k_set had "aspect" before field_costume while the enum has ASPECT last, so Display &
+  FPS showed "Unlock all difficulties" in place of Aspect ratio (and Game page rows shifted). Fixed: entry moved after
+  all_difficulties (table order = enum order). Values were saved under their own keys, so no settings damage.
+  Verified with launcherpage.ps1 (sidebar y 300 = Display, 342 = Game at this DPI): both pages right.
+- User 21:9 test (OBS videos + shots, 4K screen with 21:9 letterbox): field, battle, First Strike cut-in, victory,
+  RESULTS, level-up cards, camp all correct. Two faults, both fixed:
+  1. NOW LOADING screen white only in the 16:9 middle (dark grey sides) and the fade from it into the field covered only
+     the middle. Cause: that pane is a 28-byte 4-vertex strip in clip space (-1..1, vs 00979000), so the screen-size
+     test (>= 1270 x 710 game px) missed it and the stride-28 (text) rule centred it. Fix (vk_replay.cpp): a quad of
+     exactly -1..1 counts as screen size too (stretches unless it samples a 16:9 picture). First try (>= +-0.99 only)
+     also caught the minimap pieces (local coords like -17..17, vs 009e1000) and shifted the minimap: bounds now
+     -1.01..1.01. Verified uwfade.sh uwf4: loading white full width, field minimap correct; log: 74/74 fade quads stretched.
+  2. Camp "(-) Title / Quit Game" pill (overlay.cpp layered window) sat in the black bar under a letterboxed picture.
+     Now placed at the bottom-left of the picture's 16:9 middle (same fit as vk fit_blit). Default 16:9 = same spot as
+     before. NOT seen on screen (rig windows are minimized; the overlay is not in frame dumps).
+- Still open from the user test: grey sides beside the camp menu (known), battle start banner looked fine in the video.
+- User 21:9 test 2 (7 OBS videos 13-15..13-21; title, load, Savage encounter, battle, victory, results, level-up cards,
+  Topic menu, Fortuna Office, Bloom Palace, Carnage / Radiant Unity, Unity cutscene): correct except
+  1. Dim panes only in the 16:9 middle (Topic menu, Bloom Palace Unity screens, dialogue dim): 6-vertex triangle pair
+     (stride 36, -10..1290 x -10..730, vs 009e4000); the screen-size test only looked at 4-vertex strips. Fixed
+     (vk_replay.cpp: 4-strip or 6-triangle; stride 20 stays strip-only as before). Verified uwtopic.sh uwt2: Topic dim full
+     width; field (uwf5) unchanged.
+  2. Tokyo Map from the Bloom Palace (L fast-travel menu): user nx.log: "field: free roam in map kind 0 area 3 sub 3",
+     "field: Tokyo Map opened", then "[lua error] raised: ?:0: attempt to index field '?' (a nil value)" and the map took
+     no input. Not ultrawide: the Bloom Palace is not on the Tokyo Map. Fixed (hle_sys.cpp): f003_03 is not a town for
+     the fast-travel menu / map request. NOT tested in game (no Bloom Palace save here); user to check L there does nothing.
+  Not fixed / to watch: level-up card rainbow wipe looked 16:9 with dark sides (one frame, likely a 16:9 picture
+  texture); "SAVAGE ENEMY ENCOUNTER!" sits at the left edge of the 16:9 area (same place as 16:9).
+- User 21:9 test 3 (shots + 6 videos 13-32..13-33, Bloom Palace): Tiki's fade-in with Chrom, Carnage weapon reveal
+  (Radiant Lance), Carnage / Radiant Unity cutscenes show dark character silhouettes, ghost copies, and silhouettes
+  filled with OLD frames' content (a Shibuya police car, Caeda's colours in a Chrom scene). Only at 21:9 (user).
+  Also the dialogue SELECT banner: its checkered left panel stops at the 16:9 edge (scene visible left of it).
+  REPRODUCED here: testsave/u1124 (copy of the user's save 3, Bloom Palace), rig agent_scripts/bpunity.sh <tag>
+  (Tiki -> Perform Radiant Unity -> Itsuki HP Fitness; shots every 0.4 s; RT=n target dump, UWAT=n UW draw log;
+  menu timing is flaky: about half the runs end in the Carnage list instead). bp2 / bpu9 sheets: ghosts at 21:9.
+  Ruled out so far:
+  - unwidened screen-size targets: new debug log "uw: draw into unwidened" printed nothing (all >= 320x180 widened).
+  - depth-tested 3D draws centred as UI in FXAA-less frames: 0 such draws (dt / ui fields in the UW log).
+  - type-5 cameras (0x57b02c default branch, ready-made matrix): the ones seen are a 1280x720 pixel ortho and two
+    non-projection matrices; no 16:9 perspective to widen (debug log "uw: camera seen ... m: ..." kept).
+  Leading theory, not proven: shaders that address screen copies by gl_FragCoord (Ryujinx divides FragCoord.xy by
+  support-buffer render_scale[0] only; widened targets would need x / (scale * sx)) -> translator patch
+  (InstEmitAttribute.cs PositionX) + support buffer field, retranslates every shader. Or texelFetch on a history
+  texture. Next: dump targets ("rt") on a ghost frame at 21:9 and 16:9 (same shot index) and find the pass that
+  samples the stale texture (NX_LOG_DRAWS on that frame).
+- FIXED (s104, Unity / Mirage ghosting at 21:9): cause = shaders that address screen copies by gl_FragCoord. Ryujinx
+  divides FragCoord.xy by support-buffer render_scale[0] only, so on a widened target x ran 0..1680 where the game's
+  shader expects 0..1280 -> it read the wrong part (or stale, never-written parts) of its screen copies.
+  Proof: NX_UW_FCX experiment (divide both x and y by sx) already made the characters render (bpu12 vs bpu13).
+  Fix: translator patch tools/shaderc/patches/ultrawide-fragcoord-x.patch (InstEmitAttribute.cs: PositionX also divided
+  by SupportBuffer ViewportSize.z) + vk_replay.cpp support buffer: viewport_size[2] = rt_sx() per draw (1 at 16:9 and
+  for compute; key gains the factor at index 4, texture scales from index 5). Rebuilt private/tms/shaderc and
+  shaderc_sc (README build step 4/4b): NxShader.dll time changed -> every player's shader cache is rebuilt once
+  (first-run hitches, release notes must say so).
+  Verified (bpunity.sh route now reliable: isfield.py pixel check retries the talk press): Radiant Unity at 21:9
+  (bpu16) matches 16:9 (bpu18) frame for frame, characters in colour, no dark silhouettes, wider view; Daitama field
+  21:9 (uwf6) unchanged. Not seen: Tiki's field fade-in and the Carnage weapon reveal (same shader path, user to check),
+  battle effects at 21:9.
+- Still open: dialogue SELECT banner's checkered panel ends at the 16:9 edge (edge-anchored UI keeps 16:9 placement).
+- SELECT banner (dialogue choice, left-anchored ring + checkered panel), s104: reproduced with agent_scripts/selroute.sh
+  (testsave/u1124a = the user's autosave 11-24 13:19 as slot 3; new debug NX_CONTROL "travel 1NN" warps to f003_NN,
+  103 = Bloom Palace, where the Tiki / Caeda / Chrom event asks "How are you and Chrom getting along?").
+  The banner's draws (vs 009e4000, mode 4, counts 30 / 90 / 60 / 72) carry LOCAL coordinates (e.g. 438..838 x
+  1278..1538) moved by a matrix in a uniform buffer, so the screen-space "touches the left edge" test cannot see them.
+  Needed for a fix: read that matrix (vs 009e4000's cbuf, dump with NX_LOG_UBO_FULL) to get each draw's clip x range,
+  then for centred draws reaching the 16:9 left edge also draw a copy left-aligned and scissored to the left bar (the
+  checkered panel continues; ring pieces that do not reach the edge are unaffected). Not started.
+
+### Session 104 summary (2026-11-24, with user)
+- GitHub issues (godofknife/TMSRecomp): #1 and #4 = ultrawide stretch (fixed on this branch, unreleased); #3 = frozen
+  picture with sound on GeForce 920MX (present queue starved; fix e98d8ca: blit wait > 1 s -> present on the game queue;
+  NOT verified on that GPU; workaround for the reporter on 0.1.1: NX_SYNC_PRESENT=1 via a .bat).
+- Plan agreed with user: upload the test ZIP to Google Drive, link it in issue #3 (comment text drafted in chat), wait
+  for the reporter, then publish v0.1.2. Not done yet (user does the upload).
+- Commits this session: e98d8ca present fallback; 7e51019 launcher Aspect row order bug (Display page showed
+  "Unlock all difficulties"); 5deac8b loading screen + fade full width, camp pill inside picture; 8087e18 dim panes
+  (6-vertex) stretch + no Tokyo Map / fast travel in Bloom Palace (map Lua error softlock, user nx.log); dd0add6 debug
+  logs; 26608e1 FragCoord.x / sx translator patch (Unity / Mirage ghosting fixed; shader cache rebuilds once for
+  everyone); 5278bd9 debug warp "travel 1NN" + SELECT notes.
+- User test inputs: OBS videos D:/OBS VIDEO/OBS/2026-11-24 10-23..13-33 (frames in scratchpad vid/vid2), user install
+  E:\GAMES\Tokyo Mirage Session PC Port\game (nx.log there), save copies testsave/u1124 (slot 3 Bloom Palace) and
+  u1124a (autosave 13:19 as slot 3).
+- Rigs added: agent_scripts/pq3.sh pq3b.sh (present queue), uwfade.sh uwfield.sh uwtopic.sh uwload.sh, bp.sh bp2.sh,
+  bpunity.sh (Radiant Unity cutscene, reliable with isfield.py), bpqa.sh, selroute.sh (SELECT choice).
+- Open list (ultrawide): SELECT banner (matrix-aware edge copy, see above); user to check Tiki field fade, Carnage weapon
+  reveal, battle effects at 21:9; level-up rainbow wipe dark sides (one frame); grey sides beside camp/title menus;
+  Bloom Palace L menu now does nothing (user to confirm); real 21:9 / 3440x1440 monitor test by issue #1/#4 reporters
+  (tell them Aspect ratio = Auto for 3440x1440).
+- Release v0.1.2 needs: version bump, README (ultrawide section, Aspect ratio setting, 3440x1440 = Auto), release notes
+  incl. one-time shader recompile stutter, About description check (release-checklist memory). Never push dev history.
+
+## Milestone 5, session 105 (2026-11-24): ultrawide SELECT banner, field day chain
+- SELECT banner FIXED (vk_replay.cpp ui_grid_extend, called from draw() for centred UI triangle lists). The checkered
+  panel is ONE screen-space draw (vs 009e4000, identity model, ortho 2/1280; NOT the ring's matrix as s104 guessed):
+  a grid of 132 x 120 tiles scrolling diagonally, starting at gx in (-132, 0], rows cropped on the right (66 x 60
+  pieces at half steps). Fix: each row's first-column tiles drawn again at gx - r*132 (r = 0..reps) into the left bar
+  only: vertices copied from guest memory to a 1 MiB host-visible ring (own vkAllocateMemory, mapped once), shifted
+  right by T = bar width so clip space keeps them, viewport moved left by T, scissor = [0, ox). Needs >= 8 tiles.
+  Dead ends: (1) viewport shift by k * period + strip scissors: lower rows have only the first column (ring covers the
+  rest) -> holes; (2) period = spacing test: tiles are cropped at the grid's end, so test "full tiles on grid, cropped
+  ones smaller" instead.
+  Verified: selroute.sh sel17 / sel19 (21:9): checker seamless to the screen edge, full height; 16:9 (sel18) unchanged
+  (ox = 0 skips); uwfield uwf7 + uwtopic uwt3 unchanged.
+- User report (screenshot, Shibuya field): top-left day chain (ring art + day number + partner portrait) ends at the
+  16:9 edge at 21:9 (old shot uw18 shows the same). Cause: the chain is ONE ring picture in 2 quads (-72..144 x
+  -5..103, vs 009e4000, identity model) meant to be cut by the screen edge; with the HUD centred the cut sits inside
+  the picture. Same for the top-right SCENE banner (920..1290 x 14..78). Grid repeat made circles (sb22) -> excluded
+  (nq >= 8). Proper fix = anchor field corner HUD clusters to the real screen corners (chain, day "N" glyph via
+  stride-28 text with its own matrix, portrait, sparkle quads; SCENE banner + maybe party panel on the right).
+  NOT done: waiting for the user's choice. Rig: agent_scripts/shibuya.sh <tag> 60 NX_ASPECT=21:9, then a / pos until
+  "[pos] player". Debug: NX_UW_ALLV=1 prints up to 12 vertices + model matrix in the NX_UW_LOG lines.
+- Debug note: build.cmd needs cwd = repo root (from bash: cmd //c "cd /d C:\Users\user\Projects\TMSRecomp && .\build.cmd").
+- Field corner HUD ANCHORED (user: "Yes, anchor corners"). vk_replay.cpp field_hud_anchor -> draw() `corner` (0 left
+  edge, 1 centred, 2 right edge; viewport / scissor offset = bar width * corner). Mode on while the day chain (12 vertices,
+  216 x 108 from x in (-108, 0), y0 < 20) or the SCENE banner (12 vertices, x0 >= 900, x1 > 1280, y1 <= 95) was drawn
+  in the last 3 frames, and off within 3 frames of a screen-size pane (Topic dim / fades; the Topic menu keeps the SCENE
+  banner drawn and its partner portrait sat in the right box). Screen boxes: left x1 <= 150 && y1 <= 110 (chain,
+  sparkles, day circle + digit sprite, portrait); right x0 >= 900 && y1 <= 380 (SCENE banner, line, Enemy Radar block,
+  area-name text = stride-28 indexed glyphs with a clip-space matrix, party panel to y 368). Box math: 36-byte panes =
+  model rows 0/1 at ubo index 1 (+ ortho 2/1280 at float 16); 28-byte text = rows in clip space (float 0 = 2/1280).
+  Verified 21:9: Shibuya sb31 (both corners at the edges, layout = 16:9 corners side by side, corners29.png), Daitama
+  uwf11 (banner + radar + party panel at the right edge, same spacing as 16:9: rc10.png), Topic uwt5 (unchanged, banner
+  behind the dim centred), SELECT sel21, battle uwb10 (HUD centred as before), camp uwc10. 16:9: corner math is
+  bar * corner = 0. Not seen: HUD slide-in / out animations, Tokyo Map, field events with the HUD up, 32:9.
+- 32:9 checked (sb32 / sel32): corner HUD at the screen corners, SELECT checker fills the 640 px bar. Every aspect uses
+  the same code (bar width = picture width * (factor - 1) / 2); 3440x1440 = Auto (43:18, close to 21:9).
+
+### s105 user requests (Reddit / Discord, 2026-11-24)
+1. Button remapping (Reddit): new setting button_layout (switch default | xbox): ui.cpp poll_input maps SOUTH->A, EAST->B,
+   WEST->X, NORTH->Y when xbox; pad_icons.cpp face() draws the glyph of the physical button (pos(k) = k ^ 1 for A/B, X/Y)
+   so prompts follow. Launcher Game page CONTROLS row "Button layout" (restart), settings.ini comment. Keyboard keys
+   unchanged. Verified: NX_PAD_ICONS_TEST on the common button atlas 34c763427410e392: xbox layout draws A as the green
+   Xbox "A", B red "B", X blue "X", Y yellow "Y" (PS: A = cross). NOT verified with a real pad (replay runs ignore pads).
+   Reddit also asked about G-Sync: yes, launcher VSync = "VRR · G-SYNC / FreeSync" (present_mode vrr, s99).
+2. DS4Windows (Discord: pad drops for a second, input stays held): DS4Windows reads the DualSense and shows a virtual
+   Xbox pad; SDL also opened the real DualSense over HIDAPI and the two fought. Fix (ui.cpp ds4windows_running, process
+   snapshot once): with DS4Windows.exe running at start, SDL_HINT_JOYSTICK_HIDAPI_PS4 / PS5 = 0 and the pad pick prefers
+   an Xbox-type pad; icons stay PlayStation. Log "input: DS4Windows is running ...". Verified only the detection (a
+   stand-in process named DS4Windows.exe). The touchpad battle-speed button does not exist on the virtual pad (F3 does).
+   Commit 1bc6ee3.
+3. Resist marker + RESIST popup (user): DONE (s106), verified by 4K shots in the tutorial battle.
+   - Affinity byte unit+0x85a+element (12 bytes, a second copy at +0x866; element = skill record +0x12; skill record =
+     *(*0x9ef4c4) + 0xc + id * 0x84, highlighted id = u16 unit+0xac8): 0/1/2 Weak, 3 normal, 4/5/6 Resist, 7 Null,
+     8 Repel, 9 Drain. Mapped by poking 0..9 into the elements (debug NX_AFF_TEST=v0,v1,.. with NX_DEBUG_BATTLE: the
+     first weak-marker call per unit logs the row and writes both copies) and reading the target panel badges.
+   - Marker (hle_sys resist_mark, in the btl_weak_mark_draw hook): when the game drew nothing (pulse counter 0) and the
+     value is 4-6, the draw runs again with the byte read as 2 and sprite records #527/#528 (the "!", bank 45 sheet 0;
+     record = 0x70: +8 offset, +0x10 size, +0x18 uv, +0x30 four RGBA float corner colours) pointing at our 84 px shield
+     (pad_icons k_battle_res {240,152}, painted into empty atlas space, user's resist.png) with white colours; resist
+     icons off: the Rs letters (#800 uv). The HP-gauge part of the function is skipped in that run (unit+0xab4 = 0).
+     The game's own checks (unknown affinity -> none, guard buffs, skills that ignore affinity) still decide.
+   - Popup: new hook btl_dmg_popup_draw 0x2ee3c0 (names.txt, re-lift 20660 hooks). Popup flags u32 +0x58: 0x1 normal,
+     0x2 WEAK (#490), 0x4 RESISTED (game draws nothing), 0x8 BLOCK (null, #492), 0x100 CRITICAL/MISS, +0x50 number.
+     (flags & 0xe) == 4 -> drawn as WEAK with #490 uv on our RESIST art (data/resist_icons/resist_popup.png, made by
+     tools/art/resist_popup.py, painted at {480,300} 204x92 whatever resist_icons is). Damage number stays.
+   - Verified: shots ag1 (shield), ag2 (Rs, icons off), ah1 (game "!" unchanged), hp2 / hp3 (RESIST + WEAK at once,
+     icons on / off). Rigs agent_scripts/aff.sh (KEYS="right right a" = Skills list), hitpop.sh (Auto-Battle shots).
+   - Not done: Repel / Drain have no popup of their own (game shows nothing special for them either).
+   - Rigs: base60 replay reaches the tutorial battle ONLY with NX_WALK_SPEED=2 NX_RES=4k (btlui env); i2 field walking
+     (btlspr.sh) did not trigger a battle in 60 steps.
+
+### s106b: user test of the 11-24 ZIP (resist works; ultrawide leftovers)
+- Target panel resist icon (user: the disc left of the name stayed blank for a resist): disc = 0x2ffef8 (new hook
+  btl_target_aff_icon, re-lift 20661 hooks), called by 0x3014d8 with kind = the affinity value as the panel decided
+  (0xffff unknown). Tables 0x787980 (disc: 522 x3 green, 523 x4 yellow, 524 x3 red) / 0x7879b0 (symbol: 527 "!" x3,
+  529 "?" x4, 533 Nu, 531 Rp, 535 Dr); kinds 3-6 skip the tables (plain star disc 0x1ad27603). Resist 4-6 -> drawn as
+  kind 0 with ResistSprites (#527/#528 = shield). Verified tp1 (Blob, elec poked 5: shield disc in the panel).
+- Setting resist_marker (default 1; launcher Game > BATTLE, L3+R3, PC 4/4 "Resist markers"): marker, panel icon, popup.
+- Field HUD corners (21:9 video, Bloom Palace): the CALL portrait pops to 72..153 x 10..91 (> the 150 limit) and the
+  ring spin-in is an 18-vertex draw for 7 frames (chain signature = 12 vertices, 3-frame window) -> both drawn centred
+  for a few frames. Left box now x1 <= 200, y1 <= 160; the 18-vertex spin-in also turns corner mode on. Dungeon party
+  panel: third member 1083..1244 x 366..488 -> right box to y1 <= 500. Verified cr23 (60 frames, all in the corner),
+  ko22 (u21k 7F, three members at the right edge). Debug NX_UW_ANCHOR_LOG=1 logs UI boxes near the top corners.
+- Tokyo Map white left side (user): NOT a bug of ours to fix cheaply. The map is a static 2048 x 1024 picture drawn at
+  -384..1664 (identity model, one texture, layout pane -> stretched by the width factor). Its art has a white fade on the
+  left (behind the menu); its content is only about -120..1315, narrower than 21:9 (1680), so unstretched it leaves the
+  field visible at both edges (tried: lm25 / lm26). Stretched (as shipped) the white band grows with it (16:9: white to
+  x 290; 21:9: to 366 of 1680). Rigs: agent_scripts/lmap.sh (now presses A until the field).
+
+### Milestone 5, session 107 (2026-11-25): start banner + RESULTS at ultrawide (user 21:9 / 32:9 shots)
+- User: battle start cut-in (party faces on triangles, FIRST STRIKE) looked stretched; RESULTS bars cut at the 16:9 edge.
+- Banner: an effect, not a layout pane: a picture cut into triangles, 12-byte (op 23, n 3) + 8-byte vertices, then its
+  shatter; drawn after FXAA. Log (NX_UW_LOG_FX=1, whole tutorial run, ur3/ur4): 12 / 8-byte UI-phase draws only in the
+  banner and a few frames near the first field load. Fix (vk_replay.cpp): strides 12 / 8 count as layout (centred 16:9).
+  Its SURPRISE ATTACK / FIRST STRIKE text: 16-byte instanced sprites (op 22); the same kind of draw is field / battle
+  3D effects all the time, so only within 4 s of btl_open_chance (rt::g_btl_open_ms, hle_sys.cpp). Sides behind the
+  banner: grey / field (the game's own background there). Verified ua4 (21:9 surprise), ua5 (32:9): banner + text centred.
+- RESULTS: Exp / Money / Items bars and FOUND! stripe run to x 1460 / 1321 (16:9 clips them at 1280); MAIN CAST band from
+  -92; HELP bar -10..1290; RESULTS rule -60..1340. New ui_edge_extend (vk_replay.cpp): a centred 36-byte pane (<= 12
+  vertices, axis-aligned model, OP_DRAW) past one edge is drawn again into that side bar (vertices shifted by the bar
+  width, viewport back): its real end shows, no seam. Across both edges (HELP bar, rules): only the inner vertices shift,
+  so the pane reaches the screen edge (its pill stays put). Not for draws sampling a rendered texture (first try drew the
+  minimap's map pieces left of its disc: uwf9). Ring buffer shared with the SELECT grid extend (ui_ring). Gotcha: the
+  draw's own scissor is the 16:9 area; the bar draw sets its own x range.
+- Verified 21:9 ub4 / ub5 (RESULTS: bars to their real ends, Exp ~flush; HELP bar full width), 32:9 ub33, field uwf10
+  (minimap clean), camp uwc11 (HELP bar full width over the grey sides), Topic uwt7 (dotted rules + HELP full width).
+- Not looked at: other screens with edge panes (shops, Fortuna office, level-up cards); the same rule applies there.
+- Debug added: NX_UW_LOG_FX (draw log: only 12/8/16-byte UI-phase draws), NX_UW_ANCHOR_LOG=2 (all UI boxes),
+  NX_OPEN_FORCE=<roll> (2 = surprise attack), NX_UW_ARM_BATTLE (draw log + 120 shots from the battle opening).
+  Rigs: agent_scripts/uwbtl.sh (tutorial battle, banner + RESULTS shots; ASP=32:9), uwres.sh, uwboss.sh, uwbanner.sh.
+- s107b (user retest, 4K screen 21:9): whole battle pillarboxed 16:9 with grey sides. Cause: the 12/8-byte rule above. At
+  4K (no FXAA pass) every draw of the frame is "UI phase" and the battle scene is 12-byte geometry too, so the scene was
+  centred. Fix: the 12/8-byte rule and the 16-byte text rule only with depth test off (banner draws: dt 0, scene: dt 1).
+  Text window 4 -> 6 s (4K rig shots stall the game; ua7 missed it). Verified 720p ua6, 4K ua7 / ua9 (spaced shots):
+  battle full width, banner + SURPRISE ATTACK centred, RESULTS extended. Rig: uwbtl.sh SPACED=1 (14 shots 0.3 s apart).
+
+### Milestone 5, session 108 (2026-11-25): keyboard + mouse (GitHub issue #5)
+- Issue #5 (gaprelrose-sketch): keys cannot be remapped, the mouse does nothing. Before: fixed keys in ui.cpp poll_input
+  (K/J/I/U, WASD, arrows...), no right stick from the keyboard, no mouse.
+- Now: settings.h k_key_targets (shared by tms and the launcher): 24 targets (Switch buttons, D-pad, both sticks'
+  directions), key_<name> = up to 3 names, comma separated ("none" = unbound; empty would drop the env var and bring the
+  default back). Names: SDL scancode names (SDL_GetScancodeFromName), Mouse1..5, WheelUp / WheelDown (80 ms pulse).
+  Defaults = the old fixed keys + Mouse1 = A, Mouse2 = B, Mouse3 = R3. Unknown names are logged once at start.
+- Mouse camera (mouse_camera, default 1): relative mouse mode while the window has focus and the F1 menu is closed
+  (replays never: NX_REPLAY); motion summed per 16 ms step -> right stick, 40 px per step = full tilt at
+  mouse_sensitivity 1.0; mouse_invert_y. The game's camera turns at stick speed (not 1:1). TUNING NOT CHECKED with a real
+  mouse (rigs cannot move it): the user's feel decides the 40 px.
+- Launcher Game page: section KEYBOARD & MOUSE (mouse camera toggle, sensitivity slider 0.2..3.0, invert) + a binding
+  table (3 slots per target; click a slot, press a key / mouse button / wheel; Esc cancels, Delete clears; Reset to
+  defaults). VK -> SDL key names in key_name(). Verified: launcherscroll.ps1 (new rig: --page, wheel, click, key):
+  capture state drawn, Z bound to a slot. Game: NX_KEY_A with a bad name logs "unknown key name", field loads (kb1).
+- Not tested: real keyboard / mouse play (needs a person), PR #6's Linux launcher shim (will conflict in launcher.cpp's
+  window proc when that PR is applied).

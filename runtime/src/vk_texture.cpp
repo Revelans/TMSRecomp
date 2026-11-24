@@ -607,7 +607,7 @@ bool upload_from_pool(VkCommandBuffer cb, nvn::Texture* t, Image* im) {
             im->resist = (int8_t)rt::resist_icons_on();
             im->resist_hash = hash;
             // drawn into level0 itself: the Stats screen atlas also gets button icons (below), over these
-            if (im->resist && rt::resist_icon_atlas(hash, t->width, t->height, level0.data())) {
+            if (rt::resist_icon_atlas(hash, t->width, t->height, level0.data(), im->resist)) {
                 memcpy(dsts[0], level0.data(), level0.size());
                 log("textures: resistance atlas %016llx (%08x) drawn with icons", (unsigned long long)hash, t->guest);
                 if (dumping) {
