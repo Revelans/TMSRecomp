@@ -110,6 +110,7 @@ int sharpen_setting();    // overlay.cpp: setting sharpen (0 off .. 100), the pr
 // pad_icons.cpp: button icons by controller (setting pad_icons auto|switch|playstation|xbox)
 extern std::atomic<int> g_pad_kind;  // ui.cpp sets it for the open pad: 0 Switch / other, 1 PlayStation, 2 Xbox
 int pad_icons_setting();             // 0 auto, 1 switch, 2 playstation, 3 xbox
+int pad_face_pos(int k);              // ui.cpp: the pad face button that presses Switch A/B/X/Y (k 0..3) as 0 east, 1 south, 2 north, 3 west
 bool button_layout_xbox();           // setting button_layout = xbox: bottom face button = A (confirm), left = X
 void set_pad_icons(int s);           // menu: saves the setting
 int pad_icon_style();                // icons to show now: 0 Switch, 1 PlayStation, 2 Xbox

@@ -184,8 +184,8 @@ struct Painter {
         release(w), release(k);
     }
     // the physical button a game button sits on, as a positional kind (FACE_A = east ... FACE_Y = west):
-    // button_layout = xbox swaps A/B and X/Y (ui.cpp)
-    static int pos(int k) { return k <= FACE_Y && button_layout_xbox() ? k ^ 1 : k; }
+    // button_layout and the pad_<button> remaps (ui.cpp)
+    static int pos(int k) { return k <= FACE_Y ? pad_face_pos(k) : k; }
     void face(const Cell& c, int style) {
         float cx = c.x + c.w / 2.0f, cy = c.y + c.h / 2.0f, r = c.w / 2.0f;
         disc(cx, cy, r);
@@ -310,11 +310,12 @@ struct Painter {
         if (style == 2) {  // Xbox letters in their colours
             static const wchar_t* const letter[] = {L"B", L"A", L"Y", L"X"};
             static const uint32_t col[] = {0xD8262B, 0x3E9B2F, 0xE0A800, 0x2B6CD6};
-            text(letter[c.k], RectF{(float)c.x, c.y + r * 0.04f, (float)(c.x + c.w), (float)(c.y + c.h)}, r * 1.25f, tint(col[c.k]));
+            const int k = c.k <= FACE_Y ? pad_face_pos(c.k) : c.k;
+            text(letter[k], RectF{(float)c.x, c.y + r * 0.04f, (float)(c.x + c.w), (float)(c.y + c.h)}, r * 1.25f, tint(col[k]));
             return;
         }
         float sw = r * 0.2f, g = r * 0.42f;  // PlayStation symbols, stroked
-        switch (c.k) {
+        switch (c.k <= FACE_Y ? pad_face_pos(c.k) : c.k) {
             case FACE_A:  // circle
                 draw::ellipse(cr, cx, cy, g, g);
                 stroke(sw, tint(0xE0464B));

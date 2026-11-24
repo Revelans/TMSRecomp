@@ -139,7 +139,15 @@ struct Setting {
     std::vector<Opt> opts;  // DROP; TOGGLE: {off, on}
     float lo = 0, hi = 0, step = 0;
 };
-enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, NSET };
+enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_L, PAD_R, PAD_ZL, PAD_ZR, PAD_PLUS, PAD_MINUS, PAD_L3, PAD_R3, NSET };
+// controller remap choices (ui.cpp pad_map): positions, so the names fit Switch, PlayStation and Xbox pads alike
+static const std::vector<Opt> k_pad_opts = {{"default", L"Default"}, {"south", L"Bottom (A / \u2715)"},
+    {"east", L"Right (B / \u25cb)"}, {"west", L"Left (X / \u25a1)"}, {"north", L"Top (Y / \u25b3)"}, {"lb", L"LB / L1"},
+    {"rb", L"RB / R1"}, {"lt", L"LT / L2"}, {"rt", L"RT / R2"}, {"start", L"Start / Options"}, {"back", L"Back / Share"},
+    {"ls", L"Left stick click"}, {"rs", L"Right stick click"}, {"paddle1", L"Paddle 1 (right)"}, {"paddle2", L"Paddle 2 (left)"},
+    {"paddle3", L"Paddle 3 (right)"}, {"paddle4", L"Paddle 4 (left)"}, {"none", L"Unbound"}};
+#define PAD_SET(k, n) {"pad_" k, "default", DROP, n, L"The controller button that presses this Switch button. Picking one that "\
+    L"another button has swaps the two. Restart the game after a change. Button prompts still follow Button layout.", k_pad_opts}
 static const Setting k_set[NSET] = {
     {"fps", "60", DROP, L"Frame rate",
      L"The game's logic runs at this rate. 60 is the most tested. Above 60 the game keeps its speed and only gets "
@@ -236,6 +244,8 @@ static const Setting k_set[NSET] = {
      {}, 0.2f, 3.0f, 0.1f},
     {"mouse_invert_y", "0", TOGGLE, L"Invert mouse up / down", L"Moving the mouse up turns the camera down.",
      {{"0", L"Off"}, {"1", L"On"}}},
+    PAD_SET("a", L"A"), PAD_SET("b", L"B"), PAD_SET("x", L"X"), PAD_SET("y", L"Y"), PAD_SET("l", L"L"), PAD_SET("r", L"R"),
+    PAD_SET("zl", L"ZL"), PAD_SET("zr", L"ZR"), PAD_SET("plus", L"+"), PAD_SET("minus", L"\u2212"), PAD_SET("l3", L"L3"), PAD_SET("r3", L"R3")
 };
 
 static std::string value_of(int i) { return get(k_set[i].key, k_set[i].def); }
@@ -1983,6 +1993,59 @@ static float draw_keybinds(float x, float y, float w) {
     return y + 80;
 }
 
+// Game page: controller buttons as a compact grid, two columns; < > steps through the pad buttons. The value shown is
+// what the button really is (Default resolves through Button layout); taking another row's button swaps the two rows.
+static std::string pad_effective(int i) {
+    std::string v = value_of(i);
+    if (v != "default") return v;
+    static const char* sw[] = {"east", "south", "north", "west", "lb", "rb", "lt", "rt", "start", "back", "ls", "rs"};
+    static const char* xb[] = {"south", "east", "west", "north", "lb", "rb", "lt", "rt", "start", "back", "ls", "rs"};
+    return (value_of(BTNLAYOUT) == "xbox" ? xb : sw)[i - PAD_A];
+}
+static void pad_step(int i, int d) {
+    const std::string old = pad_effective(i);
+    int k = 0;
+    for (size_t o = 1; o < k_pad_opts.size(); o++) if (old == k_pad_opts[o].v) k = (int)o;
+    const int n = (int)k_pad_opts.size() - 1;  // options 1..n (Default is only the unset state)
+    k = (k - 1 + d + n) % n + 1;
+    const std::string nv = k_pad_opts[k].v;
+    for (int j = PAD_A; j <= PAD_R3; j++)
+        if (j != i && nv != "none" && pad_effective(j) == nv) set(k_set[j].key, old);  // swap
+    set(k_set[i].key, nv);
+}
+static float draw_padbinds(float x, float y, float w) {
+    const float colw = (w - 24) / 2, lw = 60, bh = 36;
+    for (int i = PAD_A; i <= PAD_R3; i++) {
+        const int c = (i - PAD_A) % 2, r = (i - PAD_A) / 2;
+        const float cx = x + c * (colw + 24), cy = y + r * 44;
+        text(k_set[i].name, R(cx, cy, lw, bh), f_label, C(TEXT), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const std::string v = pad_effective(i);
+        std::wstring label = L"?";
+        for (auto& o : k_pad_opts) if (v == o.v) label = o.label;
+        const D2D1_RECT_F box = R(cx + lw, cy, colw - lw, bh);
+        rounded(box, 4, C(PANEL));
+        outline(box, 4, C(LINE));
+        text(label, box, f_label, C(v == "none" ? DIM : value_of(i) == "default" ? MUTED : TEXT), DWRITE_TEXT_ALIGNMENT_CENTER,
+             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        for (int d : {-1, 1}) {
+            const int id = ID_KEY + 900 + (i - PAD_A) * 2 + (d > 0);
+            const D2D1_RECT_F a = d < 0 ? R(box.left, box.top, 40, bh) : R(box.right - 40, box.top, 40, bh);
+            if (hov(id)) rounded(a, 4, C(HOVER));
+            text(d < 0 ? L"\u2039" : L"\u203a", a, f_label, C(hov(id) ? ACCENT : MUTED), DWRITE_TEXT_ALIGNMENT_CENTER,
+                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            hit(a, id, [i, d](float) { pad_step(i, d); });
+        }
+    }
+    y += 6 * 44 + 6;
+    button_at(x, y, L"Reset controller buttons", ID_X + 31, false, [] {
+        for (int i = PAD_A; i <= PAD_R3; i++) set(k_set[i].key, "default");
+    });
+    text(L"\u2039 \u203a picks the pad button for each Switch button; taking one another button has swaps the two. Grey = "
+         L"Button layout's choice. Restart the game after a change. On-screen prompts still follow Button layout.",
+         R(x, y + 52, w, 40), f_small, C(DIM));
+    return y + 100;
+}
+
 static void draw_page_body() {
     float x = SIDE + 48, w = W - SIDE - 96;
     switch (g_page) {
@@ -2032,6 +2095,9 @@ static void draw_page_body() {
         y += 46;
         y += row(PADICONS, x, y, w);
         y += row(BTNLAYOUT, x, y, w);
+        section(L"CONTROLLER BUTTONS", x, y + 8, w);
+        y += 46;
+        y = draw_padbinds(x, y, w);
         section(L"KEYBOARD & MOUSE", x, y + 8, w);
         y += 46;
         for (int i : {MOUSECAM, MOUSESENS, MOUSEINV}) y += row(i, x, y, w);

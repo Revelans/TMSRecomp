@@ -358,6 +358,58 @@ static void load_key_binds() {
     }
 }
 
+// Controller remapping (issue #7): settings.ini pad_<button> = the pad button that presses this Switch button. Names
+// (positions, so they fit any pad): south east west north (face buttons), lb rb lt rt, start back, ls rs (stick clicks),
+// paddle1..paddle4, none; unset / "default" = the button_layout mapping. A button taken from another Switch button
+// hands that one the button it had (one setting swaps two buttons); the D-pad keeps its place.
+enum { PAD_LT = 1000, PAD_RT = 1001 };
+struct PadMap { const char* name; uint64_t b; int phys; };
+static std::vector<PadMap> pad_map() {
+    const bool xb = rt::button_layout_xbox();
+    std::vector<PadMap> m = {
+        {"a", B_A, xb ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST}, {"b", B_B, xb ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH},
+        {"x", B_X, xb ? SDL_GAMEPAD_BUTTON_WEST : SDL_GAMEPAD_BUTTON_NORTH}, {"y", B_Y, xb ? SDL_GAMEPAD_BUTTON_NORTH : SDL_GAMEPAD_BUTTON_WEST},
+        {"l", B_L, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER}, {"r", B_R, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER}, {"zl", B_ZL, PAD_LT}, {"zr", B_ZR, PAD_RT},
+        {"plus", B_PLUS, SDL_GAMEPAD_BUTTON_START}, {"minus", B_MINUS, SDL_GAMEPAD_BUTTON_BACK},
+        {"l3", B_LS, SDL_GAMEPAD_BUTTON_LEFT_STICK}, {"r3", B_RS, SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+        {"up", B_UP, SDL_GAMEPAD_BUTTON_DPAD_UP}, {"down", B_DOWN, SDL_GAMEPAD_BUTTON_DPAD_DOWN},
+        {"left", B_LEFT, SDL_GAMEPAD_BUTTON_DPAD_LEFT}, {"right", B_RIGHT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT}};
+    static const struct { const char* n; int phys; } names[] = {
+        {"south", SDL_GAMEPAD_BUTTON_SOUTH}, {"east", SDL_GAMEPAD_BUTTON_EAST}, {"west", SDL_GAMEPAD_BUTTON_WEST},
+        {"north", SDL_GAMEPAD_BUTTON_NORTH}, {"lb", SDL_GAMEPAD_BUTTON_LEFT_SHOULDER}, {"rb", SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER},
+        {"lt", PAD_LT}, {"rt", PAD_RT}, {"start", SDL_GAMEPAD_BUTTON_START}, {"back", SDL_GAMEPAD_BUTTON_BACK},
+        {"ls", SDL_GAMEPAD_BUTTON_LEFT_STICK}, {"rs", SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+        {"paddle1", SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1}, {"paddle2", SDL_GAMEPAD_BUTTON_LEFT_PADDLE1},
+        {"paddle3", SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2}, {"paddle4", SDL_GAMEPAD_BUTTON_LEFT_PADDLE2}, {"none", -1}};
+    std::vector<bool> set(m.size());
+    for (size_t i = 0; i < m.size(); i++) {
+        std::string env = "NX_PAD_" + std::string(m[i].name);
+        for (auto& ch : env) ch = (char)toupper((unsigned char)ch);
+        const char* v = getenv(env.c_str());
+        if (!v || !*v || !_stricmp(v, "default")) continue;
+        int phys = -2;
+        for (auto& n : names) if (!_stricmp(v, n.n)) phys = n.phys;
+        if (phys == -2) { log("input: unknown pad button \"%s\" in pad_%s", v, m[i].name); continue; }
+        for (size_t j = 0; j < m.size(); j++)  // the Switch button that had it gets this one's old button (a swap)
+            if (j != i && !set[j] && phys >= 0 && m[j].phys == phys) m[j].phys = m[i].phys;
+        m[i].phys = phys, set[i] = true;
+        log("input: pad_%s = %s", m[i].name, v);
+    }
+    return m;
+}
+
+// button prompts (pad_icons.cpp) draw the symbol of the pad button that really presses A/B/X/Y (layout + pad_ remaps)
+int pad_face_pos(int k) {
+    static const auto map = pad_map();
+    switch (map[k].phys) {
+        case SDL_GAMEPAD_BUTTON_EAST: return 0;
+        case SDL_GAMEPAD_BUTTON_SOUTH: return 1;
+        case SDL_GAMEPAD_BUTTON_NORTH: return 2;
+        case SDL_GAMEPAD_BUTTON_WEST: return 3;
+    }
+    return button_layout_xbox() ? k ^ 1 : k;  // on a shoulder / paddle: the layout's own symbol
+}
+
 static void poll_input() {
     PadState p;
     p.buttons |= scripted_buttons();
@@ -423,18 +475,13 @@ static void poll_input() {
     if (pad) {
         // positional mapping: the face button on the right is A, as on a Switch controller; button_layout = xbox swaps
         // A/B and X/Y (bottom = confirm, as in PC / Xbox games; pad_icons.cpp draws the prompts to match)
-        const bool xb = rt::button_layout_xbox();
-        struct { SDL_GamepadButton gb; uint64_t b; } btn[] = {
-            {xb ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST, B_A}, {xb ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH, B_B},
-            {xb ? SDL_GAMEPAD_BUTTON_WEST : SDL_GAMEPAD_BUTTON_NORTH, B_X}, {xb ? SDL_GAMEPAD_BUTTON_NORTH : SDL_GAMEPAD_BUTTON_WEST, B_Y}, {SDL_GAMEPAD_BUTTON_LEFT_STICK, B_LS}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK, B_RS},
-            {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, B_L}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, B_R},
-            {SDL_GAMEPAD_BUTTON_START, B_PLUS}, {SDL_GAMEPAD_BUTTON_BACK, B_MINUS},
-            {SDL_GAMEPAD_BUTTON_DPAD_LEFT, B_LEFT}, {SDL_GAMEPAD_BUTTON_DPAD_UP, B_UP},
-            {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, B_RIGHT}, {SDL_GAMEPAD_BUTTON_DPAD_DOWN, B_DOWN}};
-        for (auto& m : btn)
-            if (SDL_GetGamepadButton(pad, m.gb)) p.buttons |= m.b;
-        if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 16000) p.buttons |= B_ZL;
-        if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) p.buttons |= B_ZR;
+        static const auto map = pad_map();
+        for (auto& m : map) {
+            const bool on = m.phys == PAD_LT || m.phys == PAD_RT
+                                ? SDL_GetGamepadAxis(pad, m.phys == PAD_LT ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000
+                                : m.phys >= 0 && SDL_GetGamepadButton(pad, (SDL_GamepadButton)m.phys);
+            if (on) p.buttons |= m.b;
+        }
         auto ax = [&](SDL_GamepadAxis a, bool inv) {
             int v = SDL_GetGamepadAxis(pad, a);
             if (v > -4000 && v < 4000) v = 0;  // deadzone

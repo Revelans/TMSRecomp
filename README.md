@@ -39,7 +39,7 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.2 beta.** It is tested until the chapter 2 Idolasphere with
+> **v0.1.3 beta.** It is tested until the chapter 2 Idolasphere with
 > saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
 > PCs: bug reports are very welcome.
 
@@ -62,6 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
+- [What's new in v0.1.3](#whats-new-in-v013)
 - [What's new in v0.1.2](#whats-new-in-v012)
 - [Requirements](#requirements)
 - [Installing and playing](#installing-and-playing)
@@ -126,6 +127,8 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
   on resisted hits, next to the game's own weakness "!" and WEAK.
 - **Keyboard and mouse**: every button can be rebound (up to 3 keys each, mouse buttons and wheel too), and the mouse
   turns the camera (sensitivity, invert). Launcher > Game > Keyboard & mouse.
+- **Controller button remapping**: any Switch button on any pad button, back paddles included; button prompts follow.
+  Launcher > Game > Controller buttons.
 - DS4Windows works: its virtual pad is used and the real PlayStation pad is left to it.
 - Menus and dialogue stay at their original pace at any frame rate, with optional smoothing above 60 fps.
 
@@ -138,6 +141,13 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.3
+
+- **Controller button remapping** (new, issue #7): Launcher > Game > Controller buttons. Pick the pad button for A, B, X,
+  Y, L, R, ZL, ZR, +, -, L3 and R3 with the arrows: face buttons, bumpers, triggers, Start / Back, stick clicks or back
+  paddles (Legion Go, Steam Deck, Xbox Elite). Taking a button another one has swaps the two. Button prompts show the
+  button you really press. In `settings.ini`: `pad_a` .. `pad_r3`. The D-pad stays where it is.
 
 ## What's new in v0.1.2
 
@@ -270,6 +280,7 @@ stored in `settings.ini` next to `tms.exe` as `key = value`; any key can also be
 | `resist_marker` | 1 (default), 0 | resist shield / RESIST popup in battle |
 | `key_a` .. `key_rs_right` | key names, comma separated | keyboard / mouse bindings (see [Controls](#controls)) |
 | `mouse_camera`, `mouse_sensitivity`, `mouse_invert_y` | 1, 1.0 (0.2 .. 3.0), 0 | mouse turns the camera |
+| `pad_a` .. `pad_r3` | default, south, east, west, north, lb, rb, lt, rt, start, back, ls, rs, paddle1 .. paddle4, none | controller button remapping (launcher > Game > Controller buttons); taking another button's swaps the two |
 | `walk_speed` | 1.0 (default) .. 3.0 | field walk speed |
 | `map_reveal` | 0 (default), 1 | reveal dungeon maps |
 | `field_costume` | 0 (default), 1 | overworld costume |
