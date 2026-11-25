@@ -211,6 +211,7 @@ static uint64_t control_buttons(uint64_t now) {
                         std::string cmd = buf.substr(pos, nl - pos);
                         while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == ' ')) cmd.pop_back();
                         if (cmd == "shot") g_shot_request++;
+                        else if (cmd == "btlspeed") set_battle_speed(battle_speed() % 3 + 1, true);  // = F3 / touchpad (rigs)
                         else if (cmd.rfind("shots ", 0) == 0) g_shot_request += atoi(cmd.c_str() + 6);  // the next N frames
                         else if (cmd.rfind("drawlog", 0) == 0) g_drawlog_request += cmd.size() > 8 ? atoi(cmd.c_str() + 8) : 1;  // "drawlog N": N frames
                         else if (cmd == "rt") g_rt_request++;
@@ -306,6 +307,7 @@ static bool ds4windows_running() {
     return false;  // Linux: DS4Windows is a Windows tool
 #else
     static const bool on = [] {
+        if (getenv("NX_FAKE_DS4WINDOWS") && atoi(getenv("NX_FAKE_DS4WINDOWS"))) return true;  // test: act as if it runs
         bool found = false;
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snap == INVALID_HANDLE_VALUE) return false;
@@ -457,7 +459,10 @@ static void poll_input() {
     // replays (agent test runs) never read the real pad: SDL hands it to background windows, and the user's DualSense
     // (touchpad = battle speed, L3+R3 = F1 menu) changed settings and quit test runs (11-01)
     static const bool replay = getenv("NX_REPLAY") && *getenv("NX_REPLAY");
-    if (pad && !SDL_GamepadConnected(pad)) SDL_CloseGamepad(pad), pad = nullptr;  // unplugged: take the next one
+    if (pad && !SDL_GamepadConnected(pad)) {  // unplugged: take the next one
+        log("input: pad disconnected");
+        SDL_CloseGamepad(pad), pad = nullptr;
+    }
     int pick = 0;  // DS4Windows: its virtual Xbox pad first (a real PlayStation pad may still show up through RawInput)
     for (int i = 0; ds4windows_running() && i < n; i++) {
         const SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[i]);
@@ -493,10 +498,98 @@ static void poll_input() {
         if (int v = ax(SDL_GAMEPAD_AXIS_RIGHTX, false)) p.rx = v;
         if (int v = ax(SDL_GAMEPAD_AXIS_RIGHTY, true)) p.ry = v;
     }
+    // P5-style battle buttons (setting battle_buttons = 1; hle_sys.cpp btl_wheel_input): while the command wheel waits,
+    // the face buttons by position (bottom Attack, right Guard, top Skills, left Items), L Tactics, R Change, - Escape
+    // pick a command at once; ZR = Auto battle (X on the wheel otherwise); + keeps Stats. The game never sees those
+    // buttons there; A is pressed for it once the wheel has the command. The command's index comes from the wheel's own
+    // list (g_wheel_ids): Tactics is not on every member's wheel (s114).
+    static bool g_menu_open = false;  // the F1 / L3+R3 menu was open last poll
+    bool p5_minus = false;  // - picked Escape this frame: the touchpad (same button on some pads) leaves the speed alone
+    {
+        const bool on = battle_buttons_mode() != 0 && !g_menu_open;  // F1 menu changes it live; while it is open the pad is its (user 11-26)
+        static uint64_t prev = 0;
+        static int64_t autob_until = 0, p5_start = 0, p5_tap = 0, p5_at_target = 0, p5_attack = 0;
+        const int64_t t = (int64_t)GetTickCount64();
+        const uint64_t raw = p.buttons;
+        // the buttons are ours as soon as the panel shows (wheel open, also during a voice line: else Square reached the
+        // game's own Auto-Battle there, user 11-26); the wheel is turned / confirmed only once it takes input
+        const bool up = rt::p5_wheel_up(t, false), input = rt::p5_wheel_up(t, true);
+        // mode 1 (buttons on the game's own wheel): a d-pad / stick turn hands the wheel back to the game's way (turn, then
+        // confirm) until it closes (user 11-26: "Buttons" should still let the wheel be turned and pressed)
+        static bool manual = false;
+        const uint64_t dirs = B_LEFT | B_RIGHT | B_UP | B_DOWN;
+        if (!up || battle_buttons_mode() != 1) manual = false;
+        else if (rt::g_p5_target < 0 && ((raw & ~prev & dirs) || std::abs(p.lx) > 16000 || std::abs(p.ly) > 16000)) manual = true;
+        // a button taken for a command stays the game's-unseen until released: else Square held past the confirm reached
+        // the game as a fresh X press = Auto-Battle (user 11-26)
+        static uint64_t eaten = 0;
+        const uint64_t mine = B_A | B_B | B_X | B_Y | B_L | B_R | B_MINUS | B_ZR | dirs;
+        if (on && up && !manual) eaten |= raw & mine;
+        else eaten &= raw, p.buttons &= ~eaten;
+        if (on && up && !manual) {
+            const uint64_t edge = raw & ~prev;
+            static const int by_pos[4] = {3, 0, 1, 2};  // east Guard, south Attack, north Skills, west Items (hle_sys.cpp wheel indexes)
+            const uint64_t face[4] = {B_A, B_B, B_X, B_Y};
+            int want = -1;
+            for (int f = 0; f < 4; f++)
+                if (edge & face[f]) want = by_pos[rt::pad_face_pos(f)];
+            if (edge & B_L) want = 5;      // Tactics
+            if (edge & B_R) want = 4;      // Change
+            if (edge & B_MINUS) want = 6, p5_minus = true;  // Escape
+            int at = -1;  // the command's index on this wheel
+            for (int i = 0, ids = (int)rt::g_wheel_ids; want >= 0 && at < 0 && i < 8 && (ids >> 4 * i & 15); i++)
+                if ((ids >> 4 * i & 15) == want + 1) at = i;
+            if (want >= 0 && at < 0) log("p5: command %d not on this wheel", want);
+            if (at >= 0 && rt::g_p5_target < 0) rt::g_p5_target = at, p5_start = t, p5_tap = 0, p5_at_target = 0, log("p5: command %d at %d", want, at);
+            if (at >= 0 && want == 0) p5_attack = t;
+            if (edge & B_ZR) autob_until = t + 50;
+            p.buttons &= ~mine;
+            p.ly = p.lx = 0;  // the stick would turn the wheel too
+        }
+        // Back out of an Attack: Itsuki's goes to his skill list, not the wheel (the game's own way, also without P5 buttons;
+        // user 11-26: back to the panel). B in the target pick after a P5 Attack, and no wheel 150 ms later (the others'
+        // wheel is back in ~35 ms): one more B for the game, up to 4 tries 400 ms apart, until the wheel is open. The list
+        // shows for a moment: the game opens it itself.
+        {
+            static int64_t back_at = 0;
+            const bool wheel = up;
+            if (wheel && p5_attack && t - p5_attack > 1500) p5_attack = 0;  // a later wheel: that Attack's target pick is over
+            if (on && !wheel && p5_attack && (raw & ~prev & B_B)) back_at = t, p5_attack = 0, log("p5: back out of Attack");
+            if (back_at && (wheel || !on || t - back_at > 1600)) back_at = 0;
+            if (back_at) {
+                const int64_t d = t - back_at - 150;
+                if (d >= 0 && d % 400 < 60) p.buttons |= B_B;
+            }
+        }
+        prev = raw;
+        // turning: one left / right tap per 100 ms (50 down) the short way round until the wheel's selection is the
+        // command (right = index + 1, wraps after the wheel's last command), then 120 ms to settle, then A taps until the hook sees the confirm
+        if (const int tg = rt::g_p5_target; on && tg >= 0) {
+            const int cur = rt::g_wheel_sel;
+            // give up: 6 s in all, the wheel gone, or 0.6 s of A at the command (the game refuses it now, e.g. Change
+            // with nobody to switch in)
+            if (t - p5_start > 6000 || !rt::p5_wheel_up(t - 180, false) || (p5_at_target && t - p5_at_target > 600))  // 6 s: a voice line holds the wheel
+                rt::g_p5_target = -1, log("p5: gave up (wheel %d)", cur);
+            else if (cur != tg) {
+                p5_at_target = 0;
+                int n = 0;
+                while (n < 8 && (rt::g_wheel_ids >> 4 * n & 15)) n++;
+                n = std::max(n, tg + 1);
+                const int d = ((tg - cur) % n + n) % n;  // steps to the right
+                if (t - p5_tap >= 100) p5_tap = t;
+                if (input && t - p5_tap < 50) p.buttons |= d <= n / 2 ? B_RIGHT : B_LEFT;
+            } else {
+                if (!input) p5_at_target = 0;  // g_wheel_sel is the last member's until the wheel takes input
+                else if (!p5_at_target) p5_at_target = t;
+                if (input && p5_at_target && t - p5_at_target >= 120 && (t - p5_at_target) % 100 < 50) p.buttons |= B_A;
+            }
+        }
+        if (on && t < autob_until) p.buttons |= B_X;                   // Auto battle
+    }
     // battle speed 1x -> 2x -> 3x -> 1x: F3 or the DualSense touchpad (a button the Switch game never sees)
     static bool speed_prev = false;
     const bool speed = k[SDL_SCANCODE_F3] || (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_TOUCHPAD));
-    if (speed && !speed_prev) set_battle_speed(battle_speed() % 3 + 1, true);
+    if (speed && !speed_prev && !p5_minus) set_battle_speed(battle_speed() % 3 + 1, true);
     speed_prev = speed;
     static bool f1_prev = false;
     bool f1 = k[SDL_SCANCODE_F1] && !f1_prev;
@@ -507,6 +600,7 @@ static void poll_input() {
     void* hwnd = g_window;  // Linux: the menu is drawn into the frame (overlay.cpp), it only needs the window size
 #endif
     const bool menu = hwnd && overlay_update(hwnd, p.buttons, p.ly, f1);
+    g_menu_open = menu;
     if (menu) p = PadState{};
     const bool capture = mouse_cam && focus && !menu;  // F1 menu open / window in the background: the pointer is free
     if (capture != SDL_GetWindowRelativeMouseMode(g_window)) SDL_SetWindowRelativeMouseMode(g_window, capture);
@@ -585,10 +679,22 @@ static void ui_thread() {
 
     SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");  // the exe icon (resource 1) when built with one
     SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
+    // DS4Windows: SDL sees only XInput pads (DS4Windows' virtual Xbox pad). v0.1.2 turned off only SDL's HIDAPI
+    // PS4 / PS5 drivers, but SDL still opened the real DualShock through RawInput / DirectInput / Windows.Gaming.Input
+    // and fought DS4Windows for it: the pad dropped and came back, the lightbar flashed red (Discord report 11-25).
+    // ds4windows_xinput_only = 0 (NX_DS4WINDOWS_XINPUT_ONLY) keeps the v0.1.2 behaviour (DS4Windows set to DS4 output).
+    static const bool ds4_xinput_only = !getenv("NX_DS4WINDOWS_XINPUT_ONLY") || atoi(getenv("NX_DS4WINDOWS_XINPUT_ONLY")) != 0;
     if (ds4windows_running()) {  // see ds4windows_running
         SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4, "0");
         SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5, "0");
-        log("input: DS4Windows is running: PlayStation pads left to it, using its virtual pad");
+        if (ds4_xinput_only) {
+            SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "0");
+            SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "0");
+            SDL_SetHint(SDL_HINT_JOYSTICK_DIRECTINPUT, "0");
+            SDL_SetHint(SDL_HINT_JOYSTICK_WGI, "0");
+        }
+        log("input: DS4Windows is running: %s", ds4_xinput_only ? "only XInput pads (its virtual pad); the real pad is left to it"
+                                                                 : "PlayStation pads left to it (ds4windows_xinput_only = 0)");
     }
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) fatal("SDL_Init: %s", SDL_GetError());
     g_window = SDL_CreateWindow("Tokyo Mirage Sessions #FE Encore (TMSRecomp)", (int)lround(1280 * vk::wide_factor()), 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);  // ultrawide: the picture's shape

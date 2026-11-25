@@ -1,6 +1,6 @@
 #pragma once
 // Release version (the launcher compares it with GitHub release tags).
-static const char k_version[] = "0.1.3";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
+static const char k_version[] = "0.1.4";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
 
 // Keyboard / mouse bindings (ui.cpp poll_input, launcher Game page): settings.ini key_<name> = up to 3 names, comma
 // separated; "none" = unbound. Names: SDL key names (K, Return, Left Shift, Keypad 4...), Mouse1..Mouse5, WheelUp / WheelDown.
@@ -66,6 +66,11 @@ static const char k_default_settings[] =
     ";   names: K, Return, Space, Left Shift, Keypad 4, F5..., Mouse1 (left) .. Mouse5, WheelUp, WheelDown (launcher: Game page)\n"
     "; mouse_camera = 0: the mouse does not turn the camera (default 1: captured while the game has focus; F1 menu frees it);\n"
     ";   mouse_sensitivity: 0.2 .. 3.0 (default 1.0); mouse_invert_y = 1 inverts up / down\n"
+    "; font_hd = 0: the game's own glyph sheets (default 1: text sharpened 4x for high resolutions)\n"
+    "; battle_buttons = 1: P5-style battle commands on the wheel: bottom face button Attack, right Guard, top Skills, left\n"
+    ";   Items, L Tactics, R Change, - Escape, ZR Auto battle (+ Stats as before). Default 0: the game's wheel only\n"
+    ";   battle_buttons = 2: the same buttons, and a Persona 5 style command panel in place of the game's wheel (Windows)\n"
+    "; ds4windows_xinput_only = 0: with DS4Windows running, also see PlayStation pads (only for DS4Windows set to DS4 output)\n"
     "; pad_<button> (a b x y l r zl zr plus minus l3 r3) = the controller button that presses it: south east west north, lb rb\n"
     ";   lt rt, start back, ls rs, paddle1 .. paddle4, none, or default (button_layout). Taking another button's swaps the two.\n"
     "; In game: F1 or L3 + R3 opens the settings menu\n"

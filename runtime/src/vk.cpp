@@ -709,7 +709,7 @@ static float lo_for_setting() {
     static const float ratio[5] = {1, 1.5f, 1.7f, 2, 3};  // AMD's Quality / Balanced / Performance / Ultra Performance
     const int m = std::clamp(rt::fsr3_quality(), 0, 4);
     const float hi = (float)res_scale();
-    float lo = std::max(floorf(hi / ratio[m] * 80) / 80, 1.f);  // k / 80: 1280x720 x lo stays whole pixels
+    float lo = std::max(floorf(hi / ratio[m] * 80) / 80, 0.5f);  // k / 80: 1280x720 x lo stays whole pixels; #11: below 720p too (weak GPUs at res 720p)
     if (!m || lo >= hi) lo = 0;
     return lo;
 }
@@ -1279,6 +1279,16 @@ static void fit_blit(VkCommandBuffer cb, VkImage dst, uint32_t sw, uint32_t sh, 
         static const VkClearColorValue black{};
         const VkImageSubresourceRange r{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         vkCmdClearColorImage(cb, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &r);
+        // the clear must finish before the blit writes the picture: without this barrier AMD runs both at once and
+        // late clear tiles black out parts of the picture (issue #8: stepped black blocks at the top, 16:10 screen)
+        VkImageMemoryBarrier mb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        mb.srcAccessMask = mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        mb.oldLayout = mb.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        mb.srcQueueFamilyIndex = mb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        mb.image = dst;
+        mb.subresourceRange = r;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                             1, &mb);
     }
     b.dstOffsets[0] = {x, y, 0};
     b.dstOffsets[1] = {x + (int32_t)w, y + (int32_t)h, 1};
@@ -1561,8 +1571,11 @@ static void overlay_subs(int slot, Image& st, std::shared_ptr<const rt::SubsBitm
     if (!b || !st.view) return;
     OverlayPass* op = overlay_pass();
     const VkDeviceSize need = (VkDeviceSize)b->w * b->h * 4;
+    // s114: a 4K P5 panel + a notice took ~18 MB and neither was drawn. The buffer now holds a whole frame; a bigger frame
+    // (resolution change) gets a new one. ponytail: the old one is leaked (an in-flight frame may still read it), once per change
+    if (op->buf[slot] && need > op->cap[slot] && need <= (VkDeviceSize)st.w * st.h * 4) op->buf[slot] = VK_NULL_HANDLE, op->shown[slot] = nullptr;
     if (!op->buf[slot]) {  // dedicated memory (the shared blocks may already be mapped elsewhere)
-        const VkDeviceSize cap = 16ull << 20;  // a 4K frame's subtitles take ~4.5 MB
+        const VkDeviceSize cap = std::max<VkDeviceSize>(16ull << 20, (VkDeviceSize)st.w * st.h * 4);  // the whole frame fits
         VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         bci.size = cap;
         bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -1577,7 +1590,7 @@ static void overlay_subs(int slot, Image& st, std::shared_ptr<const rt::SubsBitm
         VKC(vkMapMemory(dev, op->mem[slot], 0, cap, 0, &m));
         op->map[slot] = (uint32_t*)m, op->cap[slot] = cap;
     }
-    if (need > op->cap[slot]) return;  // larger than 8K-sized subtitles: not drawn
+    if (need > op->cap[slot]) return;  // larger than the frame: not drawn
     if (op->shown[slot] != b) memcpy(op->map[slot], b->rgba.data(), need), op->shown[slot] = b;
     // after the copy or the sharpening pass into st
     VkImageMemoryBarrier ib{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};

@@ -600,6 +600,7 @@ static std::string pt_target() {  // the pass's first colour (or depth) target: 
 
 bool g_ui_phase = false;  // ultrawide: the frame's draws are UI now
 static bool g_draw_picture;  // ultrawide: bind_resources saw a 16:9 picture texture (title / menu artwork, movie frame)
+static uint32_t g_draw_art_w, g_draw_art_h;  // ultrawide: the largest fragment texture from the game's files (not rendered), any shape
 static bool g_draw_rendered;  // ultrawide: a texture this draw samples was rendered by the GPU (minimap mask, screen copies)
 static uint32_t g_ui_target;  // ultrawide: the texture the game copies into a window texture (scene + UI), 0 before the first
 // ultrawide width factor of the bound render targets (1 unless they are widened 16:9 screen targets)
@@ -1673,6 +1674,7 @@ static void scene_cam_bind(uint32_t a, uint64_t size) {
         std::string m;
         for (int i = 0; i < 128; i++) { char b[24]; snprintf(b, sizeof b, "%s%g", i % 16 ? " " : "\n  ", ldf(a + 4 * i)); m += b; }
         log("cam: block %08x target %ux%u frame %u:%s", a, g_st.colors[0]->width, g_st.colors[0]->height, (uint32_t)g_present_no, m.c_str());
+#ifdef _WIN32  // NX_CAM_FIND walks guest memory with VirtualQuery: a Windows-only debugging aid
         // debug NX_CAM_FIND=frame: at that frame, guest words equal to this block's P00 with P11 5 floats later
         static uint32_t find_at = getenv("NX_CAM_FIND") ? atoi(getenv("NX_CAM_FIND")) : 0;
         if (find_at && g_present_no >= find_at) {
@@ -1692,6 +1694,7 @@ static void scene_cam_bind(uint32_t a, uint64_t size) {
                     }
             }
         }
+#endif
     }
     if (size != 736 || !g_st.colors[0] || rt::fsr3_setting() == 0) return;
     const float w = ldf(a), h = ldf(a + 4);
@@ -1937,6 +1940,7 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
     g_log_bindings = g_log_draws > 0;
     g_draw_jitter = false;
     g_draw_picture = false;
+    g_draw_art_w = g_draw_art_h = 0;
     g_draw_rendered = false;
     bufs.reserve(nres + 1);
     imgs.reserve(nres * 4);
@@ -2075,6 +2079,8 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                 if (st.stage == 5 && t && t->width >= 640 && t->height >= 360 && (int)(t->width * 9) - (int)(t->height * 16) <= (int)t->height &&
                     (int)(t->height * 16) - (int)(t->width * 9) <= (int)t->height && im->sx == 1)
                     g_draw_picture = true;
+                if (st.stage == 5 && t && im->sx == 1 && !(im->written && !im->from_pool) && t->width * t->height > g_draw_art_w * g_draw_art_h)
+                    g_draw_art_w = t->width, g_draw_art_h = t->height;
                 imgs.push_back({sampler_of(s), t ? sampled_view(t, im, tv) : im->view, VK_IMAGE_LAYOUT_GENERAL});
                 w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 w.descriptorCount = 1;
@@ -2587,6 +2593,7 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
             log("uw: draw into unwidened %08x %ux%u fmt %d flags %x target %d", t->guest, t->width, t->height, (int)t->format, t->flags, (int)t->target);
     }
     bool ui = false;
+    bool screen_art = false;  // ultrawide: a centred picture larger than the screen (no edge extension: it would copy art into the bars)
     int corner = 1;  // ultrawide UI placement: 0 left edge, 1 centred, 2 right edge (field_hud_anchor)
     if (vk::wide_factor() > 1) {
         static uint32_t phase_frame = ~0u, last_fxaa = 0;
@@ -2621,8 +2628,17 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
             // (pixels, or -1..1 clip space: the white loading pane / fade, 28-byte vs 00979000, user video s104)
             // (exactly -1..1: minimap pieces use small local coordinates such as -17..17)
             auto unit = [](float lo, float hi) { return lo <= -0.99f && lo >= -1.01f && hi >= 0.99f && hi <= 1.01f; };
-            if ((x1 - x0 >= 1270 && y1 - y0 >= 710) || (unit(x0, x1) && unit(y0, y1)))
-                layout = g_draw_picture, g_pane_frame = g_present_no;  // a menu dim / fade: field HUD corners off (field_hud_anchor)
+            if ((x1 - x0 >= 1270 && y1 - y0 >= 710) || (unit(x0, x1) && unit(y0, y1))) {
+                // artwork of another shape drawn undistorted over more than the screen (issue #10: Artists > Profile, a
+                // 2048 x 1024 portrait sheet at -384..1664 x -152..872) is a picture too: texture shape = quad shape. Wide
+                // sheets only (>= 3:2): a 2048 x 2048 quad growing over the screen when a menu opens keeps stretching
+                const float qw = x1 - x0, qh = y1 - y0;
+                const bool art = g_draw_art_w >= 512 && g_draw_art_h >= 256 && g_draw_art_w * 2 >= g_draw_art_h * 3 && qw >= 1270 &&
+                                 fabsf(g_draw_art_w * qh - g_draw_art_h * qw) <= 0.03f * g_draw_art_h * qw;
+                static const bool artlog = getenv("NX_UW_ART_LOG") != nullptr;  // debug: each screen-size quad's texture
+                if (artlog) log("uw: screen quad %g..%g x %g..%g tex %ux%u picture %d art %d", x0, x1, y0, y1, g_draw_art_w, g_draw_art_h, (int)g_draw_picture, (int)art);
+                layout = g_draw_picture || art, screen_art = art, g_pane_frame = g_present_no;  // a menu dim / fade: field HUD corners off (field_hud_anchor)
+            }
         } else if (stride == 20) {
             layout = false;  // 20-byte vertices: only the screen-size movie quads above
         }
@@ -2733,7 +2749,7 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
     if (ui && corner == 1 && ox > 0 && k.op == OP_DRAW && mode == 4 && k.a[2] >= 12 && k.a[2] % 6 == 0 && k.a[2] <= 600 && sc.extent.width)
         ui_grid_extend(cb, k, vp, sc, rs, ox);
     if (ui && corner == 1 && ox > 0 && k.op == OP_DRAW && (mode == 4 || mode == 5) && k.a[2] >= 4 && k.a[2] <= 12 && g_ui_box[4] && sc.extent.width &&
-        !g_st.streams.empty() && g_st.streams[0] == 36 && !g_draw_rendered) {  // not the minimap map pieces (they sample its mask)
+        !g_st.streams.empty() && g_st.streams[0] == 36 && !g_draw_rendered && !screen_art) {  // not the minimap map pieces (they sample its mask)
         const bool both = g_ui_box[0] < -0.5f && g_ui_box[1] > 1280.5f;  // across the whole width: HELP bar, RESULTS rule
         if (g_ui_box[0] < 1279.5f && g_ui_box[1] > 1280.5f) ui_edge_extend(cb, k, vp, sc, rs, ox, 1, both);
         if (g_ui_box[0] < -0.5f && g_ui_box[1] > 0.5f) ui_edge_extend(cb, k, vp, sc, rs, ox, -1, both);

@@ -272,7 +272,13 @@ bool rt::custom_bgm_victory() {
     std::lock_guard<std::mutex> l(g_lock);
     if (!g_active) return false;
     if (g_voice) g_voice->fade_step = 1.0f / 4800;
-    start(pick_victory(g_battle_series), false);
+    const Track* v = pick_victory(g_battle_series);
+    if (!v) {  // no victory theme in the folder: the game's own jingle plays (Discord 11-25: the victory was silent)
+        g_active = false;
+        log("custom music: no victory theme in the folder: the game's victory jingle plays");
+        return false;
+    }
+    start(v, false);
     return true;
 }
 // the game's music takes over (another track on the slot, the field music restored): fade out over 1 s

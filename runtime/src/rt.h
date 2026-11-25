@@ -13,6 +13,7 @@
 #include <string>
 #include <initializer_list>
 #include <unordered_map>
+#include <array>
 #include <vector>
 
 namespace rt {
@@ -111,16 +112,32 @@ int sharpen_setting();    // overlay.cpp: setting sharpen (0 off .. 100), the pr
 extern std::atomic<int> g_pad_kind;  // ui.cpp sets it for the open pad: 0 Switch / other, 1 PlayStation, 2 Xbox
 int pad_icons_setting();             // 0 auto, 1 switch, 2 playstation, 3 xbox
 int pad_face_pos(int k);              // ui.cpp: the pad face button that presses Switch A/B/X/Y (k 0..3) as 0 east, 1 south, 2 north, 3 west
+// P5-style battle buttons (setting battle_buttons, s112): hle_sys.cpp btl_wheel_input <-> ui.cpp poll_input
+extern std::atomic<int64_t> g_wheel_ms;       // GetTickCount64 ms of the last command wheel input call
+extern std::atomic<int64_t> g_wheel_open_ms;  // ... of the last frame the wheel was open (also before / between input calls)
+extern std::atomic<int64_t> g_wheel_blocked_ms;  // ... a screen over the wheel (tutorial info window, Stats): no panel, buttons to the game
+bool p5_wheel_up(int64_t now, bool input);  // p5ui.cpp: the wheel is open (input: and taking input) with nothing over it
+extern std::atomic<int> g_wheel_sel;          // the wheel's selection at its last input call
+extern std::atomic<int> g_p5_target;          // wheel index poll_input is turning to and confirming (-1 none)
+extern std::atomic<uint32_t> g_wheel_ids;     // the wheel's commands: nibble i = command id at index i + 1 (0 = end)
+int battle_buttons_mode();                                    // p5ui.cpp: setting battle_buttons 0 / 1 / 2
+void set_battle_buttons_mode(int m);                          // F1 menu: applies at once (also mid-battle)
+bool p5_panel_active();                                       // our P5 panel replaces the game's wheel now
+std::shared_ptr<const struct SubsBitmap> p5_panel(uint32_t fw, uint32_t fh);  // the panel to blend over the frame, or null
 bool button_layout_xbox();           // setting button_layout = xbox: bottom face button = A (confirm), left = X
 void set_pad_icons(int s);           // menu: saves the setting
 int pad_icon_style();                // icons to show now: 0 Switch, 1 PlayStation, 2 Xbox
 bool pad_icon_atlas_size(uint32_t w, uint32_t h);  // some atlas with button faces has this size (hash it)
 bool is_pad_icon_atlas(uint64_t hash);              // level-0 hash (vk_texture.cpp tex_hash) of such an atlas (_US)
-bool pad_icon_atlas(int style, uint64_t hash, uint32_t w, uint32_t h, uint8_t* rgba);  // draws that style over it
+bool pad_icon_atlas(int style, uint64_t hash, uint32_t w, uint32_t h, uint8_t* rgba);
+std::vector<std::array<int, 4>> pad_icon_cells(uint64_t hash, uint32_t w, uint32_t h, int scale);  // HD atlas: cell rects at scale
+bool pad_icon_paint_region(int style, uint64_t hash, uint32_t w, uint32_t h, int scale, int x0, int y0, int rw, int rh, uint8_t* rgba);  // draws that style over it
 bool tex_pack_on();          // vk_texture.cpp: UHD texture pack in use (setting tex_pack / NX_TEX_PACK)
 void set_tex_pack(bool on);  // switches it live (textures with a pack file upload again) and saves the setting
 bool is_pad_prompt(uint64_t hash);  // a field interaction prompt pill ("(A) Talk"), 512 x 128 BC3
-bool pad_icon_prompt(int style, uint32_t w, uint32_t h, uint8_t* rgba);  // finds its (A) disc, draws that style
+bool pad_icon_prompt(int style, uint32_t w, uint32_t h, uint8_t* rgba);
+bool pad_prompt_disc(uint32_t w, uint32_t h, const uint8_t* rgba, std::array<int, 4>& rect, uint32_t& fill);  // HD prompts
+bool pad_prompt_paint(int style, std::array<int, 4> rect, uint32_t fill, int rw, int rh, uint8_t* rgba);  // finds its (A) disc, draws that style
 int pad_icons_selftest(const char* dump_dir);  // NX_PAD_ICONS_TEST=<dir>: draw every atlas found there, exit
 bool resist_icons_on();          // pad_icons.cpp: resistance badges drawn as icons (setting resist_icons)
 void set_resist_icons(bool on);  // menu: switches live + saves

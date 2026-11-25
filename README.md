@@ -39,7 +39,7 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.3 beta.** It is tested until the chapter 2 Idolasphere with
+> **v0.1.4 beta.** It is tested until the chapter 2 Idolasphere with
 > saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
 > PCs: bug reports are very welcome.
 
@@ -62,6 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
+- [What's new in v0.1.4](#whats-new-in-v014)
 - [What's new in v0.1.3](#whats-new-in-v013)
 - [What's new in v0.1.2](#whats-new-in-v012)
 - [Requirements](#requirements)
@@ -141,6 +142,25 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.4
+
+- **P5-style battle buttons** (new, off by default): each battle command on its own button: bottom Attack, right Guard,
+  top Skills, left Items, L Tactics (Itsuki), R Change, - Escape, ZR Auto-Battle, + Stats. **Buttons + P5 panel** also
+  replaces the command wheel with a Persona 5 style panel (Windows). Change it in the launcher, in the game's Settings
+  (PC 4/4) or in the F1 / L3+R3 menu, also mid-battle. In Buttons mode, turning the wheel with the d-pad or stick gives
+  you the game's own turn-and-confirm for that turn.
+- **HD text** (new, on by default): the game's fonts scaled 4x with crisp edges at high resolutions (`font_hd`).
+- **HD button icons with the UHD pack**: button prompts now stay sharp and match your pad with the texture pack.
+- **New UHD texture pack and MovieHD pack**: textures the old pack missed are now upscaled, and the camp backgrounds are
+  redone with an anime model (cleaner faces and line art). Download links in the release notes.
+- **Launcher update progress bar**: download MB / %, unpacking, installing.
+- **Weaker GPUs** (#11): FSR 3 / DLSS upscaling can render the 3D scene below 720p. `settings.ini` also accepts the
+  `NX_` names.
+- Fixes: AMD stepped black blocks on the picture (#8); Artists > Profile portrait stretched in ultrawide (#10); button
+  icons with the Spanish mod; custom battle music without a victory theme now plays the game's victory jingle;
+  DS4Windows: only its virtual pad is used; launcher status line showed the resolution one step too high; Linux build
+  fixes.
 
 ## What's new in v0.1.3
 
@@ -278,6 +298,8 @@ stored in `settings.ini` next to `tms.exe` as `key = value`; any key can also be
 | `button_layout` | switch (default), xbox | which face button confirms |
 | `aspect` | 16:9 (default), auto, 21:9, 32:9 | ultrawide |
 | `resist_marker` | 1 (default), 0 | resist shield / RESIST popup in battle |
+| `font_hd` | 1 (default), 0 | sharp text at high resolutions (the game's glyph sheets scaled 4x with crisp edges) |
+| `battle_buttons` | 0 (default), 1, 2 | P5-style battle buttons: each command on its own button (bottom Attack, right Guard, top Skills, left Items, L Tactics (on wheels that have it), R Change, - Escape, ZR Auto battle, + Stats; also in the game's Settings PC 4/4 and the F1 / L3+R3 menu, live); 2 also shows a Persona 5 style command panel in place of the game's wheel (Windows) |
 | `key_a` .. `key_rs_right` | key names, comma separated | keyboard / mouse bindings (see [Controls](#controls)) |
 | `mouse_camera`, `mouse_sensitivity`, `mouse_invert_y` | 1, 1.0 (0.2 .. 3.0), 0 | mouse turns the camera |
 | `pad_a` .. `pad_r3` | default, south, east, west, north, lb, rb, lt, rt, start, back, ls, rs, paddle1 .. paddle4, none | controller button remapping (launcher > Game > Controller buttons); taking another button's swaps the two |

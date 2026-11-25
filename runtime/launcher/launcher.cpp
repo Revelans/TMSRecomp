@@ -139,7 +139,7 @@ struct Setting {
     std::vector<Opt> opts;  // DROP; TOGGLE: {off, on}
     float lo = 0, hi = 0, step = 0;
 };
-enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_L, PAD_R, PAD_ZL, PAD_ZR, PAD_PLUS, PAD_MINUS, PAD_L3, PAD_R3, NSET };
+enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, BTLBUTTONS, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_L, PAD_R, PAD_ZL, PAD_ZR, PAD_PLUS, PAD_MINUS, PAD_L3, PAD_R3, NSET };
 // controller remap choices (ui.cpp pad_map): positions, so the names fit Switch, PlayStation and Xbox pads alike
 static const std::vector<Opt> k_pad_opts = {{"default", L"Default"}, {"south", L"Bottom (A / \u2715)"},
     {"east", L"Right (B / \u25cb)"}, {"west", L"Left (X / \u25a1)"}, {"north", L"Top (Y / \u25b3)"}, {"lb", L"LB / L1"},
@@ -244,6 +244,11 @@ static const Setting k_set[NSET] = {
      {}, 0.2f, 3.0f, 0.1f},
     {"mouse_invert_y", "0", TOGGLE, L"Invert mouse up / down", L"Moving the mouse up turns the camera down.",
      {{"0", L"Off"}, {"1", L"On"}}},
+    {"battle_buttons", "0", DROP, L"P5-style battle buttons",
+     L"Each battle command has its own button: bottom face button Attack, right Guard, top Skills, left Items, L Tactics, "
+     L"R Change, - Escape, ZR Auto battle (+ Stats as before). P5 panel: a Persona 5 style command panel replaces the "
+     L"game's wheel (Windows).",
+     {{"0", L"Off \u00b7 the game's wheel"}, {"1", L"Buttons \u00b7 the game's wheel stays"}, {"2", L"Buttons + P5 panel"}}},
     PAD_SET("a", L"A"), PAD_SET("b", L"B"), PAD_SET("x", L"X"), PAD_SET("y", L"Y"), PAD_SET("l", L"L"), PAD_SET("r", L"R"),
     PAD_SET("zl", L"ZL"), PAD_SET("zr", L"ZR"), PAD_SET("plus", L"+"), PAD_SET("minus", L"\u2212"), PAD_SET("l3", L"L3"), PAD_SET("r3", L"R3")
 };
@@ -320,6 +325,16 @@ static std::atomic<int> g_upd{UPD_OFF};
 static std::string g_rel_tag, g_rel_zip, g_rel_page;
 static HWND g_wnd;
 constexpr UINT WM_UPD = WM_APP + 1;
+// update progress (sidebar box): phase 0 download (bytes), 1 unpacking, 2 installing (files); worker thread writes
+static std::atomic<int> g_upd_phase{0};
+static std::atomic<uint64_t> g_upd_done{0}, g_upd_total{0};
+#ifdef _WIN32
+static void upd_tick() {  // redraw the box at most 10 times a second
+    static std::atomic<uint64_t> last{0};
+    const uint64_t now = GetTickCount64();
+    if (now - last >= 100) last = now, PostMessageW(g_wnd, WM_UPD, 0, 0);
+}
+#endif
 
 
 #ifdef _WIN32
@@ -342,11 +357,18 @@ static bool http_get(const std::wstring& url, std::string* body, HANDLE file) {
         DWORD code = 0, n = sizeof code;
         WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &code, &n, nullptr);
         ok = code == 200;
+        if (file) {  // progress: the size from the (redirected) download's Content-Length
+            wchar_t len[32] = {};
+            DWORD ln = sizeof len;
+            g_upd_done = 0;
+            g_upd_total = WinHttpQueryHeaders(r, WINHTTP_QUERY_CONTENT_LENGTH, nullptr, len, &ln, nullptr) ? _wcstoui64(len, nullptr, 10) : 0;
+        }
         char buf[1 << 16];
         for (DWORD got = 0; ok && WinHttpReadData(r, buf, sizeof buf, &got) && got; got = 0) {
             if (body) body->append(buf, got);
             DWORD w;
             if (file && !WriteFile(file, buf, got, &w, nullptr)) ok = false;
+            if (file) g_upd_done += got, upd_tick();
         }
     }
     if (r) WinHttpCloseHandle(r);
@@ -434,11 +456,13 @@ static void apply_update() {
         fs::remove_all(tmp, ec);
         fs::create_directories(stage, ec);
         bool ok = false;
+        g_upd_phase = 0, g_upd_done = 0, g_upd_total = 0;
         HANDLE f = CreateFileW(zip.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
         if (f != INVALID_HANDLE_VALUE) {
             ok = http_get(wide(g_rel_zip), nullptr, f);
             CloseHandle(f);
         }
+        g_upd_phase = 1, PostMessageW(g_wnd, WM_UPD, 0, 0);
         ok = ok && run_wait(L"tar.exe -xf \"" + zip.wstring() + L"\" -C \"" + stage.wstring() + L"\"");
         fs::path root = stage;
         if (ok) {  // a zip with one top folder: its contents
@@ -446,8 +470,12 @@ static void apply_update() {
             if (it != fs::directory_iterator() && it->is_directory() && std::next(it) == fs::directory_iterator())
                 root = it->path();
         }
+        g_upd_done = 0, g_upd_total = 0;
+        for (auto& e : fs::recursive_directory_iterator(root, ec)) g_upd_total += e.is_regular_file();
+        g_upd_phase = 2, PostMessageW(g_wnd, WM_UPD, 0, 0);
         for (auto& e : fs::recursive_directory_iterator(root, ec)) {
             if (!ok) break;
+            g_upd_done++, upd_tick();
             if (!e.is_regular_file()) continue;
             fs::path rel = fs::relative(e.path(), root, ec);
             std::wstring top = rel.begin()->wstring();
@@ -1138,8 +1166,10 @@ static const wchar_t* k_pages[] = {L"Play", L"Graphics", L"Display & FPS", L"Gam
 
 static std::wstring status_line() {
     std::wstring s;
-    int r = opt_index(RES);
-    s += r == 4 ? L"8K · 7680 × 4320" : r == 3 ? L"4K · 3840 × 2160" : r == 2 ? L"2560 × 1440" : r == 1 ? L"1920 × 1080" : L"1280 × 720";
+    // by value: the indexes were one off since "auto" became option 0 (reddit 11-26: 1440p showed as 4K, 720p as 1080p)
+    const std::string r = value_of(RES);
+    s += r == "8k" ? L"8K · 7680 × 4320" : r == "4k" ? L"4K · 3840 × 2160" : r == "1440p" ? L"2560 × 1440" : r == "1080p" ? L"1920 × 1080"
+         : r == "720p" ? L"1280 × 720" : L"Auto resolution";
     std::string f = value_of(FPS);
     s += f == "0" ? L"  ·  uncapped" : L"  ·  " + wide(f) + L" FPS";
     s += value_of(WINDOW) == "window" ? L"  ·  window" : L"  ·  borderless";
@@ -1178,7 +1208,20 @@ static void draw_sidebar() {
         outline(b, 6, C(ACCENT, 0.7f));
         text(L"Version " + wide(g_rel_tag) + L" is ready", R(b.left + 16, b.top + 12, b.right - b.left - 32, 22),
              f_label, C(0xffffff));
-        if (u == UPD_BUSY) text(L"Downloading and installing…", R(b.left + 16, b.top + 40, 200, 20), f_small, C(MUTED));
+        if (u == UPD_BUSY) {  // progress bar: download (MB), unpacking, installing (files)
+            const int ph = g_upd_phase;
+            const uint64_t d = g_upd_done, t = g_upd_total;
+            const float frac = ph == 1 ? 1.f : t ? std::min(1.f, (float)d / t) : 0.f;
+            const D2D1_RECT_F bar = R(b.left + 16, b.top + 46, b.right - b.left - 32, 8);
+            rounded(bar, 4, C(PANEL));
+            if (frac > 0) rounded(R(bar.left, bar.top, (bar.right - bar.left) * frac, 8), 4, C(ACCENT));
+            wchar_t line[96];
+            if (ph == 0 && t) swprintf(line, 96, L"Downloading %.0f / %.0f MB (%d%%)", d / 1048576.0, t / 1048576.0, (int)(frac * 100));
+            else if (ph == 0) swprintf(line, 96, L"Downloading %.0f MB…", d / 1048576.0);
+            else if (ph == 1) swprintf(line, 96, L"Unpacking…");
+            else swprintf(line, 96, L"Installing %llu / %llu files", (unsigned long long)d, (unsigned long long)t);
+            text(line, R(b.left + 16, b.top + 60, b.right - b.left - 32, 20), f_small, C(MUTED));
+        }
         else {
             button(R(b.left + 16, b.top + 44, 92, 34), L"Update", ID_UPDATE, true, [] {
 #ifndef _WIN32
@@ -2090,7 +2133,7 @@ static void draw_page_body() {
         for (int i : {MAPREV, FIELDCOS}) y += row(i, x, y, w);
         section(L"BATTLE", x, y + 8, w);
         y += 46;
-        for (int i : {ALLDIFF, RESMARK}) y += row(i, x, y, w);
+        for (int i : {ALLDIFF, RESMARK, BTLBUTTONS}) y += row(i, x, y, w);
         section(L"CONTROLS", x, y + 8, w);
         y += 46;
         y += row(PADICONS, x, y, w);

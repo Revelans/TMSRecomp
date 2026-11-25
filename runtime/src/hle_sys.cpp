@@ -1530,12 +1530,49 @@ static const struct { uint8_t off; uint32_t fn; } k_btl_draws[] = {
     {0x18, 0x2f9a4c}, {0x34, 0x2f9f78}, {0x38, 0x2ea068}, {0x3c, 0x2ea218}, {0x40, 0x2fab84}, {0x44, 0x2e9d88}, {0x48, 0x2ff7f4},
     {0x50, 0x2fb694}, {0x4c, 0x2fdc80}, {0x2c, 0x2f08c4}, {0x24, 0x301d40}, {0x54, 0x2fc994}};
 std::atomic<uint32_t> rt::g_uidraw30{0};
+static uint32_t wheel_ids(uint32_t list);  // the command wheel's list (btl_wheel_input below)
+static std::atomic<bool> g_wheel_done{false};  // a command was confirmed, the wheel is closing
 HLE_FN(btl_ui_draw, "btl_ui_draw") {
     const uint32_t ui = c->r[0];
     if (!ld32(ui + 4) || !ld32(ui)) { c->r[0] = 1; return; }
     static std::unordered_map<uint32_t, uint32_t> t;
     const bool tick = tick_on(t, g_tick_ui30, ui);
+    const char* sk = getenv("NX_UIDRAW_SKIP");  // debug: parts not drawn (hex mask, live through control "env")
+    const uint32_t skip = sk ? (uint32_t)strtoul(sk, nullptr, 16) : 0;
+    // P5 panel mode: the game's command wheel (part 2, draw 0x2ee160) is never drawn (s113; s114: not only while the panel is
+    // up, its fade out after a command and its fade in after a cancel showed). Part 2 is the wheel alone: skill list,
+    // target pick and the HELP bar draw the same without it (NX_UIDRAW_SKIP=4 run, s114)
+#ifdef _WIN32
+    const bool p5 = rt::battle_buttons_mode() == 2;
+#else
+    const bool p5 = false;  // no panel on Linux yet: the game's wheel stays
+#endif
+    // the wheel object (part 2): +0 = 1 while the wheel is open (from ~80 ms before its first input call, also while the
+    // member's voice line or a tutorial box holds the input back: user video 11-25), its list at +0xc (as r2 of
+    // btl_wheel_input). The panel shows from it (s114, NX_P5_DUMP run); the buttons are taken only while the wheel takes
+    // input (g_wheel_ms): a tutorial box over an open wheel needs A / B (user 11-26: soft lock). It stays 1 for ~550 ms
+    // after a command is confirmed (the wheel's fade out, the list / target pick already taking input): g_wheel_done
+    // (set at the confirm) ignores it until it drops to 0.
+    const uint32_t wo = ld32(ui + 0x10);
+    if (wo && ld32(wo) != 1) g_wheel_done = false;
+    if (const uint32_t w = wo; w && ld32(w) == 1 && !g_wheel_done && rt::battle_buttons_mode()) {
+        rt::g_wheel_open_ms = ms_now();
+        if (const uint32_t ids = wheel_ids(w + 0xc)) rt::g_wheel_ids = ids;
+    }
+    static const bool dump = getenv("NX_P5_DUMP") != nullptr;  // debug: changes in the wheel object (part 2), rare words only
+    if (dump) {
+        static uint32_t prev[512], n[512];
+        static uint32_t was = 0;
+        const uint32_t w = ld32(ui + 0x10);
+        for (int i = 0; w && i < 512; i++) {
+            const uint32_t v = ld32(w + 4 * i);
+            if (w == was && v != prev[i] && ++n[i] < 12) log("p5dump: +%03x %08x -> %08x (input %lld ms ago)", 4 * i, prev[i], v, (long long)(ms_now() - rt::g_wheel_ms));
+            prev[i] = v;
+        }
+        was = w;
+    }
     for (uint32_t i = 0; i < 19; i++) {
+        if (skip >> i & 1 || (p5 && i == 2) || (i == 5 && rt::p5_panel_active())) continue;  // 5: Stats / Auto-Battle pills
         if ((g_uidraw30 >> i & 1) && !tick) continue;
         gcall(c, k_btl_draws[i].fn, {ld32(ui + k_btl_draws[i].off)});
     }
@@ -1599,10 +1636,73 @@ HLE_FN(notify_anim_tick, "notify_anim_tick") {
     call_unhooked(c, "notify_anim_tick", {c->r[0]});
 }
 // The command wheel's hold-to-scroll counts calls (one per frame): at 240 fps one short press scrolled 3 commands.
+// P5-style battle buttons (Discord 11-25, setting battle_buttons): a direct button picks a command of the wheel (called
+// from 0x2a8530; the skill list and target pick use this function from elsewhere). poll_input takes the button away
+// from the game and turns the wheel with left / right taps until the selection here is the command, then taps A until
+// the wheel confirms (returns 1) - the game's own input path, so its own checks run (a command that cannot be used
+// now stays refused). Writing the selection word directly is NOT enough: the wheel confirmed the command it had turned
+// to (s112). Indexes (s112, wheelmap.sh + NX_WHEEL_DIFF; right = index + 1, wraps): 0 Attack, 1 Skills, 2 Items,
+// 3 Guard, 4 Change, 5 Tactics, 6 Escape.
+std::atomic<int64_t> rt::g_wheel_ms{0}, rt::g_wheel_open_ms{0}, rt::g_wheel_blocked_ms{0};
+// Screens over the open wheel (user 11-26): the tutorial info window (info_window_update runs each frame it is up, state
+// +8 < 4) and Stats (+ : the wheel input object +0x5c8 = 1, the wheel input is still called). While one is up the panel
+// hides and the buttons are the game's.
+PROBE_FN(info_window_probe, "info_window_update") {
+    if (ld32(c->r[0] + 8) < 4) rt::g_wheel_blocked_ms = ms_now();
+}
+std::atomic<int> rt::g_wheel_sel{-1}, rt::g_p5_target{-1};
+std::atomic<uint32_t> rt::g_wheel_ids{0x7654321};
+static uint32_t wheel_ids(uint32_t list) {
+    // 8-byte entries {u16 index, u16 command id, u32 1 = greyed out}; the list ends where the index stops counting up
+    // (0xffffffff after 6 entries, but Itsuki's 7 are followed by {0, 0}). Nibble i = command id at index i + 1.
+    uint32_t ids = 0;
+    for (int i = 0; list && i < 8; i++) {
+        const uint32_t w = ld32(list + 8 * i);
+        if ((w & 0xffff) != (uint32_t)i || (w >> 16) > 14) break;
+        ids |= ((w >> 16) + 1) << 4 * i;
+    }
+    return ids;
+}
 HLE_FN(btl_wheel_input, "btl_wheel_input") {
     g_btl_input_ms = ms_now();  // battle speed: the player is choosing
+    if ((c->r[14] & ~1u) == 0x2a8530 && c->r[0] && ld32(c->r[0] + 0x5c8) == 1) rt::g_wheel_blocked_ms = ms_now();  // Stats open
+    if ((c->r[14] & ~1u) == 0x2a8530 && c->r[1]) {
+        // the wheel's list r2 (wheel_ids). Not every wheel has all 7 (s114, Aversa boss: Tactics only on Itsuki's, so 6
+        // entries for the others and L picked Escape, - pointed past the end)
+        const uint32_t ids = wheel_ids(c->r[2]);
+        if (ids && ids != rt::g_wheel_ids) rt::g_wheel_ids = ids;
+        if (ms_now() - rt::g_wheel_ms > 500 && rt::battle_buttons_mode()) log("p5: wheel up, sel %u, commands %07x", ld32(c->r[1]), ids);
+        rt::g_wheel_ms = ms_now();
+        rt::g_wheel_sel = (int)ld32(c->r[1]);
+    }
+    static const bool wlog = getenv("NX_WHEEL_LOG") != nullptr;  // debug: callers, selection and list of each distinct call
+    if (wlog) {
+        static std::set<std::string> seen;
+        std::string k = std::string(symbol_at(c->r[14])) + " sel " + std::to_string(c->r[1] ? ld32(c->r[1]) : ~0u) + " list";
+        for (int i = 0; c->r[2] && i < 12; i++) { char b[16]; snprintf(b, sizeof b, " %08x", ld32(c->r[2] + 4 * i)); k += b; }
+        if (seen.insert(k).second && seen.size() < 400) log("wheel: obj %08x sel@%08x %s", c->r[0], c->r[1], k.c_str());
+    }
+    static const bool dump = getenv("NX_P5_DUMP") != nullptr;  // debug: rare changes in the wheel input object (r0)
+    if (dump && (c->r[14] & ~1u) == 0x2a8530) {
+        static uint32_t prev[1024], n[1024], was = 0;
+        const uint32_t o = c->r[0];
+        for (int i = 0; i < 1024; i++) {
+            const uint32_t v = ld32(o + 4 * i);
+            if (o == was && v != prev[i] && ++n[i] < 8) log("p5in: +%03x %08x -> %08x", 4 * i, prev[i], v);
+            prev[i] = v;
+        }
+        was = o;
+    }
     if (ui_skip(c->r[0] + 0x195ac)) { c->r[0] = 0; return; }
+    const uint32_t sel_at = c->r[1];
     c->r[0] = call_unhooked(c, "btl_wheel_input", {c->r[0], c->r[1], c->r[2]});
+    static const bool p5log = getenv("NX_P5_LOG") != nullptr;  // debug: the wheel result right after a P5 pick
+    if (p5log && rt::g_p5_target >= 0 && sel_at) log("p5: wheel call lr %08x sel %u ret %u", c->r[14], ld32(sel_at), c->r[0]);
+    if ((c->r[14] & ~1u) == 0x2a8530 && c->r[0] == 1) g_wheel_done = true, rt::g_wheel_ms = 0, rt::g_wheel_open_ms = 0;  // panel off at once
+    if (rt::g_p5_target >= 0 && (c->r[14] & ~1u) == 0x2a8530 && c->r[0] == 1) {  // confirmed: no more taps (poll_input)
+        log("p5: wheel confirmed command %u", ld32(sel_at));
+        rt::g_p5_target = -1;
+    }
 }
 // The "!" weakness marker over enemies while the skill list is open (before a target is picked): its draw function steps
 // the pulse counter u16 unit+0xaca once per call, i.e. per frame (user 10-30: too fast above 60). Keep the counter on

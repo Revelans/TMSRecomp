@@ -77,7 +77,7 @@ if ($StageOnly) { Write-Output "staged $stage"; return }
 $notice = "Third-party software in this package`r`n`r`n"
 foreach ($l in @(@("SDL3 (SDL3.dll), zlib licence", "$tp\SDL3-3.4.16\LICENSE.txt"),
                  @("libvpx (VP9 movie decoding, in tms.exe), BSD-3-Clause", "$tp\libvpx\LICENSE"),
-                 @("Ryujinx shader translator (shaderc\), MIT", "$tp\ryubing\LICENSE.txt"),
+                 @("Ryujinx shader translator (shaderc\) and BC7 tables (in tms.exe, runtime/src/bc7.h), MIT", "$tp\ryubing\LICENSE.txt"),
                  @("Spv.Generator (shaderc\, sharpening/overlay shaders in tms.exe), MIT", "$tp\ryubing\src\Spv.Generator\LICENSE"),
                  @("LLVM clang + lld-link (setup\llvm\), Apache-2.0 WITH LLVM-exception", "$tp\llvm-LICENSE.TXT"),
                  @("AMD FidelityFX / FSR SDK 2.4.0 (amd_fidelityfx_loader_vk.dll, amd_fidelityfx_upscaler_vk.dll), MIT", "$tp\FidelityFX-SDK-2.4.0\LICENSE-shipped-MIT.txt"),
@@ -113,7 +113,7 @@ if ($MovieHd) {
     $mstage = Join-Path $env:TEMP "tmsr_package\moviehd"
     New-Item -ItemType Directory -Force $mstage | Out-Null
     Set-Content "$mstage\README_MovieHD.txt" ("TMSRecomp 4K movies: story movies + camp menu backgrounds (AI-upscaled offline from the " +
-        "game's 720p movies, Real-ESRGAN realesr-animevideov3, VP9).`r`nInstall: launcher.exe, Guide page, 4K movies, Install ZIP. " +
+        "game's 720p movies with Real-ESRGAN, VP9; camp backgrounds redone 11-25 with the anime model: sharper faces).`r`nInstall: launcher.exe, Guide page, 4K movies, Install ZIP. " +
         "Or by hand: extract into your game data folder (the one with romfs), so that movie_hd\ sits next to romfs. The game " +
         "plays them in place of the 720p movies; any movie without a 4K file plays as before.`r`nstory_mod = m06 / m07 / m12 of " +
         "the uncensored mod (used only while that mod is on).`r`nOff: settings.ini line movie_hd = 0, or delete the folder. " +

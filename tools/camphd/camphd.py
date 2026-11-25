@@ -6,7 +6,11 @@ deleted after each movie. Story movies: camphd.py <data> <esrgan dir> <data>/sto
 Sofdec.Prime (MPEG-1) movies (the uncensored mod's m06 / m07 / m12): <name>_prime.ivf + <name>_prime.thm (16x9 Y block
 means per frame, 144 bytes; the runtime matches the game's decoded frames by it, hle_movie.cpp mana_frame_copy):
 camphd.py <data> <esrgan dir> <data>/prime_hd mods/uncensored/romfs/Pack/pack_050_movie.cpk story_mod
-Usage: camphd.py <data> <esrgan dir> [work dir] [pack] [subdir]  (pack: a name in romfs/Pack or a path from <data>)"""
+Usage: camphd.py <data> <esrgan dir> [work dir] [pack] [subdir]  (pack: a name in romfs/Pack or a path from <data>)
+Env (s113, issue #9: characters stayed soft with realesr-animevideov3): CAMPHD_MODEL=anime (realesrgan-x4plus-anime =
+RealESRGAN_x4plus_anime_6B at 4x, then Lanczos to 3x: sharper line art), CAMPHD_CRF (VP9 quality, default 24; lower =
+more bitrate), CAMPHD_OUT (output folder instead of <data>/movie_hd/<subdir>), CAMPHD_ONLY (comma separated movie
+names), CAMPHD_REDO=1 (replace files that exist)."""
 import os
 import shutil
 import subprocess
@@ -33,7 +37,11 @@ def first_packet_hash(ivf, packets=2):
 
 def main(data, esrgan_dir, work=None, pack="pack_049_movie_camp.cpk", sub="camp"):
     work = work or os.path.join(data, "camp_hd")
-    out_dir = os.path.join(data, "movie_hd", sub)
+    out_dir = os.environ.get("CAMPHD_OUT") or os.path.join(data, "movie_hd", sub)
+    model = os.environ.get("CAMPHD_MODEL", "")
+    crf = os.environ.get("CAMPHD_CRF", "24")
+    only = [x for x in os.environ.get("CAMPHD_ONLY", "").split(",") if x]
+    redo = os.environ.get("CAMPHD_REDO") == "1"
     os.makedirs(out_dir, exist_ok=True)
     usm_dir = os.path.join(work, "usm")
     if not os.path.isdir(usm_dir):
@@ -42,6 +50,8 @@ def main(data, esrgan_dir, work=None, pack="pack_049_movie_camp.cpk", sub="camp"
     usms = sorted(os.path.join(r, f) for r, _, fs in os.walk(usm_dir) for f in fs if f.endswith(".usm"))
     for path in usms:
         name = os.path.basename(path)[:-4]
+        if only and name not in only:
+            continue
         ivf, lo, hi = (os.path.join(work, x) for x in (name + ".ivf", "lo", "hi"))
         chunks = list(usm2ivf.frames(open(path, "rb").read()))
         prime = chunks[0][:4] == b"\0\0\1\xb3"  # MPEG-1 sequence header (Sofdec.Prime), not IVF
@@ -57,7 +67,7 @@ def main(data, esrgan_dir, work=None, pack="pack_049_movie_camp.cpk", sub="camp"
         else:
             usm2ivf.main(path, ivf)
             dst = os.path.join(out_dir, "%s_%016x.ivf" % (name, first_packet_hash(ivf)))  # runtime finds it by the hash
-            if os.path.exists(dst):
+            if os.path.exists(dst) and not redo:
                 continue
         n = len(chunks)
         if len(os.listdir(hi) if os.path.isdir(hi) else []) != n:  # an interrupted run's frames are kept
@@ -66,10 +76,15 @@ def main(data, esrgan_dir, work=None, pack="pack_049_movie_camp.cpk", sub="camp"
                 os.makedirs(d)
             subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", ivf, "-fps_mode", "passthrough",
                             os.path.join(lo, "%04d.png")], check=True)
-            subprocess.run([os.path.join(esrgan_dir, "realesrgan-ncnn-vulkan.exe"), "-i", lo, "-o", hi,
-                           "-n", "realesr-animevideov3", "-s", "3", "-f", "png"], check=True, capture_output=True)
+            if model == "anime":  # 4x anime model; the encoder below scales to 3x
+                subprocess.run([os.path.join(esrgan_dir, "realesrgan-ncnn-vulkan.exe"), "-i", lo, "-o", hi,
+                               "-n", "realesrgan-x4plus-anime", "-s", "4", "-f", "png"], check=True, capture_output=True)
+            else:
+                subprocess.run([os.path.join(esrgan_dir, "realesrgan-ncnn-vulkan.exe"), "-i", lo, "-o", hi,
+                               "-n", "realesr-animevideov3", "-s", "3", "-f", "png"], check=True, capture_output=True)
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-framerate", "30", "-i",
-                        os.path.join(hi, "%04d.png"), "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-crf", "24",
+                        os.path.join(hi, "%04d.png")] + (["-vf", "scale=iw*3/4:ih*3/4:flags=lanczos"] if model == "anime" else []) +
+                       ["-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-crf", crf,
                         "-b:v", "0", "-deadline", "good", "-cpu-used", "4", "-row-mt", "1", "-threads", "16",
                         "-tile-columns", "2", "-g", "60", "-f", "ivf", dst + ".tmp"], check=True)
         os.replace(dst + ".tmp", dst)

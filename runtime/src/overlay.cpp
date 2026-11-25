@@ -376,6 +376,10 @@ static std::vector<Item> build_items() {
         {L"Battle speed", {L"1x", L"2x", L"3x"}, battle_speed() - 1,
          L"Game speed in battles (F3 or the touchpad also switches it in battle). 3x needs 90+ fps; at 60 fps it acts as 2x.",
          [](int c) { set_battle_speed(c + 1, false); }},
+        {L"P5-style battle buttons", {L"Off", L"Buttons", L"Buttons + P5 panel"}, battle_buttons_mode(),
+         L"Each battle command on its own button: bottom Attack, right Guard, top Skills, left Items, L Tactics, R Change, "
+         L"- Escape, ZR Auto battle. P5 panel: a Persona 5 style panel replaces the wheel. Applies at once, also in battle.",
+         [](int c) { set_battle_buttons_mode(c); save_setting("battle_buttons", std::to_string(c)); }},
         {L"Reveal dungeon maps", onoff, env_on("NX_MAP_REVEAL", false),
          L"Each Idolasphere floor shows its whole layout on the minimap and the map as soon as you enter it. What was revealed stays revealed.",
          [](int c) { save_setting("map_reveal", c ? "1" : "0"); }},
@@ -688,6 +692,10 @@ bool overlay_update(void* hwnd, uint64_t buttons, int ly, bool f1) {
     RECT cr{0, 0, ww, wh};
     POINT org{0, 0};
     const float s = std::max(0.5f, (cr.bottom - cr.top) / 1080.0f);
+    // the game's 16:9 area in the window (ultrawide), as on Windows above
+    const float pa = 16.0f / 9 * vk::wide_factor(), cw_ = (float)cr.right, ch_ = (float)cr.bottom;
+    const float ph = std::fabs(cw_ / ch_ - pa) < pa * 0.01f ? ch_ : std::min(ch_, cw_ / pa);
+    const int ui_left = (int)((cw_ - std::min(cw_, ph * 16 / 9)) / 2), ui_bottom = (int)((ch_ + ph) / 2);
     const bool visible = ww > 0 && wh > 0 && !(SDL_GetWindowFlags((SDL_Window*)hwnd) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED));
     {
         std::lock_guard<std::mutex> lk(g_layer_lock);
@@ -788,7 +796,33 @@ bool overlay_update(void* hwnd, uint64_t buttons, int ly, bool f1) {
 }
 
 #ifdef _WIN32
-std::shared_ptr<const SubsBitmap> frame_overlay(uint32_t fw, uint32_t fh) { return subs_frame(fw, fh); }
+// the subtitles and the P5 battle command panel (p5ui.cpp) as one bitmap (premultiplied, union of both rects)
+std::shared_ptr<const SubsBitmap> frame_overlay(uint32_t fw, uint32_t fh) {
+    auto subs = subs_frame(fw, fh);
+    auto p5 = p5_panel(fw, fh);
+    if (!p5) return subs;
+    if (!subs) return p5;
+    static std::mutex m;
+    std::lock_guard<std::mutex> lk(m);
+    static std::shared_ptr<const SubsBitmap> cached, cs, cp;
+    if (cached && cs == subs && cp == p5) return cached;
+    auto b = std::make_shared<SubsBitmap>();
+    b->x = std::min(subs->x, p5->x), b->y = std::min(subs->y, p5->y);
+    b->w = std::max(subs->x + subs->w, p5->x + p5->w) - b->x, b->h = std::max(subs->y + subs->h, p5->y + p5->h) - b->y;
+    b->rgba.assign((size_t)b->w * b->h, 0);
+    for (const SubsBitmap* s : {p5.get(), subs.get()})
+        for (uint32_t y = 0; y < s->h; y++)
+            for (uint32_t x = 0; x < s->w; x++) {
+                const uint32_t src = s->rgba[(size_t)y * s->w + x], a = src >> 24;
+                if (!a) continue;
+                uint32_t& d = b->rgba[(size_t)(s->y - b->y + y) * b->w + (s->x - b->x + x)];
+                uint32_t r = 0;
+                for (int k = 0; k < 32; k += 8) r |= std::min(255u, ((src >> k) & 255) + ((d >> k) & 255) * (255 - a) / 255) << k;
+                d = r;
+            }
+    cached = b, cs = subs, cp = p5;
+    return cached;
+}
 #else
 // The present path's overlay for a fw x fh frame: the subtitles plus the menu layers (laid out in window pixels, scaled
 // to the frame when it has another size), as one bitmap. Rebuilt only when one of them changed.

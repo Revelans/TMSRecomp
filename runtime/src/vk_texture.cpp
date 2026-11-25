@@ -2,6 +2,8 @@
 // from guest memory into a staging ring, then copy into the Vulkan image. Block-linear layout: GOB = 64 bytes x 8
 // rows; blocks are 1 GOB wide and 2^n GOBs tall (n chosen per level from its height, at most 16 GOBs), row-major.
 // The block-height rule is the common Tegra one and is an assumption for this driver: check textures on screen.
+#include <set>
+#include "bc7.h"
 #include "plat.h"
 #include "vk.h"
 
@@ -10,6 +12,7 @@
 #include <condition_variable>
 #include <deque>
 #include <fstream>
+#include <functional>
 #include <thread>
 #include <unordered_set>
 
@@ -486,6 +489,223 @@ static bool prompt_replace(VkCommandBuffer cb, Image* im, uint64_t hash, int sty
     return pack_upload(cb, im, p, key, srgb);
 }
 
+// HD button atlases (s113; user 11-25: "Minimap OFF" / TOPIC / Menu pills low-res with the UHD pack). With PlayStation
+// or Xbox icons the atlas used to be the game's own, repainted at its size, and the UHD pack's copy was skipped (it shows
+// the Switch letters). Now the pack's BC7 copy (2x / 4x) gets the icons painted at its scale: around each cell the
+// level-0 blocks are decoded (bc7.h, checked bit-exact against texconv), the cells painted (pad_icons.cpp), and the
+// region box-filtered into levels 0..5 and encoded back (BC7 mode 6). Built once per atlas + style, swapped in like a
+// pack image.
+static std::vector<uint8_t> decode_bc3(const uint8_t* src, uint32_t w, uint32_t h);
+// A UHD pack file (BC7 DDS) read whole, its levels located; false when it is not a BC7 file at `scale` x w x h
+struct Bc7File { std::vector<uint8_t> b; uint32_t W = 0, H = 0, levels = 0; std::vector<size_t> off; int scale = 0; };
+static bool bc7_read(const fs::path& file, uint32_t w, uint32_t h, Bc7File& f) {
+    std::ifstream in(file, std::ios::binary);
+    f.b.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    if (f.b.size() < 148) return false;
+    uint32_t hdr[32], dxgi = 0;
+    memcpy(hdr, f.b.data(), 128);
+    if (hdr[21] != 0x30315844) return false;
+    memcpy(&dxgi, f.b.data() + 128, 4);
+    f.H = hdr[3], f.W = hdr[4], f.levels = std::max(1u, hdr[7]);
+    if ((dxgi != 98 && dxgi != 99) || f.W % w || f.H % h || f.W / w != f.H / h) return false;
+    f.scale = (int)(f.W / w);
+    f.off.resize(f.levels);
+    size_t pos = 148;
+    for (uint32_t l = 0; l < f.levels; l++) f.off[l] = pos, pos += (size_t)std::max(1u, (f.W >> l) / 4) * std::max(1u, (f.H >> l) / 4) * 16;
+    return pos <= f.b.size();
+}
+// Around each rect (pack pixels, + margin): decode level 0, paint(x0, y0, rw, rh, rgba), box-filter into levels 0..5 and
+// encode back (BC7 mode 6). Regions are aligned to 128 px so every level's blocks are whole.
+static bool bc7_repaint(Bc7File& f, const std::vector<std::array<int, 4>>& rects, int margin,
+                        const std::function<bool(int, int, int, int, uint8_t*)>& paint) {
+    const int lr = (int)std::min<uint32_t>(f.levels - 1, 5), A = 4 << lr;
+    for (auto& c : rects) {
+        const int x0 = std::max(0, (c[0] - margin) / A * A), y0 = std::max(0, (c[1] - margin) / A * A);
+        const int x1 = std::min((int)f.W, (c[0] + c[2] + margin + A - 1) / A * A), y1 = std::min((int)f.H, (c[1] + c[3] + margin + A - 1) / A * A);
+        const int rw = x1 - x0, rh = y1 - y0;
+        if (rw <= 0 || rh <= 0) continue;
+        std::vector<uint8_t> px((size_t)rw * rh * 4);
+        for (int by = 0; by < rh / 4; by++)
+            for (int bx = 0; bx < rw / 4; bx++) {
+                uint8_t blk[64];
+                bc7::decode_block(&f.b[f.off[0] + ((size_t)(y0 / 4 + by) * (f.W / 4) + x0 / 4 + bx) * 16], blk);
+                for (int i = 0; i < 16; i++) memcpy(&px[((size_t)(by * 4 + i / 4) * rw + bx * 4 + i % 4) * 4], blk + i * 4, 4);
+            }
+        if (!paint(x0, y0, rw, rh, px.data())) return false;
+        std::vector<uint8_t> lv = std::move(px);
+        int lw = rw, lh = rh;
+        for (int l = 0; l <= lr && lw >= 4 && lh >= 4; l++) {
+            const uint32_t LW = std::max(1u, f.W >> l);
+            for (int by = 0; by < lh / 4; by++)
+                for (int bx = 0; bx < lw / 4; bx++) {
+                    uint8_t blk[64];
+                    for (int i = 0; i < 16; i++) memcpy(blk + i * 4, &lv[((size_t)(by * 4 + i / 4) * lw + bx * 4 + i % 4) * 4], 4);
+                    bc7::encode_block_mode6(blk, &f.b[f.off[l] + ((size_t)((y0 >> l) / 4 + by) * (LW / 4) + (x0 >> l) / 4 + bx) * 16]);
+                }
+            const int nw = lw / 2, nh = lh / 2;  // next level: 2 x 2 box
+            std::vector<uint8_t> n((size_t)nw * nh * 4);
+            for (int y = 0; y < nh; y++)
+                for (int x = 0; x < nw; x++)
+                    for (int k = 0; k < 4; k++)
+                        n[((size_t)y * nw + x) * 4 + k] = (uint8_t)((lv[((size_t)(2 * y) * lw + 2 * x) * 4 + k] + lv[((size_t)(2 * y) * lw + 2 * x + 1) * 4 + k] +
+                                                                    lv[((size_t)(2 * y + 1) * lw + 2 * x) * 4 + k] + lv[((size_t)(2 * y + 1) * lw + 2 * x + 1) * 4 + k] + 2) / 4);
+            lv = std::move(n), lw = nw, lh = nh;
+        }
+    }
+    return true;
+}
+static std::unordered_map<uint64_t, PackTex> g_padhd;
+static bool pad_atlas_hd(VkCommandBuffer cb, Image* im, uint64_t hash, int style, uint32_t w, uint32_t h, bool srgb) {
+    if (!pack_on()) return false;
+    auto it = pack_index().find(hash);
+    if (it == pack_index().end()) return false;
+    const uint64_t key = hash ^ (uint64_t)style << 60 ^ 0x5041444844ull;  // never a pack hash
+    PackTex& p = g_padhd[key];
+    if (p.state == 3) { pack_swap_in(im, key, p.img); return true; }
+    if (p.state == 4) return false;
+    p.state = 4;  // until it works
+    const auto t0 = std::chrono::steady_clock::now();
+    Bc7File f;
+    if (!bc7_read(it->second.file, w, h, f)) return false;
+    const auto rects = rt::pad_icon_cells(hash, w, h, f.scale);
+    if (!bc7_repaint(f, rects, 2 * f.scale, [&](int x0, int y0, int rw, int rh, uint8_t* px) {
+            return rt::pad_icon_paint_region(style, hash, w, h, f.scale, x0, y0, rw, rh, px);
+        }))
+        return false;
+    log("textures: HD button atlas %016llx (%ux%u -> %ux%u) drawn with %s icons, %zu cells (%.0f ms)", (unsigned long long)hash, w, h, f.W, f.H,
+        style == 1 ? "PlayStation" : "Xbox", rects.size(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    p.data = std::move(f.b), p.file = it->second.file, p.state = 2;
+    return pack_upload(cb, im, p, key, srgb);
+}
+// Field prompts "(A) Talk" (BC3 512 x 128) the same way: the disc found on the game's prompt (bc3 = its level 0),
+// painted at the pack's scale into the pack's copy
+static bool prompt_hd(VkCommandBuffer cb, Image* im, uint64_t hash, int style, uint32_t w, uint32_t h, const uint8_t* bc3, bool srgb) {
+    if (!pack_on()) return false;
+    auto it = pack_index().find(hash);
+    if (it == pack_index().end()) return false;
+    const uint64_t key = hash ^ (uint64_t)style << 60 ^ 0x50524f4d5048ull;  // never a pack hash
+    PackTex& p = g_padhd[key];
+    if (p.state == 3) { pack_swap_in(im, key, p.img); return true; }
+    if (p.state == 4) return false;
+    p.state = 4;
+    std::array<int, 4> r;
+    uint32_t fill = 0;
+    if (!rt::pad_prompt_disc(w, h, decode_bc3(bc3, w, h).data(), r, fill)) return false;
+    Bc7File f;
+    if (!bc7_read(it->second.file, w, h, f)) return false;
+    const int s = f.scale;
+    const std::array<int, 4> rs = {r[0] * s, r[1] * s, r[2] * s, r[3] * s};
+    if (!bc7_repaint(f, {rs}, 2 * s, [&](int x0, int y0, int rw, int rh, uint8_t* px) {
+            return rt::pad_prompt_paint(style, {rs[0] - x0, rs[1] - y0, rs[2], rs[3]}, fill, rw, rh, px);
+        }))
+        return false;
+    static int logged = 0;
+    if (logged++ < 8) log("textures: HD field prompt %016llx (%ux%u -> %ux%u) drawn with %s icons", (unsigned long long)hash, w, h, f.W, f.H, style == 1 ? "PlayStation" : "Xbox");
+    p.data = std::move(f.b), p.file = it->second.file, p.state = 2;
+    return pack_upload(cb, im, p, key, srgb);
+}
+
+// HD text (setting font_hd, default 1; user + Discord / reddit 11-25: "UI text looks low-res even with the UHD pack").
+// The game's glyph sheets are one-channel BC4 textures without mips (256x1024, 128x1024; BFFNT sheets), never in the
+// UHD pack (uhd_pack.py takes colour formats only). Each sheet is decoded, scaled 4x (Catmull-Rom), its edges
+// tightened (smoothstep 0.2..0.8 on the coverage: crisp like vector text, still antialiased), given a mip chain and
+// encoded back to BC4; swapped in like a pack image (kept per content hash, ~3 MB per sheet).
+static void bc4_decode_block(const uint8_t* b, uint8_t out[16]) {
+    uint8_t a[8] = {b[0], b[1]};
+    for (int j = 0; j < 6; j++)
+        a[2 + j] = a[0] > a[1] ? (uint8_t)(((6 - j) * a[0] + (1 + j) * a[1]) / 7) : (uint8_t)(((4 - j) * a[0] + (1 + j) * a[1]) / 5);
+    if (a[0] <= a[1]) a[6] = 0, a[7] = 255;
+    uint64_t bits = 0;
+    for (int j = 0; j < 6; j++) bits |= (uint64_t)b[2 + j] << (8 * j);
+    for (int t = 0; t < 16; t++) out[t] = a[(bits >> (3 * t)) & 7];
+}
+static void bc4_encode_block(const uint8_t v[16], uint8_t* b) {  // 8-value mode: endpoints max / min
+    uint8_t lo = 255, hi = 0;
+    for (int t = 0; t < 16; t++) lo = std::min(lo, v[t]), hi = std::max(hi, v[t]);
+    b[0] = hi, b[1] = lo;
+    uint64_t bits = 0;
+    if (hi > lo) {
+        static const int order[8] = {1, 7, 6, 5, 4, 3, 2, 0};  // palette index for steps lo .. hi
+        for (int t = 0; t < 16; t++) {
+            const int step = ((v[t] - lo) * 7 + (hi - lo) / 2) / (hi - lo);
+            bits |= (uint64_t)order[step] << (3 * t);
+        }
+    }
+    for (int j = 0; j < 6; j++) b[2 + j] = (uint8_t)(bits >> (8 * j));
+}
+static bool font_sheet(const nvn::Texture* t, uint32_t levels, uint32_t layers) {
+    static const bool on = !getenv("NX_FONT_HD") || atoi(getenv("NX_FONT_HD")) != 0;
+    return on && t->format == 0x49 && levels == 1 && layers == 1 && t->target == 1 && t->width >= 64 && t->width <= 512 &&
+           t->height >= 2 * t->width && t->width % 4 == 0 && t->height % 4 == 0;
+}
+static std::unordered_map<uint64_t, PackTex> g_fonts;
+static bool font_replace(VkCommandBuffer cb, Image* im, const uint8_t* bc4, uint32_t w, uint32_t h) {
+    const uint64_t key = tex_hash(bc4, (size_t)(w / 4) * (h / 4) * 8) ^ 0x464f4e5448440000ull;  // never a pack hash
+    PackTex& p = g_fonts[key];
+    if (p.state == 3) { pack_swap_in(im, key, p.img); return true; }
+    if (p.state == 4) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<float> src((size_t)w * h);
+    for (uint32_t by = 0; by < h / 4; by++)
+        for (uint32_t bx = 0; bx < w / 4; bx++) {
+            uint8_t px[16];
+            bc4_decode_block(bc4 + ((size_t)by * (w / 4) + bx) * 8, px);
+            for (int t = 0; t < 16; t++) src[(size_t)(by * 4 + t / 4) * w + bx * 4 + t % 4] = px[t] / 255.0f;
+        }
+    const uint32_t S = 4, W = w * S, H = h * S;
+    auto at = [&](int x, int y) { return src[(size_t)std::clamp(y, 0, (int)h - 1) * w + std::clamp(x, 0, (int)w - 1)]; };
+    auto cr = [](float a, float b, float c, float d, float t) {  // Catmull-Rom
+        return b + 0.5f * t * (c - a + t * (2 * a - 5 * b + 4 * c - d + t * (3 * (b - c) + d - a)));
+    };
+    std::vector<uint8_t> big((size_t)W * H);
+    for (uint32_t y = 0; y < H; y++) {
+        const float fy = (y + 0.5f) / S - 0.5f;
+        const int iy = (int)floorf(fy);
+        const float ty = fy - iy;
+        for (uint32_t x = 0; x < W; x++) {
+            const float fx = (x + 0.5f) / S - 0.5f;
+            const int ix = (int)floorf(fx);
+            const float tx = fx - ix;
+            float r[4];
+            for (int k = 0; k < 4; k++) r[k] = cr(at(ix - 1, iy - 1 + k), at(ix, iy - 1 + k), at(ix + 1, iy - 1 + k), at(ix + 2, iy - 1 + k), tx);
+            float v = std::clamp(cr(r[0], r[1], r[2], r[3], ty), 0.0f, 1.0f);
+            v = std::clamp((v - 0.2f) / 0.6f, 0.0f, 1.0f), v = v * v * (3 - 2 * v);  // tighter edges
+            big[(size_t)y * W + x] = (uint8_t)lroundf(v * 255);
+        }
+    }
+    // DDS (DX10, BC4 = 80) with a box-filtered mip chain down to the original size and on to 4 x 4
+    uint32_t hdr[32] = {0x20534444, 124, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000, H, W, 0, 0, 0};
+    hdr[19] = 32, hdr[20] = 0x4, hdr[21] = 0x30315844, hdr[27] = 0x1000;
+    uint32_t dx10[5] = {80, 3, 0, 1, 0};
+    std::vector<uint8_t> dds((uint8_t*)hdr, (uint8_t*)hdr + sizeof hdr);
+    dds.insert(dds.end(), (uint8_t*)dx10, (uint8_t*)dx10 + sizeof dx10);
+    uint32_t lw = W, lh = H, levels = 0;
+    for (;;) {
+        for (uint32_t by = 0; by < lh / 4; by++)
+            for (uint32_t bx = 0; bx < lw / 4; bx++) {
+                uint8_t v[16], b[8];
+                for (int t = 0; t < 16; t++) v[t] = big[(size_t)(by * 4 + t / 4) * lw + bx * 4 + t % 4];
+                bc4_encode_block(v, b);
+                dds.insert(dds.end(), b, b + 8);
+            }
+        levels++;
+        if (lw < 8 || lh < 8 || levels >= 4) break;
+        const uint32_t nw = lw / 2, nh = lh / 2;
+        std::vector<uint8_t> m((size_t)nw * nh);
+        for (uint32_t y = 0; y < nh; y++)
+            for (uint32_t x = 0; x < nw; x++)
+                m[(size_t)y * nw + x] = (uint8_t)((big[(size_t)(2 * y) * lw + 2 * x] + big[(size_t)(2 * y) * lw + 2 * x + 1] +
+                                                   big[(size_t)(2 * y + 1) * lw + 2 * x] + big[(size_t)(2 * y + 1) * lw + 2 * x + 1] + 2) / 4);
+        big = std::move(m), lw = nw, lh = nh;
+    }
+    memcpy(&dds[28], &levels, 4);
+    p.data = std::move(dds), p.state = 2;
+    p.file = "font_hd";
+    log("textures: glyph sheet %ux%u -> HD %ux%u (%u levels, %.1f ms)", w, h, W, H, levels,
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    return pack_upload(cb, im, p, key, false);
+}
+
 // A movie frame plane (linear 1280x720 Y / 640x360 UV) of a 4K replacement movie (hle_movie.cpp): the HD plane goes
 // into this texture's own HD image (one per guest address, kept), swapped in like a pack image.
 static bool movie_replace(VkCommandBuffer cb, nvn::Texture* t, Image* im, uint32_t row) {
@@ -586,6 +806,17 @@ bool upload_from_pool(VkCommandBuffer cb, nvn::Texture* t, Image* im) {
     }
     if (keep0) memcpy(dsts[0], level0.data(), level0.size());
     im->pool_bytes = (uint32_t)src_off;
+    if (!linear && font_sheet(t, levels, im->layers)) {  // HD text (font_replace)
+        mem_written((uint32_t)t->gpu, im->pool_bytes);
+        if (font_replace(cb, im, dsts[0], t->width, t->height)) { im->written = im->from_pool = true; return true; }
+    }
+    static const bool fontlog = getenv("NX_FONT_LOG") != nullptr;  // debug: one-channel (BC4 / R8) textures and arrays
+    if (fontlog && (t->format == 0x49 || im->layers > 1)) {
+        static std::set<std::string> seen;
+        char b[160];
+        snprintf(b, sizeof b, "%ux%u layers %u levels %u fmt %#x target %d flags %#x", t->width, t->height, im->layers, levels, t->format, (int)t->target, t->flags);
+        if (seen.insert(b).second) log("font?: %08x %s", t->guest, b);
+    }
     mem_written((uint32_t)t->gpu, im->pool_bytes);  // start watching from this upload
     bool srgb = false;
     const DxgiFmt* dx = !linear && t->target == 1 && im->layers == 1 ? dxgi_of(im->format, &srgb) : nullptr;
@@ -620,6 +851,10 @@ bool upload_from_pool(VkCommandBuffer cb, nvn::Texture* t, Image* im) {
         }
         if (!dx->block && rt::is_pad_icon_atlas(hash)) {  // controller icons (pad_icons.cpp)
             im->pad_style = (int8_t)rt::pad_icon_style();
+            if (im->pad_style && pad_atlas_hd(cb, im, hash, im->pad_style, t->width, t->height, srgb)) {  // the UHD pack's copy
+                im->written = im->from_pool = true;
+                return true;
+            }
             if (im->pad_style) {
                 std::vector<uint8_t>& a = level0;  // painted in place (scratch; dsts[0] already has the original)
                 const auto t0 = std::chrono::steady_clock::now();
@@ -639,6 +874,10 @@ bool upload_from_pool(VkCommandBuffer cb, nvn::Texture* t, Image* im) {
         }
         if (dx->unorm == VK_FORMAT_BC3_UNORM_BLOCK && rt::is_pad_prompt(hash)) {  // field prompts "(A) Talk" (pad_icons.cpp)
             im->pad_style = (int8_t)rt::pad_icon_style();
+            if (im->pad_style && prompt_hd(cb, im, hash, im->pad_style, t->width, t->height, level0.data(), srgb)) {  // the UHD pack's copy
+                im->written = im->from_pool = true;
+                return true;
+            }
             if (im->pad_style && prompt_replace(cb, im, hash, im->pad_style, t->width, t->height, level0.data(), srgb)) {
                 im->written = im->from_pool = true;
                 return true;

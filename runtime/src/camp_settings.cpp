@@ -78,7 +78,7 @@ const PageRow k_pages[4][11] = {
         {L"Carry 99 of each item", false, "On: every consumable stocks up to 99. Off: the game's limits (40, 20, 5...)."},
         {L"Overworld costume", false, "On: outside battle the party wears the costume equipped for battle."},
         {L"Resist markers", false, "Shield over foes that resist the skill, RESIST on resisted hits."},
-        {nullptr, false, ""},
+        {L"P5-style battle buttons", false, "One button per battle command. P5 panel: a Persona 5 style panel replaces the wheel."},
         {nullptr, false, ""},
         {nullptr, false, ""},
         {nullptr, false, ""},

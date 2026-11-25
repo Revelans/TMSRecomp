@@ -134,6 +134,15 @@ const Atlas k_atlases[] = {
     ATLAS_HALF(0x57febd3b87911115ull, 1024, 512, false, k_wide_cells),  // _US status_drc001
     ATLAS_HALF(0xea81556a68ac884bull, 512, 512, false, k_select_cells),  // _US saveload001
     ATLAS_HALF(0x43e7b49de855cfd3ull, 1024, 1024, false, k_artists_cells),  // _US camp002
+    // Spanish mod (espanol, xdelta over the game's packs; s114): its _US files, same layout and cells as the English mod's,
+    // Spanish text -> other hashes (matched by pixels: tools texextract on the patched pack, 72-96 % identical)
+    ATLAS(0xf82b3e416bac10c3ull, 2048, 2048, true, k_hud2048_cells),     // m_window/m_window003
+    ATLAS(0xeba4b8b86fdcea5aull, 1024, 1024, false, k_topic_cells),      // Topic/topic_window
+    ATLAS(0xca3027254a4d8437ull, 1024, 1024, false, k_menu2_cells),      // Topic/drc_tv
+    ATLAS(0x723182956f3afea8ull, 2048, 1024, false, k_wide_cells),       // status_drc/status_drc001
+    ATLAS(0xcc8a54d159d9c982ull, 1024, 1024, false, k_select_cells),     // saveload/saveload001
+    ATLAS(0xce6c4f697d1b7580ull, 2048, 2048, false, k_artists_cells),    // camp/camp002
+    ATLAS(0xcd5159dd5aec880cull, 4096, 4096, false, k_battle4096_cells), // battle_02/battle_003
 };
 
 #ifdef _WIN32
@@ -531,6 +540,35 @@ bool pad_icon_atlas(int style, uint64_t hash, uint32_t w, uint32_t h, uint8_t* r
     return true;
 }
 
+// HD atlases (s113): the UHD pack's copy of an atlas at `scale` x the game's size gets the buttons drawn in at that
+// scale (vk_texture.cpp decodes / re-encodes the BC7 around each cell). Paints the cells inside the region x0, y0, w x h
+// (pack pixels) of rgba (RGBA8 straight alpha, w x h). Cell rects in pack pixels for the region list: pad_icon_cells.
+std::vector<std::array<int, 4>> pad_icon_cells(uint64_t hash, uint32_t w, uint32_t h, int scale) {
+    std::vector<std::array<int, 4>> v;
+    for (const Atlas& a : k_atlases)
+        if (a.hash == hash && (uint32_t)a.w == w && (uint32_t)a.h == h)
+            for (size_t i = 0; i < a.n; i++) {
+                const Cell& c = a.cells[i];
+                v.push_back({c.x * scale / a.div, c.y * scale / a.div, c.w * scale / a.div, c.h * scale / a.div});
+            }
+    return v;
+}
+bool pad_icon_paint_region(int style, uint64_t hash, uint32_t w, uint32_t h, int scale, int x0, int y0, int rw, int rh, uint8_t* rgba) {
+    const Atlas* at = nullptr;
+    for (const Atlas& a : k_atlases) if (a.hash == hash && (uint32_t)a.w == w && (uint32_t)a.h == h) at = &a;
+    if (!at) return false;
+    std::vector<Cell> cells;
+    for (size_t i = 0; i < at->n; i++) {
+        Cell c = at->cells[i];
+        c.x = c.x * scale / at->div - x0, c.y = c.y * scale / at->div - y0, c.w = c.w * scale / at->div, c.h = c.h * scale / at->div;
+        if (c.x + c.w < 0 || c.y + c.h < 0 || c.x > rw || c.y > rh) continue;
+        cells.push_back(c);
+    }
+    static std::mutex m;  // the painter is not reentrant across the game's loader threads
+    std::lock_guard<std::mutex> lk(m);
+    return cells.empty() || paint_cells(style, cells, at->plain, rw, rh, rgba);
+}
+
 // Field interaction prompts ("(A) Talk", "(A) Exit", "(A) Check"... in 5 languages): whole pills pre-rendered in the
 // effects Effect/map_0086..0095.ptcl, 512 x 128 BC3 (vk_texture.cpp decodes them). The green (A) disc sits at a
 // different x per text, so it is found here: the leftmost round blob of opaque green (the pill's green border is wide).
@@ -550,7 +588,25 @@ bool is_pad_prompt(uint64_t hash) {
     for (uint64_t h : k_prompt_hashes) if (h == hash) return true;
     return false;
 }
+static bool prompt_disc(uint32_t w, uint32_t h, const uint8_t* rgba, Cell& best);
 bool pad_icon_prompt(int style, uint32_t w, uint32_t h, uint8_t* rgba) {
+    Cell best{};
+    if (!prompt_disc(w, h, rgba, best)) return false;
+    return paint_cells(style, {best}, false, (int)w, (int)h, rgba);
+}
+// HD prompts (s113): the disc found on the game's prompt, painted at `scale` into a region of the UHD pack's copy
+bool pad_prompt_disc(uint32_t w, uint32_t h, const uint8_t* rgba, std::array<int, 4>& rect, uint32_t& fill) {
+    Cell c{};
+    if (!prompt_disc(w, h, rgba, c)) return false;
+    rect = {c.x, c.y, c.w, c.h}, fill = c.fill;
+    return true;
+}
+bool pad_prompt_paint(int style, std::array<int, 4> rect, uint32_t fill, int rw, int rh, uint8_t* rgba) {
+    static std::mutex m;
+    std::lock_guard<std::mutex> lk(m);
+    return paint_cells(style, {Cell{rect[0], rect[1], rect[2], rect[3], FACE_A, 2, fill}}, false, rw, rh, rgba);
+}
+static bool prompt_disc(uint32_t w, uint32_t h, const uint8_t* rgba, Cell& best) {
     auto green = [&](uint32_t i) {
         const uint8_t* q = rgba + i * 4;
         return q[3] > 200 && q[1] > 140 && q[1] > q[0] + 40 && q[1] > q[2] + 80;
@@ -558,7 +614,6 @@ bool pad_icon_prompt(int style, uint32_t w, uint32_t h, uint8_t* rgba) {
     std::vector<uint8_t> seen(w * h);
     std::vector<uint32_t> stack;
     int best_x = 1 << 30;
-    Cell best{};
     for (uint32_t i0 = 0; i0 < w * h; i0++) {
         if (seen[i0] || !green(i0)) continue;
         uint32_t x0 = w, y0 = h, x1 = 0, y1 = 0, n = 0;
@@ -581,8 +636,7 @@ bool pad_icon_prompt(int style, uint32_t w, uint32_t h, uint8_t* rgba) {
                 (uint32_t)(sum[0] / n << 16 | sum[1] / n << 8 | sum[2] / n)};
         best_x = (int)x0;
     }
-    if (best_x == 1 << 30) return false;
-    return paint_cells(style, {best}, false, (int)w, (int)h, rgba);
+    return best_x != 1 << 30;
 }
 
 // Cell table check without playing: every k_atlases texture found in <dir> as a dump (<w>x<h>_<fmt>_<hash>.dds,
@@ -649,6 +703,12 @@ const RAtlas k_res_atlases[] = {
     RATLAS(0x133f164b20932f02ull, 1024, 1024, k_status_res, 2),  // the game's own
     RATLAS(0x7ada3bc97c0dd991ull, 2048, 2048, k_battle_res, 1),  // _US battle_02/battle_002 (English mod)
     RATLAS(0xf7914dfb3c6f343dull, 1024, 1024, k_battle_res, 2),  // the game's own
+    // Spanish mod's _US files (s114, see k_atlases)
+    RATLAS(0x123e81e8b0323ba3ull, 2048, 1024, k_status_res, 1),  // camp/status001
+    RATLAS(0x723182956f3afea8ull, 2048, 1024, k_status_res, 1),  // status_drc/status_drc001
+    RATLAS(0xa6e5362517e42a54ull, 2048, 2048, k_status_res, 1),  // result/result_001
+    RATLAS(0x5fc0955af7168aa1ull, 2048, 2048, k_status_res, 1),  // fusion/fusion001
+    RATLAS(0xc888faed3c3baa07ull, 2048, 2048, k_battle_res, 1),  // battle_02/battle_002
 };
 std::atomic<int> g_resist_icons{-1};
 
