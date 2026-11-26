@@ -39,7 +39,7 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.4 beta.** It is tested until the chapter 2 Idolasphere with
+> **v0.1.5 beta.** It is tested until the chapter 2 Idolasphere with
 > saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
 > PCs: bug reports are very welcome.
 
@@ -62,6 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
+- [What's new in v0.1.5](#whats-new-in-v015)
 - [What's new in v0.1.4](#whats-new-in-v014)
 - [What's new in v0.1.3](#whats-new-in-v013)
 - [What's new in v0.1.2](#whats-new-in-v012)
@@ -86,6 +87,9 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 **Performance and display**
 - Native code, not emulation: the game's ARM code is translated to C and compiled for Windows x64, and its NVN graphics
   calls run on Vulkan. Built on your PC from your own dump in 5 to 15 minutes.
+- Faster translated code: guest registers and flags kept in CPU registers, -O2, and the game's memcpy / memset /
+  string functions as PC code, ThinLTO and a profile-guided build. Shibuya on one CPU core: 93 -> 137 fps.
+- 4K movies decode on the GPU's video engine (Windows' VP9 decoder): the camp menu uses about 2 CPU cores less.
 - Frame rate 30 (the game's own), 60, 120, 144, 165, 240 or uncapped. Game logic,
   animation and the camera run at the chosen rate; the game keeps its original speed.
 - Internal resolution from 720p (the game's own) to 4K, and 8K supersampling; Auto picks one for your screen and GPU.
@@ -114,6 +118,11 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **Reveal dungeon maps**: each Idolasphere floor shows its whole layout on the minimap and map when you enter it.
 - **Retry lost battles** with the battle's starting HP / EP / items.
 - **Overworld costume**: the costume equipped for battle is also worn in town, dungeons and story scenes.
+- **Request hints**: F1 menu > Request hints lists the requests in progress and the ones waiting to be taken, with who
+  gives each one and how to finish it.
+- **New Game+ requests in a new game**: requests 49 (Versus Grandmaster Mirage!) and 50 (The Dragon Descends) no
+  longer need New Game+.
+- **Language**: English, Japanese, French, Simplified or Traditional Chinese text (the game's own translations).
 - **All difficulties unlocked**: Friendly and Lunatic from the start, and every difficulty (Friendly .. Lunatic) can be
   changed mid-game in System > Settings. See [Difficulty levels](#difficulty-levels) for what each one changes.
 - Battle speed, autosave after battles (to slot 20, your own slots are untouched), field walk speed.
@@ -142,6 +151,27 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.5
+
+- **Language option** (#12): English, Japanese, French, Simplified or Traditional Chinese for game text and menus
+  (launcher, F1 menu, `language`). Voices stay; the Uncensored mod's text is English only.
+- **Faster on weaker PCs** (#11): the game code is built with more optimisation, whole-program optimisation and a
+  speed profile from real play (setup does this, about 1 minute longer); the game's memory / string functions run as
+  PC code; draw replay runs on its own thread at 60 fps too; less CPU work per draw (no command copies on the game
+  thread, push descriptors, fewer system calls). Measured on one CPU core in Shibuya: 93 -> about 137 fps.
+- **4K movies decode on the GPU** (Windows' VP9 decoder, `movie_gpu`): the camp menu's 4K background now takes about
+  half the CPU. PCs without the decoder fall back to the CPU as before.
+- **1080p renders exactly 1920 x 1080** (Auto on 1080p screens too): it rendered 2560 x 1440 and scaled down, 78% more
+  pixels for the graphics card.
+- **Keep 4K movies at 4K** (#13): `movie_hd_fallback = 0` (launcher: Display & FPS) never drops a slow movie to 720p.
+- **New Game+ requests in a fresh game** (`ng_plus_requests`, on) and **request hints** (F1 menu: open requests, who
+  gives them, how to finish them).
+- **AMD**: effects drawn as black shapes (#15): invalid shader colours become transparent black (`nan_guard`, auto = on
+  with AMD GPUs). The first start after the update compiles shaders again on AMD.
+- **Launcher**: the scrollbar can be dragged with the mouse (#14) and Windows touch screens (Legion Go)
+  scroll with a finger swipe.
+- Fixes: rare start-up abort (vsync thread race).
 
 ## What's new in v0.1.4
 
@@ -304,8 +334,14 @@ stored in `settings.ini` next to `tms.exe` as `key = value`; any key can also be
 | `mouse_camera`, `mouse_sensitivity`, `mouse_invert_y` | 1, 1.0 (0.2 .. 3.0), 0 | mouse turns the camera |
 | `pad_a` .. `pad_r3` | default, south, east, west, north, lb, rb, lt, rt, start, back, ls, rs, paddle1 .. paddle4, none | controller button remapping (launcher > Game > Controller buttons); taking another button's swaps the two |
 | `walk_speed` | 1.0 (default) .. 3.0 | field walk speed |
+| `nan_guard` | auto (on with AMD GPUs), 1, 0 | fixes effects drawn as black shapes on AMD cards (invalid shader colour values become black instead of spreading) |
+| `host_libc` | 1 (default), 0 | the game's memcpy / memset / memcmp / strlen / strcmp as PC code (0: the game's own) |
+| `movie_gpu` | 1 (default), 0 | 4K movies decode on the GPU (Windows' VP9 decoder, "VP9 Video Extensions"); 0 or no decoder: on the CPU |
+| `movie_hd_fallback` | 1 (default), 0 | 4K movies drop to 720p when this PC decodes them too slowly; 0 keeps 4K |
 | `map_reveal` | 0 (default), 1 | reveal dungeon maps |
+| `ng_plus_requests` | 1 (default), 0 | the two New Game+ requests (49, 50) also in a fresh game |
 | `field_costume` | 0 (default), 1 | overworld costume |
+| `language` | en (default), ja, fr, zh-Hans, zh-Hant | game text and menus (voices stay; the Uncensored mod's text is English only, so with another language its text changes are left out) |
 | `all_difficulties` | 1 (default), 0 | Friendly / Lunatic unlocked, full difficulty range in Settings |
 | `battle_retry` | 1 (default), 0 | retry lost battles |
 | `autosave` | 1 (default), 0 | save to slot 20 after battles |

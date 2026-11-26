@@ -35,9 +35,30 @@ HLE_FN(oe_Copyright, "_ZN2nn2oe30InitializeCopyrightFrameBufferEPvj") { c->r[0] 
 HLE_FN(oe_GetOpMode, "_ZN2nn2oe16GetOperationModeEv") { c->r[0] = 1; }    // console (docked)
 HLE_FN(oe_GetPerfMode, "_ZN2nn2oe18GetPerformanceModeEv") { c->r[0] = 1; } // boost (docked)
 HLE_FN(oe_GetFocus, "_ZN2nn2oe20GetCurrentFocusStateEv") { c->r[0] = 1; }  // in focus
+// Game language (setting `language`, s115, GitHub request: Japanese): the Switch answers the system language here and
+// the game picks Message/<JP_Japanese|USen|EUfr|CNzh|TWzh> and Interface/_<JP|US|FR|CN|TW> from it (0x4da19c: ja 0,
+// fr 2, zh-Hans 3, zh-Hant 4, anything else English). Setting values: en (default), ja, fr, zh-Hans, zh-Hant (aliases
+// jp, cn, tw, japanese, french, chinese...).
+const char* rt::language() {
+    static const char* code = [] {
+        std::string v = getenv("NX_LANGUAGE") ? getenv("NX_LANGUAGE") : "";
+        for (auto& ch : v) ch = (char)tolower((unsigned char)ch);
+        const char* r = "en-US";
+        if (v == "ja" || v == "jp" || v == "japanese") r = "ja";
+        else if (v == "fr" || v == "french" || v == "fr-ca") r = "fr";
+        else if (v == "zh-hans" || v == "zh-cn" || v == "cn" || v == "chinese" || v == "zh") r = "zh-Hans";
+        else if (v == "zh-hant" || v == "zh-tw" || v == "tw") r = "zh-Hant";
+        else if (!v.empty() && v.rfind("en", 0) != 0) log("settings: language %s unknown (en, ja, fr, zh-Hans, zh-Hant): English", v.c_str());
+        return r;
+    }();
+    return code;
+}
 HLE_FN(oe_GetLanguage, "_ZN2nn2oe18GetDesiredLanguageEv") {                 // LanguageCode returned via r0
+    const char* l = rt::language();
     memset(GPTR(c->r[0]), 0, 8);
-    memcpy(GPTR(c->r[0]), "en-US", 5);
+    memcpy(GPTR(c->r[0]), l, strlen(l));
+    static bool said = false;
+    if (!said) said = true, log("oe: language %s", l);
 }
 HLE_FN(oe_TotalActive, "_ZN2nn2oe25GetProgramTotalActiveTimeEv") {        // TimeSpan returned via r0
     st64(c->r[0], (uint64_t)GetTickCount64() * 1000000ull);
@@ -270,6 +291,7 @@ void rt::ui_clock(uint32_t* tick, float* frac) {
 }
 void rt::set_ui_speed(int hz) { g_ui_speed = hz == 60 ? 60 : 30; log("ui: speed %d Hz", g_ui_speed.load()); }
 static void levelup_poll();
+static void ng_plus_requests_poll();
 // 99 of every consumable (setting item_max99, default 1; USER 11-21: Life Stone 40, Patra 90, Magic Mirror 5, ...): the
 // consumable table Table/ItemUseTable.dat (256 records of 0x2c; +0x22 = stock cap byte, e.g. Life Stone 0x28) is loaded once
 // by the item tables object (ctor 0x27ce98 from 0x27f974, stored in *(0x9ef458); +4 = the ItemUseTable file object, data at
@@ -304,6 +326,7 @@ void rt::frame_begin() {
     static float acc = 0, acc60 = 0, accui = 0;
     levelup_poll();
     item_cap_poll();
+    ng_plus_requests_poll();
     if (fps_setting() == 30) { g_tick30++, g_tick60++, g_tick_ui30++; return; }
     g_ui_time += g_base_dt;
     apply_game_dt(battle_dt(g_base_dt));  // battles start and end: the step follows
@@ -1647,6 +1670,36 @@ std::atomic<int64_t> rt::g_wheel_ms{0}, rt::g_wheel_open_ms{0}, rt::g_wheel_bloc
 // Screens over the open wheel (user 11-26): the tutorial info window (info_window_update runs each frame it is up, state
 // +8 < 4) and Stats (+ : the wheel input object +0x5c8 = 1, the wheel input is still called). While one is up the panel
 // hides and the buttons are the game's.
+// Rare boot abort (NOTES "Boot abort", Discord 11-26 i5-8500): the SDK's WaitSystemEvent aborts when the event's state
+// (+0x1c) is not 1 / 2 (= not initialised yet). Seen in the game's vsync thread (0x55d250) right as the main thread
+// sets the event up (GetDisplayVsyncEvent): a start-up race. Wait up to 2 s for the event to be set up; logged.
+// s115, Augs' crash log (nx_20261125_160319, this guard in the build, nothing logged): the real cause. The main thread
+// (0x55c594..0x55c630) sets the event up and waits on it itself, then passes the vsync thread an argument block on its
+// OWN STACK (sp+80: +4 = the event) and returns without waiting for the thread to start. The thread reads +4 once
+// (0x55d260) before its loop; started late (a busy 6-core CPU), it reads a reused stack slot: 0 or garbage, every
+// wait aborts. The Switch starts it at once. Here: a wait from the vsync thread (lr 0x55d284) on anything but the event
+// GetDisplayVsyncEvent filled takes that event, in r0 and in r4 (the thread's copy for its later waits).
+// s115: this was a PROBE_FN in s114: probes run only where the recompiler emitted PROBE (names.txt functions), and an
+// SDK export has only its HOOK slot, so it never ran (Augs' crash log: nothing logged). Now the hook, which then runs
+// the SDK's own WaitSystemEvent (call_unhooked).
+HLE_FN(wait_sysevent_hook, "_ZN2nn2os15WaitSystemEventEPNS0_15SystemEventTypeE") {
+    static const bool test = getenv("NX_TEST_BOOT_RACE") != nullptr;  // debug: the overwritten argument, made to happen
+    if (test && c->r[14] == 0x0055d284u && rt::g_vsync_guest_event) c->r[4] = 0, c->r[0] = 0;
+    uint32_t ev = c->r[0], r4 = c->r[4];
+    if (const uint32_t vev = rt::g_vsync_guest_event; c->r[14] == 0x0055d284u && vev && ev != vev) {
+        static int told = 0;
+        if (told++ < 3) log("kernel: vsync thread waits on %08x, not the vsync event %08x (its start-up argument was overwritten): using %08x", ev, vev, vev);
+        ev = r4 = vev;
+    }
+    if (ev && ld8(ev + 0x1c) != 1 && ld8(ev + 0x1c) != 2) {
+        int ms = 0;
+        for (; ms < 2000 && ld8(ev + 0x1c) != 1 && ld8(ev + 0x1c) != 2; ms++) Sleep(1);
+        log("kernel: WaitSystemEvent on event %08x before it was set up (lr %08x): waited %d ms, state %u", ev, c->r[14], ms, ld8(ev + 0x1c));
+    }
+    const uint32_t lr = c->r[14];
+    rt::call_unhooked(c, "_ZN2nn2os15WaitSystemEventEPNS0_15SystemEventTypeE", {ev});
+    c->r[4] = r4, c->r[14] = lr;
+}
 PROBE_FN(info_window_probe, "info_window_update") {
     if (ld32(c->r[0] + 8) < 4) rt::g_wheel_blocked_ms = ms_now();
 }
@@ -2857,6 +2910,29 @@ static int flag_get(uint32_t id) {
 }
 PROBE_FN(flag_on, "flag_on") { if (flag_get(c->r[0]) == 0) log("[flag] on %s", flag_name(c->r[0]).c_str()); }
 PROBE_FN(flag_off, "flag_off") { if (flag_get(c->r[0]) == 1) log("[flag] off %s", flag_name(c->r[0]).c_str()); }
+// New Game+ requests in a fresh game (setting ng_plus_requests, default 1; user request s116): only two requests are
+// NG+ only, both made available by ScriptCommon/Map/Gimmick/GimmickQuestStarter.lua (Quest_Start) behind
+// IsFlagOn(FLG_EVM_LOOP_START): No. 49 "Versus Grandmaster Mirage!" (quest 61: chapter 1 + NG+) and No. 50 "The Dragon
+// Descends" (quest 73: NG+, quest 52 "Path of the Strong" done, map count d008_ShardTradeTime >= 36). Their NPCs and
+// scripts only check the *_AVAILABLE flags (Map_NpcEventTable, GimmickInitializeScript, mapNPC_d008_02), so the same
+// rules without the NG+ check set those flags here, twice a second. Map counts: GetMapCount (0x430f2c) ->
+// 0x354c00: flags object + 0x34fc0 + 4 * id.
+static void ng_plus_requests_poll() {
+    if (g_frame_no % 30) return;
+    static const bool on = !getenv("NX_NG_PLUS_REQUESTS") || atoi(getenv("NX_NG_PLUS_REQUESTS")) != 0;
+    if (!on) return;
+    const uint32_t obj = ld32(ld32(FLAGS_PTR));
+    if (!obj || mem_query(obj).state == MS_FREE) return;
+    auto set = [](uint32_t id, const char* what) {
+        const uint32_t a = flag_byte(id);
+        *(uint8_t*)GPTR(a) |= 1u << (id & 7);
+        log("[flag] on %s (ng_plus_requests: %s)", flag_name(id).c_str(), what);
+    };
+    if (flag_get(0x91c0) == 0 && flag_get(0x3e01) == 1) set(0x91c0, "request 49 Versus Grandmaster Mirage!");
+    if (flag_get(0x9280) == 0 && flag_get(0x913f) == 1 && (int32_t)ld32(obj + 0x34fc0 + 4 * 0x1e) >= 36)
+        set(0x9280, "request 50 The Dragon Descends");
+}
+int rt::game_flag(uint32_t id) { return flag_get(id); }
 void rt::flag_command(const char* args) {
     unsigned id = 0;
     int v = -1;

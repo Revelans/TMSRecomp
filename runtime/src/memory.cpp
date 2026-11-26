@@ -1,3 +1,4 @@
+#include <unordered_map>
 // Guest memory: one 4 GiB reservation at GUEST_BASE, committed on demand, plus a region map for QueryMemory.
 #ifdef _WIN32
 #include <windows.h>
@@ -165,6 +166,7 @@ bool mem_written(uint32_t addr, uint32_t size) {  // CPU wrote [addr, addr+size)
     }
     return any;
 }
+bool mem_written_span(uint32_t addr, uint32_t size, uint32_t, uint32_t, uint64_t) { return mem_written(addr, size); }
 #else
 double process_private_mb() {  // committed private memory of the process (leak checks in the logs)
     PROCESS_MEMORY_COUNTERS_EX pm{};
@@ -235,16 +237,60 @@ double guest_committed_mb() {  // committed pages of the guest reservation (the 
 }
 
 std::atomic<uint64_t> g_ww_reset_pages{0};  // NX_STALL_STATS: pages re-armed by ResetWriteWatch (each costs a fault on the next write)
+// s118 (Augs, i5-8500 crosswalk): one GetWriteWatch + ResetWriteWatch per bound texture per submit was ~16% of the
+// replay thread's busy time here (more on Intel CPUs with syscall mitigations). Written pages are now collected into a
+// bitmap of the 4 GB guest space (128 KB): mem_written_span harvests a whole memory pool with one call per submit
+// (WRITE_WATCH_FLAG_RESET), each texture then tests and clears its own pages. mem_written harvests its own range, so
+// both see the same pages. NX_WW_BATCH=0: the old per-texture calls.
+static std::mutex g_ww_lock;
+static uint64_t g_ww_bits[(1ull << 32) >> 18];  // one bit per 4 KB guest page
+static void ww_harvest(uint32_t lo, uint32_t len) {  // g_ww_lock held; lo, len page aligned
+    thread_local std::vector<void*> hits;
+    if (hits.size() < (len >> 12)) hits.resize(len >> 12);
+    ULONG_PTR n = len >> 12;
+    DWORD gran;
+    if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, GPTR(lo), len, hits.data(), &n, &gran) != 0) return;
+    for (ULONG_PTR i = 0; i < n; i++) {
+        const uint64_t pg = ((uint8_t*)hits[i] - (uint8_t*)GUEST_BASE) >> 12;
+        g_ww_bits[pg >> 6] |= 1ull << (pg & 63);
+    }
+    g_ww_reset_pages += n;
+}
+static bool ww_take(uint32_t lo, uint32_t len) {  // g_ww_lock held: any page of [lo, lo+len) written; clears them
+    bool any = false;
+    for (uint64_t pg = lo >> 12, e = ((uint64_t)lo + len) >> 12; pg < e; pg++) {
+        uint64_t& w = g_ww_bits[pg >> 6];
+        if (!w && (pg & 63) == 0 && pg + 64 <= e) { pg += 63; continue; }
+        const uint64_t b = 1ull << (pg & 63);
+        if (w & b) w &= ~b, any = true;
+    }
+    return any;
+}
 bool mem_written(uint32_t addr, uint32_t size) {  // CPU wrote [addr, addr+size) since the last call for it
     if (!size) return false;
     uint32_t lo = addr & ~0xFFFu, len = ((addr + size + 0xFFF) & ~0xFFFu) - lo;
-    void* hit[1];
-    ULONG_PTR n = 1;
-    DWORD gran;
-    if (GetWriteWatch(0, GPTR(lo), len, hit, &n, &gran) != 0 || n == 0) return false;
-    ResetWriteWatch(GPTR(lo), len);
-    g_ww_reset_pages += len >> 12;
-    return true;
+    std::lock_guard<std::mutex> l(g_ww_lock);
+    ww_harvest(lo, len);
+    return ww_take(lo, len);
+}
+bool mem_written_span(uint32_t addr, uint32_t size, uint32_t span_lo, uint32_t span_len, uint64_t stamp) {
+    static const bool batch = !getenv("NX_WW_BATCH") || atoi(getenv("NX_WW_BATCH")) != 0;
+    if (!batch || !span_len || addr < span_lo || (uint64_t)addr + size > (uint64_t)span_lo + span_len) return mem_written(addr, size);
+    if (!size) return false;
+    uint32_t lo = addr & ~0xFFFu, len = ((addr + size + 0xFFF) & ~0xFFFu) - lo;
+    const uint32_t slo = span_lo & ~0xFFFu;
+    const uint32_t slen = (uint32_t)((((uint64_t)span_lo + span_len + 0xFFF) & ~0xFFFull) - slo);
+    std::lock_guard<std::mutex> l(g_ww_lock);
+    static std::unordered_map<uint64_t, uint64_t> harvested;  // (span start, length) -> stamp of its last harvest
+    uint64_t& h = harvested[(uint64_t)slo << 32 | slen];
+    if (h != stamp + 1) {
+        h = stamp + 1, ww_harvest(slo, slen);
+        static const bool dbg = getenv("NX_WW_LOG") != nullptr;  // debug: harvest sizes
+        static uint64_t n = 0, mb = 0;
+        if (dbg) { n++, mb += slen >> 20; if (!(n & 1023)) log("ww: %llu harvests, %llu MB scanned", (unsigned long long)n, (unsigned long long)mb); }
+    }
+    if (harvested.size() > 4096) harvested.clear();
+    return ww_take(lo, len);
 }
 #endif
 

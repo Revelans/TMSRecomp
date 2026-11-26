@@ -12,6 +12,7 @@ import collections
 import io
 import json
 import os
+import re
 import struct
 import sys
 import time
@@ -430,6 +431,98 @@ def emit_function(lf, s, end, body, labels, funcs, noret, hooks, plt, names, thu
     return out
 
 
+REG_REF = re.compile(r"c->r\[(\d+)\]")
+# Where the lifted code hands the Cpu to someone else: a guest function, dispatch, a runtime entry (guest_*), JUMP
+# (dispatch or return), a return. The static inline helpers of guest.h that take c (add_flags, nz, neon_*, vfp_*,
+# excl_*, ...) never touch c->r, so they are not escapes.
+ESCAPE = re.compile(r"((?:F_[0-9a-f]{8}\(c\)|dispatch\(c, [^;]*\)|guest_\w+\(c\b[^;]*\));)( return;)?"
+                    r"|JUMP\((\w+)\);|\breturn;")
+
+
+FLAG_REF = re.compile(r"c->(n|z|cf|v)\b")
+# helpers that read or write the APSR flags through c besides add_flags / nz: such a function keeps its flags in the Cpu
+FLAG_CPU = re.compile(r"\b(?:sh_\w+_c|get_cpsr|set_cpsr)\(c\b")
+
+
+VREF = re.compile(r"(&?)c->vr\.([fwdx])\[(\d+)\]")
+# vector helpers that name registers by number (they reach c->vr themselves): such a function keeps vectors in the Cpu
+VEC_CPU = re.compile(r"\bneon_\w+\(c\b|c->vr\.\w+\[[^\]0-9]")
+VLOCALS_MAX = 12  # D registers a function may keep locally; more: all stay in the Cpu (copies at every call cost more)
+
+
+def vec_regs(text):
+    """D registers (0-31) the function names, and the ones it may write, or None when vectors must stay in the Cpu.
+    S2n/S2n+1 and W2n/W2n+1 are halves of Dn; &c->vr.x[n] (a Q register or a D register seen as lanes, at most 16
+    bytes) covers Dn and Dn+1 and counts as a write."""
+    if "c->vr" not in text or VEC_CPU.search(text):
+        return None
+    used, wr = set(), set()
+    for m in VREF.finditer(text):
+        i = int(m.group(3))
+        d = i // 2 if m.group(2) in "fw" else i
+        if m.group(1):
+            used |= {d, (d + 1) & 31}
+            wr |= {d, (d + 1) & 31}
+        else:
+            used.add(d)
+            if re.match(r"\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)", text[m.end():]):
+                wr.add(d)
+    return (used, wr) if len(used) <= VLOCALS_MAX else None
+
+
+def reg_locals(lines, k, flags=True, vec=False):
+    """Keep the k general registers a function names most in C locals (after Astral Chain Recomp's recomp/regs.py),
+    and with flags its N Z C V in a local Flags F (after its recomp/flags.py).
+
+    Every guest store goes through a pointer that may alias the Cpu, so clang reloads c->r[n] and the flags after each
+    one. With locals it can keep them in host registers. The Cpu is made current where it escapes: before every call,
+    dispatch, runtime entry and return the locals the function writes are stored (spill), and after a call that
+    returns all of them are loaded again (reload: no trust in the callee-saved registers, since hooks replace guest
+    functions; flags reloaded after a call are dead in AAPCS code, so clang drops those loads). Functions that lift
+    setjmp (it returns twice, with registers from the jump buffer) keep every register in the Cpu.
+    """
+    hdr = 1
+    while hdr < len(lines) and lines[hdr].lstrip().startswith(("PROBE(", "HOOK(", "const uint32_t ret0")):
+        hdr += 1
+    body = lines[hdr:-1]
+    text = "\n".join(body)
+    if "guest_setjmp" in text:
+        return lines
+    cnt = collections.Counter(int(m) for m in REG_REF.findall(text))
+    regs = sorted(r for r, n in cnt.most_common(k) if n >= 3 and r <= 14)
+    fl = flags and FLAG_REF.search(text) is not None and FLAG_CPU.search(text) is None
+    vr = vec_regs(text) if vec else None
+    if not regs and not fl and not vr:
+        return lines
+    keep = set(regs)
+    text = REG_REF.sub(lambda m: f"r{m.group(1)}" if int(m.group(1)) in keep else m.group(0), text)
+    wr = [r for r in regs if re.search(rf"\br{r}\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)|\br{r}\s*(?:\+\+|--)|(?:\+\+|--)r{r}\b", text)]
+    spill = "".join(f"c->r[{r}] = r{r}; " for r in wr)
+    reload = "".join(f" r{r} = c->r[{r}];" for r in regs)
+    decl = ["  uint32_t " + ", ".join(f"r{r} = c->r[{r}]" for r in regs) + ";"] if regs else []
+    if fl:
+        text = FLAG_REF.sub(r"F.\1", text).replace("add_flags(c, ", "add_flags_f(&F, ").replace("nz(c, ", "nz_f(&F, ")
+        spill += "c->n = F.n; c->z = F.z; c->cf = F.cf; c->v = F.v; "
+        reload += " F.n = c->n; F.z = c->z; F.cf = c->cf; F.v = c->v;"
+        decl.append("  Flags F = {c->n, c->z, c->cf, c->v};")
+    if vr:
+        used, vw = vr
+        text = text.replace("c->vr.", "V.")
+        spill += "".join(f"c->vr.x[{d}] = V.x[{d}]; " for d in sorted(vw))
+        reload += "".join(f" V.x[{d}] = c->vr.x[{d}];" for d in sorted(used))
+        decl.append("  VRegs V; " + " ".join(f"V.x[{d}] = c->vr.x[{d}];" for d in sorted(used)))
+
+    def esc(m):
+        if m.group(1):
+            return f"{{ {spill}{m.group(1)}{m.group(2)} }}" if m.group(2) else f"{{ {spill}{m.group(1)}{reload} }}"
+        if m.group(3):
+            return f"{{ {spill}JUMP({m.group(3)}); }}"
+        return f"{{ {spill}return; }}"
+
+    text = ESCAPE.sub(esc, text)
+    return lines[:hdr] + decl + text.split("\n") + lines[-1:]
+
+
 class out:
     """Write a generated file only when its text changed, so the build recompiles only the C files a change touched."""
 
@@ -452,6 +545,11 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--stats", action="store_true", help="discovery + coverage only, no output")
     ap.add_argument("--file-bytes", type=int, default=3_000_000)
+    ap.add_argument("--reg-locals", type=int, default=6, metavar="K",
+                    help="keep the K most used general registers of each function in C locals (default 6: Shibuya on one core 118 -> 126 fps with flag locals; 8 was 124; 0 = all in the Cpu)")
+    ap.add_argument("--no-flag-locals", action="store_true", help="with --reg-locals: flags stay in the Cpu")
+    ap.add_argument("--vec-locals", action="store_true", help="with --reg-locals: VFP / NEON registers in a local too "
+                    "(off: no gain measured, s117: Shibuya one core 134.7 both, tutorial battle at the cap)")
     ap.add_argument("--names", default=os.path.join(os.path.dirname(__file__), "names.txt"))
     ap.add_argument("--probe-range", action="append", default=[], metavar="LO:HI",
                     help="give every function in [LO, HI) a probe slot (named fn_XXXXXXXX), for NX_COVER")
@@ -542,6 +640,8 @@ def main():
     for s in starts:
         e, body, labels = funcs[s]
         lines = emit_function(lf, s, e, body, labels, funcs, noret, hooks, plt, names, thunk_lo, probes)
+        if a.reg_locals:
+            lines = reg_locals(lines, a.reg_locals, not a.no_flag_locals, a.vec_locals)
         buf += lines + [""]
         size += sum(len(x) for x in lines)
         if size >= a.file_bytes:

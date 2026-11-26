@@ -18,10 +18,12 @@
 #include <memory>
 #include <vector>
 
+#include "movie_mf.h"
 #include <vpx/vp8dx.h>
 #include <vpx/vpx_decoder.h>
 
 #include "rt.h"
+#include "movie_mf.h"
 
 using namespace rt;
 
@@ -87,6 +89,9 @@ struct Hd {
     std::shared_ptr<const std::vector<uint8_t>> ivf;
     size_t pos = 32;  // next IVF frame record
     Vpx vpx;
+    MfVp9* mf = nullptr;  // GPU decoder (movie_mf.cpp, s117): used instead of libvpx when it opened
+    ~Hd() { if (mf) mfvp9_close(mf); }
+    bool on() const { return mf || vpx.ok; }  // some decoder opened
     double ms = 0;     // 4K decode time of the last `timed` frames
     int timed = 0;
     bool slow = false;  // PORTABILITY: a CPU that cannot decode 4K VP9 in time plays this movie at 720p
@@ -97,6 +102,14 @@ static bool hd_slow(Hd& hd, std::chrono::steady_clock::time_point t0) {
     hd.ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (++hd.timed < 30) return false;
     static const double limit = getenv("NX_MOVIE_HD_SLOW_MS") ? atof(getenv("NX_MOVIE_HD_SLOW_MS")) : 30;  // test: a lower limit
+    // setting movie_hd_fallback = 0 (GitHub #13): keep 4K even when the decode falls behind (a short stutter on a fast PC
+    // switched whole movies to 720p)
+    static const bool fallback = !getenv("NX_MOVIE_HD_FALLBACK") || atoi(getenv("NX_MOVIE_HD_FALLBACK")) != 0;
+    if (!fallback) {
+        if (hd.ms / hd.timed > limit) log("movie: 4K decode %.1f ms per frame (movie_hd_fallback = 0: stays 4K)", hd.ms / hd.timed);
+        hd.ms = 0, hd.timed = 0;
+        return false;
+    }
     if (hd.ms / hd.timed > limit && !hd.slow) log("movie: 4K decode %.1f ms per frame: too slow on this CPU, 720p for this movie", hd.ms / hd.timed), hd.slow = true;
     hd.ms = 0, hd.timed = 0;
     return hd.slow;
@@ -124,6 +137,28 @@ static std::map<uint64_t, std::filesystem::path>& hd_index() {
     }();
     return m;
 }
+// the GPU decoder when this PC has one (setting movie_gpu = 0: always libvpx), else libvpx; Hd::on() = some decoder
+static void hd_decoder_open(Hd& hd) {
+    static const bool gpu = !getenv("NX_MOVIE_GPU") || atoi(getenv("NX_MOVIE_GPU")) != 0;
+    if (hd.ivf->size() <= 32) return;
+    uint16_t w, h;
+    memcpy(&w, &(*hd.ivf)[12], 2), memcpy(&h, &(*hd.ivf)[14], 2);
+    if (gpu && (hd.mf = mfvp9_open(w, h))) return;
+    vpx_codec_dec_cfg_t cfg{};
+    cfg.threads = 8;
+    hd.vpx.ok = vpx_codec_dec_init(&hd.vpx.ctx, vpx_codec_vp9_dx(), &cfg, 0) == VPX_CODEC_OK;
+    if (hd.vpx.ok) vpx_codec_control(&hd.vpx.ctx, VP9D_SET_ROW_MT, 1);  // 4K streams have 4 tile columns: rows in parallel too
+}
+// one packet -> the frame as tight NV12 (GPU) or I420 image (libvpx); false: no frame
+static bool hd_decode(Hd& hd, const uint8_t* p, uint32_t n, std::vector<uint8_t>& nv12, const vpx_image_t** img, uint32_t* w, uint32_t* h) {
+    *img = nullptr;
+    if (hd.mf) return mfvp9_decode(hd.mf, p, n, nv12, w, h);
+    if (vpx_codec_decode(&hd.vpx.ctx, p, n, nullptr, 0) != VPX_CODEC_OK) return false;
+    vpx_codec_iter_t it = nullptr;
+    while (const vpx_image_t* i = vpx_codec_get_frame(&hd.vpx.ctx, &it)) *img = i;
+    if (*img) *w = (*img)->d_w & ~1u, *h = (*img)->d_h & ~1u;
+    return *img != nullptr;
+}
 static std::shared_ptr<Hd> hd_open(uint64_t hash) {
     auto it = hd_index().find(hash);
     if (it == hd_index().end()) return nullptr;
@@ -139,12 +174,9 @@ static std::shared_ptr<Hd> hd_open(uint64_t hash) {
         }
         hd->ivf = f;
     }
-    vpx_codec_dec_cfg_t cfg{};
-    cfg.threads = 8;
-    hd->vpx.ok = hd->ivf->size() > 32 && vpx_codec_dec_init(&hd->vpx.ctx, vpx_codec_vp9_dx(), &cfg, 0) == VPX_CODEC_OK;
-    if (hd->vpx.ok) vpx_codec_control(&hd->vpx.ctx, VP9D_SET_ROW_MT, 1);  // 4K streams have 4 tile columns: rows in parallel too
-    log("movie: 4K stream %s %s", it->second.filename().string().c_str(), hd->vpx.ok ? "playing" : "FAILED");
-    return hd->vpx.ok ? hd : nullptr;
+    hd_decoder_open(*hd);
+    log("movie: 4K stream %s %s", it->second.filename().string().c_str(), hd->on() ? (hd->mf ? "playing (GPU)" : "playing") : "FAILED");
+    return hd->on() ? hd : nullptr;
 }
 // the next HD frame as tight NV12 (null at the end of the stream or on an error)
 static std::shared_ptr<std::vector<uint8_t>> hd_next(Hd& hd, uint32_t* w, uint32_t* h) {
@@ -155,14 +187,10 @@ static std::shared_ptr<std::vector<uint8_t>> hd_next(Hd& hd, uint32_t* w, uint32
     memcpy(&n, &b[hd.pos], 4);
     const uint8_t* p = &b[hd.pos + 12];
     hd.pos += 12 + (size_t)n;
-    if (hd.pos > b.size() || vpx_codec_decode(&hd.vpx.ctx, p, n, nullptr, 0) != VPX_CODEC_OK) return nullptr;
-    vpx_codec_iter_t it = nullptr;
-    const vpx_image_t* img = nullptr;
-    while (const vpx_image_t* i = vpx_codec_get_frame(&hd.vpx.ctx, &it)) img = i;
-    if (!img) return nullptr;
     auto o = std::make_shared<std::vector<uint8_t>>();
-    *w = img->d_w & ~1u, *h = img->d_h & ~1u;
-    to_nv12(img, *w, *h, *o);
+    const vpx_image_t* img;
+    if (hd.pos > b.size() || !hd_decode(hd, p, n, *o, &img, w, h)) return nullptr;
+    if (img) to_nv12(img, *w, *h, *o);
     return hd_slow(hd, t0) ? nullptr : o;
 }
 struct HdPlane { uint64_t fp; std::shared_ptr<std::vector<uint8_t>> nv12; size_t off; uint32_t w, h; };
@@ -527,13 +555,10 @@ bool prime_seek(PrimeState& st, int target) {
         st.hd = std::make_unique<Hd>(), st.decoded = -1, st.img.reset();
         std::ifstream in(prime_index()[st.movie].ivf, std::ios::binary);
         st.hd->ivf = std::make_shared<const std::vector<uint8_t>>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-        vpx_codec_dec_cfg_t cfg{};
-        cfg.threads = 8;
-        st.hd->vpx.ok = st.hd->ivf->size() > 32 && vpx_codec_dec_init(&st.hd->vpx.ctx, vpx_codec_vp9_dx(), &cfg, 0) == VPX_CODEC_OK;
-        if (st.hd->vpx.ok) vpx_codec_control(&st.hd->vpx.ctx, VP9D_SET_ROW_MT, 1);
-        log("movie: 4K stream %s %s", prime_index()[st.movie].ivf.filename().string().c_str(), st.hd->vpx.ok ? "playing" : "FAILED");
+        hd_decoder_open(*st.hd);
+        log("movie: 4K stream %s %s", prime_index()[st.movie].ivf.filename().string().c_str(), st.hd->on() ? (st.hd->mf ? "playing (GPU)" : "playing") : "FAILED");
     }
-    for (int n = 0; st.hd->vpx.ok && !st.hd->slow && st.decoded < target && n < 30; n++) {
+    for (int n = 0; st.hd->on() && !st.hd->slow && st.decoded < target && n < 30; n++) {
         const auto t0 = std::chrono::steady_clock::now();
         const auto& b = *st.hd->ivf;
         if (st.hd->pos + 12 > b.size()) return false;
@@ -541,18 +566,26 @@ bool prime_seek(PrimeState& st, int target) {
         memcpy(&len, &b[st.hd->pos], 4);
         const uint8_t* p = &b[st.hd->pos + 12];
         st.hd->pos += 12 + (size_t)len;
-        if (st.hd->pos > b.size() || vpx_codec_decode(&st.hd->vpx.ctx, p, len, nullptr, 0) != VPX_CODEC_OK) return false;
+        if (st.hd->pos > b.size()) return false;
+        std::vector<uint8_t> nv12;
+        const vpx_image_t* img;
+        uint32_t w = 0, h = 0;
+        const bool got = hd_decode(*st.hd, p, len, nv12, &img, &w, &h);
+        if (!got && !st.hd->mf) return false;  // libvpx error (the GPU decoder may hold a frame back: keep going)
         st.decoded++;
-        vpx_codec_iter_t it = nullptr;
-        const vpx_image_t* img = nullptr;
-        while (const vpx_image_t* i = vpx_codec_get_frame(&st.hd->vpx.ctx, &it)) img = i;
-        if (!img || st.decoded < target) continue;
-        const uint32_t w = img->d_w & ~1u, h = img->d_h & ~1u;
+        if (!got || st.decoded < target) continue;
         auto o = std::make_shared<std::vector<uint8_t>>((size_t)w * h * 3 / 2);
-        for (uint32_t y = 0; y < h; y++) memcpy(&(*o)[(size_t)y * w], img->planes[0] + (size_t)y * img->stride[0], w);
-        for (int k = 1; k < 3; k++)
-            for (uint32_t y = 0; y < h / 2; y++)
-                memcpy(&(*o)[(size_t)w * h + (size_t)(k - 1) * (w / 2) * (h / 2) + (size_t)y * (w / 2)], img->planes[k] + (size_t)y * img->stride[k], w / 2);
+        if (img) {
+            for (uint32_t y = 0; y < h; y++) memcpy(&(*o)[(size_t)y * w], img->planes[0] + (size_t)y * img->stride[0], w);
+            for (int k = 1; k < 3; k++)
+                for (uint32_t y = 0; y < h / 2; y++)
+                    memcpy(&(*o)[(size_t)w * h + (size_t)(k - 1) * (w / 2) * (h / 2) + (size_t)y * (w / 2)], img->planes[k] + (size_t)y * img->stride[k], w / 2);
+        } else {  // NV12 -> I420 (this path wants planar chroma)
+            memcpy(o->data(), nv12.data(), (size_t)w * h);
+            uint8_t *u = o->data() + (size_t)w * h, *v = u + (size_t)(w / 2) * (h / 2);
+            const uint8_t* uv = nv12.data() + (size_t)w * h;
+            for (size_t i = 0; i < (size_t)(w / 2) * (h / 2); i++) u[i] = uv[2 * i], v[i] = uv[2 * i + 1];
+        }
         st.img = std::move(o), st.w = w, st.h = h;
         if (hd_slow(*st.hd, t0)) st.img.reset();
     }

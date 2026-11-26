@@ -26,6 +26,7 @@ struct Combo {
     std::vector<const StageVk*> stages;
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
     VkPipelineLayout layout = VK_NULL_HANDLE;
+    bool push = false;  // set_layout is a push-descriptor layout (vk_replay.cpp bind_resources pushes, no set)
     std::map<std::string, VkPipeline> pipelines;  // keyed by the packed fixed-function state
 };
 
@@ -44,7 +45,7 @@ VkShaderModule make_module(const Translated& t, bool shared = true);  // shared:
 uint64_t spirv_hash(const Translated& t);
 uint64_t module_hash(VkShaderModule m);               // 0: not made by make_module
 const Translated* translation_by_hash(uint64_t h);    // from <data>/cache/shaders.bin, null if absent
-void make_layout(const std::vector<std::pair<VkShaderStageFlagBits, const Translated*>>& stages, VkDescriptorSetLayout* set_layout, VkPipelineLayout* layout);
+void make_layout(const std::vector<std::pair<VkShaderStageFlagBits, const Translated*>>& stages, VkDescriptorSetLayout* set_layout, VkPipelineLayout* layout, bool* push = nullptr);
 // frame stats (vk.cpp): sidecar translations (time, count) and translations served from the disk cache
 extern std::atomic<uint32_t> g_translate_us, g_translate_n, g_translate_hits;
 // pipelines: one VkPipelineCache kept in <data>/cache/pipelines.bin (saved by pipeline_cache_save when new ones exist)

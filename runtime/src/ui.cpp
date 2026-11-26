@@ -623,7 +623,7 @@ static void vsync_thread() {
     BOOL ok1 = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &pp, sizeof pp);
     THREAD_POWER_THROTTLING_STATE tp{THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED, 0};
     BOOL ok2 = SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &tp, sizeof tp);
-    log("vsync: power throttling opt-out process %d thread %d (error %lu)", ok1, ok2, GetLastError());
+    log("vsync: power throttling opt-out process %d thread %d (error %lu), host thread %lu", ok1, ok2, GetLastError(), GetCurrentThreadId());
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 #endif
     const uint64_t freq = SDL_GetPerformanceFrequency();
@@ -642,11 +642,35 @@ static void vsync_thread() {
             // where this clock does not pace frames: the full spin at time-critical priority slowed the game and render
             // threads whenever it shared a physical core with one (s83: Shibuya 1% low 84 -> 107 fps without it).
             // NX_VSYNC_SPIN=1 / 0 forces the full spin / the sleep at every fps.
+            // s115 (Augs, i5-8500 6 cores / 6 threads, "high CPU even when idle"): at 30 / 60 with the window in front,
+            // a high-resolution waitable timer (Windows 10 1803+) sleeps until 0.5 ms before the tick, then the spin.
+            // Background or no such timer: the full spin as before.
             static const char* const spin_env = getenv("NX_VSYNC_SPIN");
             const int fps = rt::fps_setting();
-            const bool spin = spin_env ? strcmp(spin_env, "0") != 0 : fps == 30 || fps == 60;
-            const uint64_t margin = freq * 3 / 1000;
-            while (!spin && SDL_GetPerformanceCounter() + margin < next) Sleep(1);
+            bool spin = spin_env ? strcmp(spin_env, "0") != 0 : fps == 30 || fps == 60;
+            uint64_t margin = freq * 3 / 1000;
+            bool timed = false;  // the waitable timer slept: spin the rest (a Sleep(1) there could overshoot the tick)
+#ifdef _WIN32
+            static HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+            DWORD fg_pid = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &fg_pid);
+            const bool fg = fg_pid == GetCurrentProcessId();
+            static bool was_fg = false;
+            static int told = 0;
+            if (fg != was_fg && spin && !spin_env && told < 8) told++, log("vsync: window %s: %s", fg ? "in front" : "behind", fg && timer ? "timer + spin" : "full spin");
+            was_fg = fg;
+            if (timer && fg && spin && !spin_env) {
+                timed = true;
+                margin = freq / 2000;
+                const uint64_t now2 = SDL_GetPerformanceCounter();
+                if (now2 + margin < next) {
+                    LARGE_INTEGER due;
+                    due.QuadPart = -(LONGLONG)((next - margin - now2) * 10000000 / freq);  // relative, 100 ns units
+                    if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) WaitForSingleObject(timer, 50);
+                }
+            }
+#endif
+            while (!spin && !timed && SDL_GetPerformanceCounter() + margin < next) Sleep(1);
             while (SDL_GetPerformanceCounter() < next) YieldProcessor();
         }
         uint64_t t0 = SDL_GetPerformanceCounter();
@@ -784,8 +808,10 @@ HLE_FN(vi_GetNativeWindow, "_ZN2nn2vi15GetNativeWindowEPPvPNS0_5LayerE") {
     st32(c->r[0], hle_alloc(64));  // opaque to the game, handed to nvnWindowBuilderSetNativeWindow
     c->r[0] = 0;
 }
+std::atomic<uint32_t> rt::g_vsync_guest_event{0};  // the game's vsync SystemEventType (hle_sys.cpp boot abort guard)
 HLE_FN(vi_VsyncEvent, "_ZN2nn2vi20GetDisplayVsyncEventEPNS_2os15SystemEventTypeEPNS0_7DisplayE") {
     uint32_t ev = c->r[0], readable;
+    rt::g_vsync_guest_event = ev;
     log("vi: vsync event -> %08x", ev);
     uint32_t w = kevent_create(&readable);
     attach_system_event(c, ev, readable, true);

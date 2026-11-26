@@ -30,9 +30,9 @@ static std::map<uint32_t, uint32_t> g_pool_by_addr;  // pool storage start -> po
 static std::atomic<uint64_t> g_obj_gen{1};
 template <class T> T* get(uint32_t guest) {
     struct Hit { uint64_t gen = 0; uint32_t guest = 0; void* p = nullptr; };
-    thread_local Hit hits[64];
+    thread_local Hit hits[256];  // s117: 64 -> 256 (get<Pool> misses were 4% of the game thread in g_lock)
     const uint64_t gen = g_obj_gen.load(std::memory_order_acquire);
-    Hit& h = hits[(guest >> 3 ^ guest >> 9) & 63];
+    Hit& h = hits[(guest >> 3 ^ guest >> 11) & 255];
     if (h.gen == gen && h.guest == guest) return static_cast<T*>(h.p);
     std::lock_guard<std::mutex> l(g_lock);
     auto it = g_objs.find(guest);
@@ -68,15 +68,15 @@ uint64_t Buffer::gpu() const {
 static std::atomic<uint64_t> g_pool_gen{1};
 Pool* pool_of(uint64_t gpu, uint32_t* off) {
     struct Hit { uint64_t gen = 0, lo = 0, hi = 0; Pool* p = nullptr; };
-    thread_local Hit hits[4];  // draws alternate a few pools (vertex, index, uniform): last 4 answers
-    thread_local uint32_t slot = 0;
+    thread_local Hit hits[16];  // draws alternate a few pools (vertex, index, uniform): last 16 answers (s115: 4 missed,
+    thread_local uint32_t slot = 0;  // pool_of was still ~12% of the submitting thread's work in Shibuya)
     const uint64_t gen = g_pool_gen.load(std::memory_order_acquire);
     for (const Hit& h : hits)
         if (h.gen == gen && gpu >= h.lo && gpu < h.hi) {
             if (off) *off = (uint32_t)(gpu - h.p->addr);
             return h.p;
         }
-    Hit& hit = hits[slot++ & 3];
+    Hit& hit = hits[slot++ & 15];
     std::lock_guard<std::mutex> l(g_lock);
     auto it = g_pool_by_addr.upper_bound((uint32_t)gpu);
     const uint64_t next = it == g_pool_by_addr.end() ? 0x100000000ull : it->first;  // no other pool start below this
@@ -699,17 +699,24 @@ NVN(nvnCommandBufferCopyTextureToTexture) {  // (cmd, src, srcView, srcRegion, d
 }
 NVN(nvnCommandBufferCopyBufferToBuffer) { args(rec(c, OP_COPY_BUF_BUF), c, 7); }
 NVN(nvnCommandBufferWaitSync) {}
-// (cmd, count, handles*): a finished handle never changes, so calling it = copying its commands in here.
-// (s71 tried an OP_CALL that replays the called list in place instead: 4% slower, the many small lists cost more than
-// the copies; Blob copies share their bytes, s69.)
+// (cmd, count, handles*): a finished handle never changes, so calling it = its commands in here. Until s117 they were
+// copied (s71's in-place OP_CALL replay was 4% slower); now an OP_CALL the render thread flattens (vk.cpp).
 NVN(nvnCommandBufferCallCommands) {
     CmdBuf& b = cb(c->r[0]);
     b.mem_cmds++;
     std::lock_guard<std::mutex> l(g_lock);
     for (uint32_t i = 0; i < c->r[1]; i++) {
         auto it = g_handles.find(ld64(c->r[2] + 8 * i));
-        if (it != g_handles.end()) b.cmds.insert(b.cmds.end(), it->second->begin(), it->second->end());
-        else if (static int un = 0; un++ < 30) {
+        if (it != g_handles.end()) {
+            // s117: one OP_CALL instead of a copy of the called list (vector<Cmd> insert + CallCommands were ~5% of the
+            // game thread). The render thread flattens it before replay (vk.cpp backend_submit), where there is slack;
+            // s71's in-place OP_CALL replay was slower, flattening keeps the replay's look-ahead over one list.
+            Cmd& k = b.cmds.emplace_back();
+            k.op = OP_CALL;
+            const uint64_t lp = (uint64_t)(uintptr_t)it->second.get();
+            k.a[0] = (uint32_t)lp, k.a[1] = (uint32_t)(lp >> 32);
+            k.blob.p = std::shared_ptr<std::vector<uint8_t>>(std::const_pointer_cast<std::vector<Cmd>>(it->second), nullptr);
+        } else if (static int un = 0; un++ < 30) {
             auto k = g_killed.find(ld64(c->r[2] + 8 * i));
             if (k == g_killed.end()) log("nvn: CallCommands with unknown handle %llx (lr %s)", (unsigned long long)ld64(c->r[2] + 8 * i), symbol_at(c->r[14]));
             else log("nvn: CallCommands with unknown handle %llx (lr %s): pool %x [%x, %x) freed by %x [%x, %x)", (unsigned long long)ld64(c->r[2] + 8 * i), symbol_at(c->r[14]),
@@ -736,7 +743,7 @@ void nvn::sync_mark(uint32_t sync, uint64_t serial) {  // vk_replay.cpp: Command
 
 // -------------------------------------------------------------------------------------------- render thread
 // Draw replay (backend_submit) was 35-40% of the game thread in big areas (s71-s80 profiles). With a variable frame rate
-// (fps 0 or > 60) submits, queue fences and presents go to one render thread in order, and the game thread starts the next
+// (every rate but 30, s116; fps 0 / > 60 before) submits, queue fences and presents go to one render thread in order, and the game thread starts the next
 // frame's logic meanwhile. The game allows this itself: before each submit it waits for the sync it fenced two frames
 // earlier (measured s81: 2 nvnSyncWait, 1 submit, 1 nvnQueueFenceSync, 1 present per frame, in that order), so its
 // per-frame memory is double-buffered. Rules that keep the old order of effects:
@@ -745,7 +752,7 @@ void nvn::sync_mark(uint32_t sync, uint64_t serial) {  // vk_replay.cpp: Command
 //    program shaders, WriteTexels, QueueFinish) first waits until the queue is empty (render_drain);
 //  - the game is at most one frame ahead: a present waits until the previous present has run;
 //  - the UI clock a frame's sprites are smoothed with is the one at its submit, not at its replay.
-// At fps 30 / 60 (vsync-paced presents) and with NX_ASYNC_REPLAY=0 every job runs at once on the calling thread, as before.
+// At fps 30 and with NX_ASYNC_REPLAY=0 every job runs at once on the calling thread, as before (60 joined in s116).
 namespace nvn {
 uint32_t g_replay_ui_tick = 0;  // vk_replay.cpp ui_sprite_smooth: the UI clock of the frame being replayed
 float g_replay_ui_frac = 1;
@@ -775,9 +782,11 @@ static void job_run(Job& j) {
     } else backend_present(j.tex);
 }
 static bool render_async() {
-    static const bool on = !getenv("NX_ASYNC_REPLAY") || atoi(getenv("NX_ASYNC_REPLAY")) != 0;
-    const int fps = fps_setting();
-    return on && (fps == 0 || fps > 60);
+    // NX_ASYNC_REPLAY: 0 off, 1 (default) every rate but 30, 2 every rate. s116: on at 60 too (Augs, i5-8500: the city
+    // stayed at 36-41 fps with replay + submit 8-10 ms per frame on the game thread); here at 60 the game thread's
+    // longest frame went 14.3-15.6 -> 12.1-14.6 ms with the same pacing (city60.sh). 30 keeps the Switch's inline order.
+    static const int on = getenv("NX_ASYNC_REPLAY") ? atoi(getenv("NX_ASYNC_REPLAY")) : 1;
+    return on == 2 || (on && fps_setting() != 30);
 }
 void render_drain() {
     if (t_render) return;

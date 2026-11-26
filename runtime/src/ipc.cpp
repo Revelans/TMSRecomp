@@ -124,6 +124,40 @@ static void sm(KSession* s, Request& q, Reply& r) {
     log("sm cmd %u", q.cmd);
 }
 
+// nn::settings ("set", s115 language option): the game turns each Language index into its code (MakeLanguageCode) and
+// compares it with GetDesiredLanguage's answer (hle_sys.cpp oe_GetLanguage) to pick its text: 0 = Japanese
+// (Pack/pack_090_loc_jp.cpk), 1 = American English, 2 = French, ... Unimplemented, no code ever matched: English.
+static const char* const k_lang_codes[] = {"ja", "en-US", "fr", "de", "it", "es", "zh-CN", "ko", "nl", "pt", "ru",
+                                           "zh-TW", "en-GB", "fr-CA", "es-419", "zh-Hans", "zh-Hant", "pt-BR"};
+static uint64_t lang_code(const char* s) { uint64_t v = 0; memcpy(&v, s, std::min<size_t>(strlen(s), 8)); return v; }
+static void settings(KSession* s, Request& q, Reply& r) {
+    const uint32_t n = sizeof k_lang_codes / sizeof *k_lang_codes;
+    switch (q.cmd) {
+        case 0: {  // GetLanguageCode
+            r.push<uint64_t>(lang_code(rt::language()));
+            return;
+        }
+        case 1: case 5: {  // GetAvailableLanguageCodes(2): buffer of u64 codes, count
+            uint32_t k = 0;
+            const auto& bufs = q.b;  // cmd 1 uses a receive list (not parsed): count 0 there
+            for (auto& [addr, size] : bufs)
+                for (; k < n && (k + 1) * 8 <= size; k++) st64(addr + 8 * k, lang_code(k_lang_codes[k]));
+            r.push<uint32_t>(k);
+            return;
+        }
+        case 2: {  // MakeLanguageCode(Language)
+            const uint32_t i = ld32(q.data);
+            r.push<uint64_t>(i < n ? lang_code(k_lang_codes[i]) : 0);
+            return;
+        }
+        case 3: case 6: r.push<uint32_t>(n); return;  // GetAvailableLanguageCodeCount(2)
+        default: break;
+    }
+    std::string key = s->svc + "#" + std::to_string(q.cmd);
+    if (g_seen.insert(key).second) log("ipc %s cmd %u: unimplemented, returning success", s->svc.c_str(), q.cmd);
+    r.out.assign(0x40, 0);
+}
+
 static void control(KSession* s, Request& q, Reply& r) {
     switch (q.cmd) {
         case 0: s->domain = true; r.push<uint32_t>(s->next_obj++); return;  // ConvertCurrentObjectToDomain
@@ -144,6 +178,7 @@ uint32_t ipc_request(uint32_t handle, uint32_t buf, uint32_t size) {
     Reply r;
     if (q.type == 5 || q.type == 7) control(s, q, r);
     else if (s->svc == "sm:") sm(s, q, r);
+    else if (s->svc == "set") settings(s, q, r);
     else {
         std::string key = s->svc + "#" + std::to_string(q.cmd);
         if (g_seen.insert(key).second) log("ipc %s cmd %u: unimplemented, returning success", s->svc.c_str(), q.cmd);

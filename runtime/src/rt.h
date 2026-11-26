@@ -46,6 +46,8 @@ Region mem_query(uint32_t addr);
 double process_private_mb(), guest_committed_mb();  // memory.cpp
 void mem_regions_report();  // memory.cpp, NX_MEM_REGIONS
 bool mem_written(uint32_t addr, uint32_t size);  // CPU wrote the range since the last call (write watch)
+// the same, but the write watch of [span_lo, span_lo + span_len) (the texture's memory pool) is read once per stamp (submit)
+bool mem_written_span(uint32_t addr, uint32_t size, uint32_t span_lo, uint32_t span_len, uint64_t stamp);
 void mem_make_writable(uint32_t addr, uint32_t size);  // Linux: open watched pages before a driver pins them (no-op on Windows)
 #ifndef _WIN32
 bool mem_fault(void* host_addr);  // Linux SIGSEGV handler: a write to a watched page (true: it is open again, retry)
@@ -68,7 +70,10 @@ uint32_t export_addr(const char* name);  // 0 if missing
 void cover_report();  // NX_COVER: log probed functions called since the last report
 void flag_command(const char* args);  // NX_CONTROL "flag n [0|1]": log or set game flag n
 void pos_command(const char* set = nullptr);  // NX_CONTROL "pos": log the player position; "setpos x y z": move it
-void profile_start();       // main.cpp: NX_PROFILE=1 sampling profiler of the calling (game) thread
+int game_flag(uint32_t id);  // hle_sys.cpp: story / system flag bit (0 / 1), -1 = flags not loaded
+const char* language();  // hle_sys.cpp: setting `language` as the Switch's code (en-US, ja, fr, zh-Hans, zh-Hant)
+extern std::atomic<uint32_t> g_vsync_guest_event;  // ui.cpp vi_VsyncEvent: the game's vsync event (boot abort guard)
+void profile_start(bool submit = false);       // main.cpp: NX_PROFILE=1 sampling profiler of the calling (game) thread
 std::string guest_chain();  // main.cpp: guest call chain (generated functions on the host stack) for logs
 bool pad_pressed_now();  // ui.cpp: the latest pad read had a new button press
 void ui_set_fullscreen(bool on);  // ui.cpp: borderless fullscreen on / window

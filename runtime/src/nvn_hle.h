@@ -39,18 +39,22 @@ enum Op : uint16_t {
 // Copied state / inline data of a command. CallCommands copies whole recorded lists into the calling buffer every frame
 // (profile s69: heap alloc / free + its locks ~20% of the game thread in big areas), so copies share the bytes; a write
 // (only done while a command is recorded) copies first if the bytes are shared.
+// s117: v is the bytes; p owns them when recorded here. Flattened OP_CALL copies (vk.cpp) carry only v (no atomic
+// refcount per command); an OP_CALL's p owns the called list (aliasing pointer, v null).
 struct Blob {
     std::shared_ptr<std::vector<uint8_t>> p;
-    size_t size() const { return p ? p->size() : 0; }
+    const std::vector<uint8_t>* v = nullptr;
+    size_t size() const { return v ? v->size() : 0; }
     bool empty() const { return size() == 0; }
-    const uint8_t* data() const { return p ? p->data() : nullptr; }
-    const uint8_t& operator[](size_t i) const { return (*p)[i]; }
+    const uint8_t* data() const { return v ? v->data() : nullptr; }
+    const uint8_t& operator[](size_t i) const { return (*v)[i]; }
     uint8_t& operator[](size_t i) { return (*own())[i]; }
     void resize(size_t n) { own()->resize(n); }
     template <class It> void assign(It a, It b) { own()->assign(a, b); }
     std::vector<uint8_t>* own() {
-        if (!p) p = std::make_shared<std::vector<uint8_t>>();
-        else if (p.use_count() > 1) p = std::make_shared<std::vector<uint8_t>>(*p);
+        if (!p || p.get() != v || p.use_count() > 1)
+            p = v ? std::make_shared<std::vector<uint8_t>>(*v) : std::make_shared<std::vector<uint8_t>>();
+        v = p.get();
         return p.get();
     }
 };

@@ -200,6 +200,10 @@ static void apply_fps(int i) {
 }
 static void apply_res(int i) { save_setting("res", k_res[i]); g_restart_note = true; }
 static const char* const k_aspect[4] = {"16:9", "auto", "21:9", "32:9"};
+static int language_index() {
+    const char* l = language();
+    return !strcmp(l, "ja") ? 1 : !strcmp(l, "fr") ? 2 : !strcmp(l, "zh-Hans") ? 3 : !strcmp(l, "zh-Hant") ? 4 : 0;
+}
 static void apply_aspect(int i) { save_setting("aspect", k_aspect[i]); g_restart_note = true; }
 static int aspect_index() {
     const char* a = getenv("NX_ASPECT");
@@ -293,6 +297,33 @@ static std::vector<Item> build_travel_items() {
                  [](int) { overlay_request_map(); }});
     return v;
 }
+// Request hints (QoL, user request s116): the F1 menu's "Request hints" row opens a page of the requests that are open
+// right now (available but not taken, or taken and not done; the game's FLG_MAP_QUEST_NN_* flags), each with who gives
+// it and how to finish it (request_hints.inc, tools/lua/request_hints.txt).
+struct RequestHint { int quest; uint32_t available, started, done; const wchar_t *name, *giver, *how; };
+static const RequestHint k_request_hints[] = {
+#include "request_hints.inc"
+};
+static std::atomic<bool> g_open_requests{false};
+static std::vector<Item> build_request_items() {
+    static std::vector<std::wstring> text;  // the rows point into these until the next build
+    text.clear();
+    text.reserve(2 * std::size(k_request_hints) + 2);
+    std::vector<Item> v;
+    for (int pass = 0; pass < 2; pass++)  // taken ones first, then the ones waiting to be taken
+        for (const RequestHint& r : k_request_hints) {
+            if (game_flag(r.available) != 1 && game_flag(r.started) != 1) continue;
+            if (game_flag(r.done) == 1 || (game_flag(r.started) == 1) != (pass == 0)) continue;
+            text.push_back(std::wstring(r.name) + (pass == 0 ? L"  · in progress" : L"  · not taken yet"));
+            const wchar_t* name = text.back().c_str();
+            text.push_back(pass == 0 ? std::wstring(r.how) + L" (Given by: " + r.giver + L".)"
+                                     : std::wstring(L"Talk to: ") + r.giver + L". Then: " + r.how);
+            v.push_back({name, {}, 0, text.back().c_str(), [](int) {}});
+        }
+    if (v.empty())
+        v.push_back({L"No open requests", {}, 0, L"Requests that can be taken now or are in progress show here, with where to go. New ones come with the story and as you finish others.", [](int) {}});
+    return v;
+}
 // buttons to add to the game's pad this poll (B pulses until the camp menu is closed)
 uint64_t overlay_buttons() {
     const int64_t p = g_title_ms_chosen, t = now_ms();
@@ -328,6 +359,9 @@ static std::vector<Item> build_items() {
         {L"Aspect ratio", {L"16:9", L"Auto", L"21:9", L"32:9"}, aspect_index(),
          L"Picture shape. 21:9 / 32:9 (ultrawide): the 3D view gets wider (more to see at the sides), menus and HUD stay 16:9 in the middle. Auto: your screen's shape. Applies after a restart.",
          apply_aspect},
+        {L"Language", {L"English", L"Japanese", L"French", L"Chinese (Simplified)", L"Chinese (Traditional)"}, language_index(),
+         L"Game text and menus (voices stay). The Uncensored mod's text is English only: with another language its text changes are left out. Applies after a restart.",
+         [](int c) { static const char* k[] = {"en", "ja", "fr", "zh-Hans", "zh-Hant"}; save_setting("language", k[c]); g_restart_note = true; }},
         {L"Display", {L"Borderless", L"Window"}, win && !strcmp(win, "window") ? 1 : 0, L"Borderless fullscreen or a window (F11 / Alt+Enter also switch).", apply_window},
         {L"Bloom", onoff, fx_enabled(FX_BLOOM), L"Glare around bright lights (the game's glare pass).", [](int c) { apply_fx(FX_BLOOM, c); }},
         {L"Glow", onoff, fx_enabled(FX_GLOW), L"Soft glow on emissive surfaces (the game's glow pass).", [](int c) { apply_fx(FX_GLOW, c); }},
@@ -422,6 +456,8 @@ static std::vector<Item> build_items() {
          [](int c) { save_setting("resist_marker", c ? "1" : "0"); }},
         {L"Autosave after battles", onoff, env_on("NX_AUTOSAVE", true),
          L"After each battle, once you walk again, the game is saved to slot 20 (your own slots are never touched). Load it like any save.", apply_autosave},
+        {L"Request hints", {}, 0, L"Open requests (side quests) with who gives them and how to finish them: the ones in progress and the ones waiting to be taken.",
+         [](int) { g_open_requests = true; }},
         {L"Exit game", {}, 0, L"Close the game. Save first: progress since the last save is lost.", apply_exit},
     };
     return v;
@@ -633,7 +669,11 @@ bool overlay_update(void* hwnd, uint64_t buttons, int ly, bool f1) {
     const int n_opt = confirm_kind ? 3 : 2;
     bool dirty = false;
     if (!menu && !confirm) {
-        if (f1 || ((buttons & (P_LS | P_RS)) == (P_LS | P_RS) && (pressed & (P_LS | P_RS)))) {
+        if (g_open_requests.exchange(false)) {
+            menu = true, travel = false, items = build_request_items(), sel = 0, dirty = true;
+            log("overlay: request hints (%zu rows)", items.size());
+            for (auto& it : items) log("overlay:   %s", utf8(it.name).c_str());
+        } else if (f1 || ((buttons & (P_LS | P_RS)) == (P_LS | P_RS) && (pressed & (P_LS | P_RS)))) {
             menu = true, travel = false, items = build_items(), sel = 0, dirty = true, g_restart_note = false;
         } else if (map_offered() && (pressed & P_L) && !(buttons & ~P_L)) {  // L alone: unused by the game in free roam
             menu = true, travel = true, items = build_travel_items(), sel = 0, dirty = true;

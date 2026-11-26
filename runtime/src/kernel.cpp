@@ -115,6 +115,9 @@ static void* thread_proc(void* p) {
 #endif
     KThread* t = static_cast<KThread*>(p);
     t_cur = t;
+#ifdef _WIN32
+    log("thread: guest entry %08x = host thread %lu", (uint32_t)t->entry, GetCurrentThreadId());  // per-thread CPU (s115)
+#endif
     try {
         dispatch(&t->cpu, t->entry);
     } catch (ThreadExit&) {
@@ -156,9 +159,14 @@ uint32_t create_main_thread(uint32_t stack_size, int prio) {
     return t->handle;
 }
 
+static KThread* g_main_thread = nullptr;  // SleepThread: the main thread keeps the yield-spin (s115)
 void run_main_thread(uint32_t entry, const uint32_t args[4]) {
     KThread* t = t_cur;
+    g_main_thread = t;
     for (int i = 0; i < 4; i++) t->cpu.r[i] = args[i];
+#ifdef _WIN32
+    log("thread: guest main %08x = host thread %lu", entry, GetCurrentThreadId());
+#endif
     try {
         dispatch(&t->cpu, entry);
     } catch (ThreadExit&) {
@@ -334,8 +342,33 @@ static void svc_impl(Cpu* c, uint32_t imm) {
             else if (ns < 1000000) {
                 // sub-millisecond sleeps (main and AtJob workers poll the job system every 50 us): an OS sleep lasts
                 // >= 1 ms on Windows, so the main thread lost up to 30% of each frame waiting. Yield until the deadline.
-                auto until = std::chrono::steady_clock::now() + std::chrono::nanoseconds(ns / g_speed);
+                // s115 (Augs, i5-8500 6 cores: "high CPU even when idle"): that yield-spin kept both AtJob workers at 100% of
+                // a core each, also with no work (measured: 3 threads at 100% at 60 fps in the Fortuna Office with 1.5 ms
+                // frames). A worker that comes straight back to sleep (< 20 us since the last one returned: it found no
+                // job) 40 times in a row (~2 ms idle) sleeps on a high-resolution waitable timer instead, until it does
+                // work again. The main thread keeps the spin (it waits for jobs inside its frame). NX_SLEEP_SPIN=1: the
+                // old spin for every thread.
+                const auto now = std::chrono::steady_clock::now();
+                auto until = now + std::chrono::nanoseconds(ns / g_speed);
+#ifdef _WIN32
+                static const bool spin_all = getenv("NX_SLEEP_SPIN") && atoi(getenv("NX_SLEEP_SPIN")) != 0;
+                thread_local std::chrono::steady_clock::time_point last_ret{};
+                thread_local int idle = 0;
+                thread_local HANDLE timer = nullptr;
+                idle = now - last_ret < std::chrono::microseconds(20) ? idle + 1 : 0;
+                if (!spin_all && idle > 40 && t_cur != g_main_thread) {
+                    if (!timer) timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+                    LARGE_INTEGER due;
+                    due.QuadPart = -std::max<LONGLONG>(1, ns / g_speed / 100);  // relative, 100 ns units
+                    if (timer && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) WaitForSingleObject(timer, 5);
+                    else Sleep(1);
+                    until = now;
+                }
+#endif
                 while (std::chrono::steady_clock::now() < until) SwitchToThread();
+#ifdef _WIN32
+                last_ret = std::chrono::steady_clock::now();
+#endif
             } else std::this_thread::sleep_for(std::chrono::nanoseconds(ns / g_speed));
             return;
         }

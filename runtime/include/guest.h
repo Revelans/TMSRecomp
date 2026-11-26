@@ -222,6 +222,20 @@ static inline uint32_t add_flags(Cpu* c, uint32_t a, uint32_t b, uint32_t cin) {
     c->z = r == 0;
     return r;
 }
+/* function-local APSR flags (lift.py --reg-locals: the lifted function keeps N Z C V in a local Flags F) */
+typedef struct Flags { uint8_t n, z, cf, v; } Flags;
+/* function-local VFP / NEON registers (lift.py: the D registers a function names, when it uses at most 12) */
+typedef union VRegs { float f[64]; uint32_t w[64]; double d[32]; uint64_t x[32]; } VRegs;
+static inline void nz_f(Flags* c, uint32_t r) { c->n = r >> 31; c->z = r == 0; }
+static inline uint32_t add_flags_f(Flags* c, uint32_t a, uint32_t b, uint32_t cin) {
+    uint64_t s = (uint64_t)a + b + cin;
+    uint32_t r = (uint32_t)s;
+    c->cf = (uint8_t)(s >> 32);
+    c->v = ((a ^ r) & (b ^ r)) >> 31;
+    c->n = r >> 31;
+    c->z = r == 0;
+    return r;
+}
 static inline uint32_t sh_lsl(uint32_t v, uint32_t s) { s &= 0xff; return s < 32 ? v << s : 0; }
 static inline uint32_t sh_lsr(uint32_t v, uint32_t s) { s &= 0xff; return s < 32 ? v >> s : 0; }
 static inline uint32_t sh_asr(uint32_t v, uint32_t s) { s &= 0xff; return (uint32_t)((int32_t)v >> (s < 32 ? s : 31)); }

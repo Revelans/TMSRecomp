@@ -139,7 +139,7 @@ struct Setting {
     std::vector<Opt> opts;  // DROP; TOGGLE: {off, on}
     float lo = 0, hi = 0, step = 0;
 };
-enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, BTLBUTTONS, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_L, PAD_R, PAD_ZL, PAD_ZR, PAD_PLUS, PAD_MINUS, PAD_L3, PAD_R3, NSET };
+enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, BTLBUTTONS, LANGUAGE, NGPREQ, MOVIEFB, MOVIEGPU, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_L, PAD_R, PAD_ZL, PAD_ZR, PAD_PLUS, PAD_MINUS, PAD_L3, PAD_R3, NSET };
 // controller remap choices (ui.cpp pad_map): positions, so the names fit Switch, PlayStation and Xbox pads alike
 static const std::vector<Opt> k_pad_opts = {{"default", L"Default"}, {"south", L"Bottom (A / \u2715)"},
     {"east", L"Right (B / \u25cb)"}, {"west", L"Left (X / \u25a1)"}, {"north", L"Top (Y / \u25b3)"}, {"lb", L"LB / L1"},
@@ -155,7 +155,7 @@ static const Setting k_set[NSET] = {
      {{"30", L"30 FPS · the game's own"}, {"60", L"60 FPS"}, {"120", L"120 FPS"}, {"144", L"144 FPS"},
       {"165", L"165 FPS"}, {"240", L"240 FPS"}, {"0", L"Uncapped"}}},
     {"res", "auto", DROP, L"Render resolution",
-     L"Internal size of the 3D image. Auto fits your screen and graphics card. The game's own is 720p; 1080p renders at 1440p and scales down (sharper).",
+     L"Internal size of the 3D image. Auto fits your screen and graphics card. The game's own is 720p. Above your screen size it renders bigger and scales down (sharper, costs more).",
      {{"auto", L"Auto · fits your screen and GPU"}, {"720p", L"1280 × 720 · the game's own"}, {"1080p", L"1920 × 1080"}, {"1440p", L"2560 × 1440"},
       {"4k", L"3840 × 2160 · 4K"}, {"8k", L"7680 × 4320 · supersampling for 4K screens (~5 GB VRAM)"}}},
     {"window", "borderless", DROP, L"Display mode", L"F11 or Alt+Enter switches between the two while playing.",
@@ -249,6 +249,23 @@ static const Setting k_set[NSET] = {
      L"R Change, - Escape, ZR Auto battle (+ Stats as before). P5 panel: a Persona 5 style command panel replaces the "
      L"game's wheel (Windows).",
      {{"0", L"Off \u00b7 the game's wheel"}, {"1", L"Buttons \u00b7 the game's wheel stays"}, {"2", L"Buttons + P5 panel"}}},
+    {"language", "en", DROP, L"Language",
+     L"Game text and menus. Voices stay as they are. The Uncensored mod's text is English only: with another language "
+     L"its text changes are left out. Restart the game after a change.",
+     {{"en", L"English"}, {"ja", L"日本語 · Japanese"}, {"fr", L"Français · French"},
+      {"zh-Hans", L"简体中文 · Simplified Chinese"}, {"zh-Hant", L"繁體中文 · Traditional Chinese"}}},
+    {"ng_plus_requests", "1", TOGGLE, L"New Game+ requests in a new game",
+     L"Requests 49 (Versus Grandmaster Mirage!) and 50 (The Dragon Descends) are normally New Game+ only. On: they also "
+     L"appear in a fresh game (49 from chapter 1, 50 after Path of the Strong and 36 more Detritus trades with Nieg).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"movie_hd_fallback", "1", TOGGLE, L"4K movies: 720p when too slow",
+     L"Only with the 4K movies installed. On: a movie whose 4K frames this PC decodes too slowly plays at 720p from then on. "
+     L"Off: movies always stay 4K (a slow PC may stutter).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"movie_gpu", "1", TOGGLE, L"4K movies: decode on the GPU",
+     L"Only with the 4K movies installed. On: the GPU's video engine decodes them (Windows' VP9 decoder, \"VP9 Video "
+     L"Extensions\"), about 2 CPU cores less while one plays. Off, or without that decoder: the CPU decodes them.",
+     {{"0", L"Off"}, {"1", L"On"}}},
     PAD_SET("a", L"A"), PAD_SET("b", L"B"), PAD_SET("x", L"X"), PAD_SET("y", L"Y"), PAD_SET("l", L"L"), PAD_SET("r", L"R"),
     PAD_SET("zl", L"ZL"), PAD_SET("zr", L"ZR"), PAD_SET("plus", L"+"), PAD_SET("minus", L"\u2212"), PAD_SET("l3", L"L3"), PAD_SET("r3", L"R3")
 };
@@ -1794,7 +1811,7 @@ static const Topic k_topics[] = {
      {L"Download the TMSRecomp-MovieHD ZIP (link on the release page).",
       L"Press Install ZIP and pick the file. It needs about 7 GB.",
       L"That's all: the game plays the 4K movies on its own."},
-     L"A CPU too slow for 4K video plays the 720p movie instead. To turn them off: movie_hd = 0 in settings.ini."},
+     L"A CPU too slow for 4K video plays the 720p movie instead (Display & FPS → 4K movies: 720p when too slow). To turn them off: movie_hd = 0 in settings.ini."},
     {L"Battle music", L"Your own battle music",
      L"Play your own .adx tracks in random battles, for example from a battle music mod.",
      {L"Press Add music folder and pick a folder of .adx files.",
@@ -1956,10 +1973,31 @@ static void draw_page() {
     const float view = H - FOOT, content = g_bottom + 24;
     g_max_scroll = std::max(0.f, content - view);
     if (sc > g_max_scroll) sc = g_max_scroll;
-    if (g_max_scroll > 0) {  // scrollbar: the mouse wheel scrolls
+    if (g_max_scroll > 0) {  // scrollbar: the mouse wheel scrolls, the thumb can be dragged (GitHub #14)
         float th = view * view / content, ty = sc / g_max_scroll * (view - th - 16) + 8;
         rounded(R(W - 10, ty, 4, th), 2, C(EDGE_HI));
     }
+}
+// Scrollbar drag (GitHub #14: a broken mouse wheel left no way to scroll): a press in the 18 px strip at the right edge
+// grabs the thumb (on the track: the thumb jumps there first), moving scrolls, release ends it.
+static float g_sb_grab = -1;  // drag: the press's offset into the thumb; -1 = no drag
+static void sb_thumb(float& th, float& ty, float& travel) {
+    const float view = H - FOOT, content = view + g_max_scroll;
+    th = view * view / content, travel = view - th - 16, ty = g_scroll[g_page] / g_max_scroll * travel + 8;
+}
+static void sb_move(float y) {
+    float th, ty, travel;
+    sb_thumb(th, ty, travel);
+    g_scroll[g_page] = std::clamp((y - g_sb_grab - 8) / travel * g_max_scroll, 0.f, g_max_scroll);
+    g_open = -1, g_hover = -1;
+}
+static bool sb_press(float x, float y) {  // true: the press was on the scrollbar
+    if (g_max_scroll <= 0 || x < W - 18 || y >= H - FOOT) return false;
+    float th, ty, travel;
+    sb_thumb(th, ty, travel);
+    g_sb_grab = y >= ty && y <= ty + th ? y - ty : th / 2;
+    sb_move(y);
+    return true;
 }
 
 // ------------------------------------------------------------------------------------------------ key bindings
@@ -2122,15 +2160,18 @@ static void draw_page_body() {
         for (int i : {FPS, WINDOW, ASPECT, PRESENT}) y += row(i, x, y, w);
         section(L"IMAGE", x, y + 8, w);
         y += 44;
-        for (int i : {SHARPEN, FXAA}) y += row(i, x, y, w);
+        for (int i : {SHARPEN, FXAA, MOVIEFB, MOVIEGPU}) y += row(i, x, y, w);
         break;
     }
     case 3:
         page_header(L"Game", L"Changes to how the game plays and sounds.");
     {
-        section(L"FIELD", x, 128, w);
-        float y = 166 + row(WALK, x, 166, w);
-        for (int i : {MAPREV, FIELDCOS}) y += row(i, x, y, w);
+        section(L"LANGUAGE", x, 128, w);
+        float y = 166 + row(LANGUAGE, x, 166, w);
+        section(L"FIELD", x, y + 8, w);
+        y += 46;
+        y += row(WALK, x, y, w);
+        for (int i : {MAPREV, FIELDCOS, NGPREQ}) y += row(i, x, y, w);
         section(L"BATTLE", x, y + 8, w);
         y += 46;
         for (int i : {ALLDIFF, RESMARK, BTLBUTTONS}) y += row(i, x, y, w);
@@ -2374,6 +2415,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_ERASEBKGND: return 1;
     case WM_MOUSEMOVE: {
         float x = GET_X_LPARAM(lp) / g_scale, y = GET_Y_LPARAM(lp) / g_scale;
+        if (g_sb_grab >= 0) { sb_move(y), redraw(); return 0; }
         if (g_drag >= 0) {
             const Setting& s = k_set[g_drag];
             float k = std::clamp((x - g_drag_track.left) / (g_drag_track.right - g_drag_track.left), 0.f, 1.f);
@@ -2403,6 +2445,25 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             redraw();
         }
         return 0;
+    case WM_GESTURE: {  // touch screens (Legion Go 2, Reddit 11-26): a finger swipe pans the page like a phone
+        GESTUREINFO gi{sizeof gi};
+        if (!GetGestureInfo((HGESTUREINFO)lp, &gi)) break;
+        static int last_y = 0;
+        if (gi.dwID == GID_PAN) {
+            POINT p{gi.ptsLocation.x, gi.ptsLocation.y};
+            ScreenToClient(h, &p);
+            if (!(gi.dwFlags & GF_BEGIN) && g_max_scroll > 0) {
+                float& sc = g_scroll[g_page];
+                sc = std::clamp(sc - (p.y - last_y) / g_scale, 0.f, g_max_scroll);
+                g_open = -1, g_hover = -1;
+                redraw();
+            }
+            last_y = p.y;
+            CloseGestureInfoHandle((HGESTUREINFO)lp);
+            return 0;
+        }
+        break;  // other gestures: DefWindowProc
+    }
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) return TRUE;  // set in WM_MOUSEMOVE
         break;
@@ -2423,6 +2484,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             }
         }
         float x = GET_X_LPARAM(lp) / g_scale, y = GET_Y_LPARAM(lp) / g_scale;
+        if (sb_press(x, y)) { SetCapture(h), redraw(); return 0; }
         int k = hit_at(x, y);
         bool was_open = g_open >= 0;
         if (k >= 0) {
@@ -2435,6 +2497,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_LBUTTONUP:
+        if (g_sb_grab >= 0) g_sb_grab = -1, ReleaseCapture();
         if (g_drag >= 0) g_drag = -1, ReleaseCapture(), redraw();
         return 0;
     case WM_SYSKEYDOWN:  // Alt (and F10) arrive here
@@ -2553,6 +2616,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     COLORREF cap = RGB(0x0b, 0x0f, 0x0d);  // SIDEBG
     DwmSetWindowAttribute(g_wnd, 35 /* DWMWA_CAPTION_COLOR */, &cap, sizeof cap);
     apply_icon();
+    // touch: one-finger vertical pans (WM_GESTURE) scroll the page; taps stay mouse clicks
+    GESTURECONFIG gc{GID_PAN, GC_PAN | GC_PAN_WITH_SINGLE_FINGER_VERTICALLY | GC_PAN_WITH_INERTIA,
+                     GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY | GC_PAN_WITH_GUTTER};
+    SetGestureConfig(g_wnd, 0, 1, &gc, sizeof gc);
     ShowWindow(g_wnd, show);
     check_updates();
     if (const wchar_t* p = wcsstr(cmd, L"--setup ")) {  // --setup <extracted folder | nsp> [keys target]: start at once
@@ -2663,6 +2730,7 @@ int main(int argc, char** argv) {
                 break;
             case SDL_EVENT_MOUSE_MOTION: {
                 float x = e.motion.x, y = e.motion.y;
+                if (g_sb_grab >= 0) { sb_move(y), g_need_redraw = true; break; }
                 if (g_drag >= 0) {
                     const Setting& s = k_set[g_drag];
                     float k = std::clamp((x - g_drag_track.left) / (g_drag_track.right - g_drag_track.left), 0.f, 1.f);
@@ -2698,6 +2766,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 if (e.button.button != SDL_BUTTON_LEFT) break;
+                if (sb_press(e.button.x, e.button.y)) { g_need_redraw = true; break; }
                 int k = hit_at(e.button.x, e.button.y);
                 bool was_open = g_open >= 0;
                 if (k >= 0) {
@@ -2710,6 +2779,7 @@ int main(int argc, char** argv) {
                 break;
             }
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (e.button.button == SDL_BUTTON_LEFT) g_sb_grab = -1;
                 if (e.button.button == SDL_BUTTON_LEFT && g_drag >= 0) g_drag = -1, ReleaseCapture(), g_need_redraw = true;
                 break;
             case SDL_EVENT_KEY_DOWN:

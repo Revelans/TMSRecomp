@@ -71,6 +71,18 @@ void game_load(const std::filesystem::path& dir) {
     g_module_count = *(const uint32_t*)sym("g_module_count");
     g_image_size = *(const uint32_t*)sym("g_image_size");
     log("game.dll: %s, %u functions", p.string().c_str(), g_guest_func_count);
+#ifdef _WIN32
+    // PGO training (dev, s117): an instrumented game.dll (build_game.py --pgo-gen) exports the profile runtime's writer;
+    // its exit hook never runs in a /NOENTRY DLL, so the profile is written every NX_PGO_DUMP seconds (overwritten).
+    using WriteFn = int (*)(); using NameFn = void (*)(const char*);
+    if (auto w = (WriteFn)GetProcAddress(m, "__llvm_profile_write_file")) {
+        static std::string out = getenv("NX_PGO_OUT") ? getenv("NX_PGO_OUT") : "game.profraw";
+        if (auto n = (NameFn)GetProcAddress(m, "__llvm_profile_set_filename")) n(out.c_str());
+        const int every = getenv("NX_PGO_DUMP") ? atoi(getenv("NX_PGO_DUMP")) : 30;
+        log("pgo: instrumented game.dll, profile to %s every %d s", out.c_str(), every);
+        std::thread([w, every] { for (;;) { Sleep(every * 1000); log("pgo: profile written (%d)", w()); } }).detach();
+    }
+#endif
 }
 
 // probed functions called since the last report, with counts (NX_COVER)
@@ -95,6 +107,43 @@ static std::vector<Reg>& registry() {
     return r;
 }
 HleReg::HleReg(const char* mangled, HleFn fn, bool probe) { registry().push_back({mangled, fn, probe}); }
+
+// The game's C library string / memory functions as host code (after Astral Chain Recomp's host_libc, s117): one
+// host call instead of the lifted byte / NEON loops. NX_HOST_LIBC=0 (settings.ini host_libc = 0) keeps the game's own.
+static const char* const k_libc[] = {"memcpy", "memmove", "memset", "memcmp", "strlen", "strcmp", "strncmp",
+                                     "__aeabi_memcpy", "__aeabi_memmove", "__aeabi_memset", "__aeabi_memclr"};
+static bool libc_name(const char* n) {
+    for (const char* k : k_libc) if (!strcmp(k, n)) return true;
+    return false;
+}
+// memcpy as memmove: a caller that overlaps gets the bytes it expected rather than undefined order; r0 (dest) is the
+// return value and stays as it came
+HLE_FN(hle_memcpy, "memcpy") { memmove(GPTR(c->r[0]), GPTR(c->r[1]), c->r[2]); }
+HLE_FN(hle_memmove, "memmove") { memmove(GPTR(c->r[0]), GPTR(c->r[1]), c->r[2]); }
+HLE_FN(hle_memset, "memset") { memset(GPTR(c->r[0]), (int)(c->r[1] & 0xff), c->r[2]); }
+HLE_FN(hle_aeabi_memcpy, "__aeabi_memcpy") { memmove(GPTR(c->r[0]), GPTR(c->r[1]), c->r[2]); }
+HLE_FN(hle_aeabi_memmove, "__aeabi_memmove") { memmove(GPTR(c->r[0]), GPTR(c->r[1]), c->r[2]); }
+HLE_FN(hle_aeabi_memset, "__aeabi_memset") { memset(GPTR(c->r[0]), (int)(c->r[2] & 0xff), c->r[1]); }  // (dest, n, c)
+HLE_FN(hle_aeabi_memclr, "__aeabi_memclr") { memset(GPTR(c->r[0]), 0, c->r[1]); }
+HLE_FN(hle_memcmp, "memcmp") {
+    const uint8_t *a = GPTR(c->r[0]), *b = GPTR(c->r[1]);
+    uint32_t n = c->r[2], i = 0;
+    if (!memcmp(a, b, n)) { c->r[0] = 0; return; }
+    while (a[i] == b[i]) i++;  // the first differing byte's difference, as the game's own memcmp returns
+    c->r[0] = (uint32_t)((int)a[i] - (int)b[i]);
+}
+HLE_FN(hle_strlen, "strlen") { c->r[0] = (uint32_t)strlen((const char*)GPTR(c->r[0])); }
+HLE_FN(hle_strcmp, "strcmp") {
+    const uint8_t *a = GPTR(c->r[0]), *b = GPTR(c->r[1]);
+    while (*a && *a == *b) a++, b++;
+    c->r[0] = (uint32_t)((int)*a - (int)*b);
+}
+HLE_FN(hle_strncmp, "strncmp") {
+    const uint8_t *a = GPTR(c->r[0]), *b = GPTR(c->r[1]);
+    uint32_t n = c->r[2];
+    while (n && *a && *a == *b) a++, b++, n--;
+    c->r[0] = n ? (uint32_t)((int)*a - (int)*b) : 0;
+}
 
 // NX_PROBE=name,name,...: log every call of those names-file functions (arguments and caller), up to 64 names
 static const char* g_probe_names[64];
@@ -151,7 +200,9 @@ void dispatch_init() {
     }
     g_hook_index = hook_idx;
     int bound = 0, unused = 0;
+    static const bool host_libc = !getenv("NX_HOST_LIBC") || atoi(getenv("NX_HOST_LIBC")) != 0;
     for (auto& [name, fn, probe] : registry()) {
+        if (!host_libc && libc_name(name)) continue;
         bool ok = false;
         auto h = hook_idx.find(name);
         if (h != hook_idx.end()) { (probe ? g_probes : g_hooks)[h->second] = fn; ok = true; }
@@ -186,10 +237,22 @@ void dispatch_init() {
 
 // call an exported guest function with its HLE hook disabled (to reach the real SDK implementation)
 uint32_t call_unhooked(Cpu* c, const char* name, std::initializer_list<uint32_t> args) {
-    auto it = g_hook_index.find(name);
-    if (it == g_hook_index.end()) fatal("call_unhooked: %s is not hookable", name);
-    c->hook_bypass = it->second + 1;  // per thread: HOOK at the function's entry clears it and runs the guest code
-    return gcall(c, name, args);
+    // s116: the lookup by name (a std::string key: heap allocation + hash) was 6% of the game thread in Shibuya (the UI
+    // draw hooks call this many times per frame); names are string literals, so cache by pointer per thread
+    struct Entry { const char* name; uint32_t idx, addr; };
+    thread_local std::vector<Entry> cache;
+    const Entry* e = nullptr;
+    for (auto& x : cache) if (x.name == name) { e = &x; break; }
+    if (!e) {
+        auto it = g_hook_index.find(name);
+        if (it == g_hook_index.end()) fatal("call_unhooked: %s is not hookable", name);
+        const uint32_t a = export_addr(name);
+        if (!a) fatal("gcall: no symbol %s", name);
+        cache.push_back({name, it->second, a});
+        e = &cache.back();
+    }
+    c->hook_bypass = e->idx + 1;  // per thread: HOOK at the function's entry clears it and runs the guest code
+    return gcall(c, e->addr, args);
 }
 
 GuestFn lookup(uint32_t a) {

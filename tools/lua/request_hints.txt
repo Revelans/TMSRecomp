@@ -1,0 +1,53 @@
+# Request hints for the F1 menu's Requests page (runtime/src/request_hints.inc, made by tools/lua/request_hints.py).
+# quest id (Message/<lang>/Map/quest/quest_NN.msbt, flags FLG_MAP_QUEST_NN_AVAILABLE / _START / _END) | name | who gives
+# it, where | how to finish. Our own short wording; facts from the Megami Tensei Wiki request list (CC BY-SA).
+1|Coloring Book Hero|A bored girl, Toubo Rooftop|In Shibuya (Hee Ho Mart travel point) walk south to the red free-magazine kiosk, take "Mama Toujours" and bring it to her.
+3|Good Luck Charm|An irate man, Shibuya (north of Carabia)|Check three spots, any order: just south of Hee Ho Mart's door, the street by the ramen shop toward the Illusory Shibuya entrance, and in front of Shibuya Station's smoking booth. Then return to him.
+4|A Torn Pocket|An upset girl, Central City (Shibuya)|Three stamp cards, one at a time (talk to her after each): Toubo Rooftop by the hero-show stage, in front of Crepes Dia (Harajuku), in front of 106 (north along the sidewalk from the Hee Ho Mart travel point).
+5|Moe Medical Kit|A producer, Daiba Studio (beside the I. Studio entrance)|Doc Camera in Shibuya (south of the Carabia travel point) is sold out: report back, then buy from the scalper by the store. Talk to the couple next to the store and refuse him twice for the lowest price.
+6|Monstrous Roar|Mr. Dougen, Daitama Observatory|Buy Trichiliocosm (1,700 yen) at Sanzen'in Pharmacy, the blue store near Shibuya's Central City travel point, and bring it to him.
+7|A Chic Job Hunt|Itta Arima, Shibuya Station (green train car)|Walk into Cafe Seiren (Itsuki notices it is hiring), leave, and tell Itta.
+8|A Chic Menu|Itta Arima, Shibuya Station|Eat the Burnt Miso-Squid Crepe at Crepes Dia (Harajuku) and the Mustard-Natto-Yogurt Burger at Donadona, then return to Itta.
+9|Dating Difficulties|Hayato, Shibuya Station (in front of Hachiko)|Find Momoko and tell Hayato where she is each time: Harajuku Station, then Daitama Observatory, then up the stairs by the I. 106 entrance, then inside Illusory 106 by the door. Talk to Hayato to finish.
+10|Dating Disaster|Hayato, Daitou TV|Momoko again: Toubo Rooftop, then Shibuya on the way from the 106 travel point to the stairs, then Daitou TV by the stage, then inside Illusory DTV by the door. Tell Hayato each time.
+13|Repel the Rejects|Red Cleric Mirage, Illusory 106 5F (talk twice)|Bring one Force each from an Ironclad Myrmidon, Ironclad Cavalier and Ironclad Barbarian (Illusory 106).
+14|Pummel the Pests|Red Cleric Mirage, Illusory Shibuya Block 3|Bring a Dark Shaman Force (Block 1), a Skellington Force and an Archer Force (Block 3).
+15|Ditch the Deadbeats|Red Cleric Mirage, Illusory DTV Film Set B 1F|Bring an Inferno Force (Film Set A), a Blackscale Rider Force (outside 2F) and an Ironclad Knight Force (Film Set B 1F outside).
+16|Grapple the Groupies|Red Cleric Mirage, Illusory Studio LCD Screens (past Door 3)|Bring a Hirudinean Force (LCD room, treasure rooms) and the R. Forces of a Regal Knight and a Red Shaman (hallways).
+17|Flummox the Flirts|Red Cleric Mirage, Illusory Dolhr 232 m (maze)|Bring a Titan Force and a Violet Dark Knight Force (232 m and up) and a Parasite Force (428 m).
+18|Lucky Spot 1|Kanae Urabe, Daitama Observatory|Illusory Daitama: after the first elevator down, a shiny Treasure Key lies on the ground. Bring it to Urabe.
+19|Lucky Spot 2|Kanae Urabe, Harajuku|Illusory 106: warp to 3F, go down through the red mannequin to 2F; the key is in the green-lit middle area by the "Green Park" sign.
+20|Lucky Spot 3|Kanae Urabe, Toubo Rooftop|Illusory Shibuya: warp to Block 2 (south), take the middle path where the road splits in three; the key is on the rug.
+21|Lucky Spot 4|Kanae Urabe, Hee Ho Mart|Illusory Studio: warp to the LCD Screens rooms; the key is near Door 3.
+22|Lucky Spot 5|Kanae Urabe, Shibuya (past Uzume Lesson Studio)|Needs Itsuki's Ray of Light: break the wall in Illusory DTV Film Set B; the key is in the middle of the room with the Performa beam.
+23|Lucky Spot 6|Kanae Urabe, Daiba Studio|Illusory Dolhr, Area of Memories: go straight ahead to the shiny key.
+24|Slick Skull Delivery|Masked Salesclerk, Hee Ho Mart|Defeat 4 Dark Mages (Illusory Daitama) for 4 Slick Skulls, then return to Hee Ho Mart.
+25|Coarse Mane Delivery|Masked Salesclerk, Hee Ho Mart|Defeat 4 Ironclad Cavaliers (Illusory 106, upper floors), then return to Hee Ho Mart.
+26|Everburn Cloth Delivery|Masked Salesclerk, Hee Ho Mart|Defeat 4 Dark Shamans (Illusory Shibuya, Block 1), then return to Hee Ho Mart.
+27|Femme's Horn Delivery|Masked Salesclerk, Hee Ho Mart|Defeat 4 Yomotsu Shikome (Illusory DTV, mostly Film Set B), then return to Hee Ho Mart.
+28|Scarlet Armor Delivery|Masked Salesclerk, Hee Ho Mart|Defeat 4 Regal Knights (Illusory Studio hallways and LCD room), then return to Hee Ho Mart.
+29|Looming Pillar Delivery|Masked Salesclerk, Hee Ho Mart|Defeat 4 Titans (Illusory Dolhr, 232 m and up), then return to Hee Ho Mart.
+30|The Voiceless Voice Actress|Ayaha Oribe, Fortuna Office|See Nanane Anigoe at Daitama Observatory. The burning orange Mirage stands on the path in Illusory Daitama (5 foes, about Lv 25). Then Anigoe, then Ayaha.
+31|Writer's Block|Ayaha Oribe, Fortuna Office|See Raita Torama by Cafe Seiren's front entrance. Mirage: Illusory 106 6F near the 6F warp point (about Lv 30). Then Torama, then Ayaha.
+32|Funny Business|Ayaha Oribe, Fortuna Office|See Ota-Yan Union at Harajuku Station near Donadona. Mirage: Illusory Shibuya Block 1, the landing by the door to Block 2 (about Lv 40). Then them, then Ayaha.
+33|The Tongue-Tied Gourmet|Ayaha Oribe, Fortuna Office|See Himemaro at the Gourmet House north of Hee Ho Mart. Mirage: Illusory Shibuya Block 2, middle of the three paths (about Lv 30). Then Himemaro, then Ayaha.
+34|The Glare of the Spotlight|Ayaha Oribe, Fortuna Office|See Tatsuya Kuzu by Daitou TV's emergency exit. Mirage: Illusory 106 3F by the blue-dress controls (about Lv 53). Then Kuzu, then Ayaha.
+35|Stained Steel|Ayaha Oribe, Fortuna Office|See Tamae Namai near the Daiba Studio entrance. Mirage: Illusory Studio, a corner of the northern hallways (about Lv 53). Then Tamae, then Ayaha.
+36|The Stunted Stuntman|Ayaha Oribe, Fortuna Office|See Teruhito Tobita at the bend in Shibuya Station. Mirage: Sealed Illusory Studio, far right of the southern hallway (about Lv 58). Then Tobita, then Ayaha.
+37|Mopey Model|Ayaha Oribe, Fortuna Office|See Erina Okii by Daiba Studio's Staff Only door. Mirage: Illusory Dolhr 48 m, second island, behind a sealed door (about Lv 60). Then Okii, then Ayaha.
+47|Iori in Love|Souji Iori, Central City (by the Illusory Shibuya gate)|Hear his story at Shibuya Station. His rescuer, a Dark Cleric, stands by the ticket gates near the Illusory Shibuya entrance. Then tell Iori.
+48|Iori's in Love Again|Souji Iori, Daiba Studio (by the Illusory Studio gate)|Meet him at Shibuya Station. The Red Cleric is in Illusory Studio's Monitor Room. Then tell Iori.
+49|Iori Can't Stop Falling in Love|Souji Iori, Cosmic Egg (by a vending machine)|Meet him at Shibuya Station. The Pale Bishop is in Illusory Dolhr near the ladder to 54 m. Then tell Iori.
+50|Iori's Dream Girl|Souji Iori, Shibuya (other side of 106)|Sealed Illusory 106 B3 (warp): fight Carrie. Then talk to the Dark Cleric (I. Shibuya), Red Cleric (I. Studio) and Pale Bishop (I. Dolhr), talk to Iori, beat Carrie again, talk to Iori.
+51|Arena Staff on Hire|Receptionist, Illusory Urahara Arena (go behind the desk)|Talk to 10 bored Mirages standing around the Idolaspheres to recruit them, then report to the receptionist.
+52|Path of the Strong|Nieg, Illusory Daitama (after 12 Detritus trades)|Find Nieg in the arena where Garrick was fought and talk to him (fight, about Lv 48). Make Locktouch at the Bloom Palace, then report in Illusory Urahara.
+53|Conditions for a Masterpiece Movie|Yomotsu Shikome, Sealed Illusory Studio (back Monitor Room)|Finish Touma's and Ellie's third side stories and Yashiro's second, then let the Mirage inspect them.
+61|Versus Grandmaster Mirage!|Grandmaster Mirage, Illusory Daitama lower level|Defeat the 6 Mirage Dojo masters spread over the Idolaspheres, then the Grandmaster (about Lv 80).
+62|Voice of the People|Crepes Dia staff, Harajuku|Bring 2 Energy Drinks and 2 Fresh Spicy Curries (Hee Ho Mart).
+65|Shibuya Remedy|Cafe Seiren staff (side entrance)|Bring 3 Maca Leaves (battle drops).
+66|Shibuya Elixir|Cafe Seiren staff (side entrance)|Bring 3 Soma Droplets (battle drops, or a Beginner Arena prize).
+69|Conveying My Feelings|Moeka Katao, Daitama Observatory|Talk until she says what she needs; take a Feel CD from the CD rack in Fortuna Office and give it to her.
+70|Closing the Distance|Moeka Katao, Daitama Observatory|Talk until she says what she needs; take a Nan-no Magazine from Fortuna Office's magazine rack and give it to her.
+71|Attention Misdirection|Taneaki Tezuma, Harajuku (by the MM store)|His card is at Toubo Rooftop: the shiny spot in front of the stage's backstage door. Bring it back.
+72|Concentration Misdirection|Taneaki Tezuma, Harajuku (by the MM store)|His suitcase is at Cafe Seiren's main entrance, behind the pillar. Bring it back.
+73|The Dragon Descends|Nieg, Illusory Urahara|After Path of the Strong, trade Detritus with Nieg 36 more times; he challenges you as M-DEUS (about Lv 99).

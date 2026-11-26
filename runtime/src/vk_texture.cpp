@@ -144,7 +144,12 @@ void check_pool_texture(nvn::Texture* t, Image* im) {
     if (im->resist >= 0 && im->resist != (int8_t)rt::resist_icons_on()) im->written = false;  // badge icons on / off
     if (im->pack_file && im->pack_gen != g_pack_gen) im->written = false;  // UHD pack switched on / off
     HitchTimer ht{HITCH_CHECK};
-    if (mem_written((uint32_t)t->gpu, im->pool_bytes)) { im->written = false; g_reuploads++; }
+    uint32_t off = 0;
+    const nvn::Pool* p = nvn::pool_of(t->gpu, &off);
+    if (mem_written_span((uint32_t)t->gpu, im->pool_bytes, p ? p->addr : 0, p ? p->size : 0, g_submit_serial)) {
+        im->written = false;
+        g_reuploads++;
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ texture packs

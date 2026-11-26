@@ -202,6 +202,8 @@ void free_mem(VkDeviceMemory m, VkDeviceSize off, VkDeviceSize size) {
 }
 
 // ------------------------------------------------------------------------------------------------- init
+PFN_vkCmdPushDescriptorSetKHR g_push_desc = nullptr;
+uint32_t g_max_push = 0;
 bool g_vk_storage_ext_formats = true, g_vk_pipeline_stats = true, g_vk_pipe_cache_ctl = false;
 static void load_instance_funcs() {
     auto gipa = (PFN_vkGetInstanceProcAddr)SDL_Vulkan_GetVkGetInstanceProcAddr();
@@ -403,9 +405,27 @@ static void init() {
     dci.pQueueCreateInfos = &qci;
     std::vector<const char*> dexts(dext, dext + 3 + fault_ext + cp_ext);
     dlss_device_exts(have, dexts);
+    // optional (s118, Augs' CPU-bound crosswalk): push descriptors write a draw's resources straight into the command
+    // buffer (vkCmdPushDescriptorSetKHR) instead of allocate + update + bind per draw. NX_PUSH_DESC=0 off.
+    bool push_ext = !getenv("NX_PUSH_DESC") || atoi(getenv("NX_PUSH_DESC")) != 0;
+    if (push_ext) {
+        bool found = false;
+        for (auto& e : have) found |= !strcmp(e.extensionName, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+        push_ext = found;
+    }
+    if (push_ext) {
+        dexts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+        VkPhysicalDevicePushDescriptorPropertiesKHR pdp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &pdp};
+        if (auto f = (PFN_vkGetPhysicalDeviceProperties2)gipa(g_inst, "vkGetPhysicalDeviceProperties2")) f(phys, &p2);
+        g_max_push = pdp.maxPushDescriptors;
+    }
     dci.enabledExtensionCount = (uint32_t)dexts.size();
     dci.ppEnabledExtensionNames = dexts.data();
     VKC(vkCreateDevice(phys, &dci, nullptr, &dev));
+    if (push_ext) g_push_desc = (PFN_vkCmdPushDescriptorSetKHR)gipa(g_inst, "vkCmdPushDescriptorSetKHR");
+    if (!g_push_desc) g_max_push = 0;
+    log("vk: push descriptors %s (max %u)", g_push_desc ? "on" : "off", g_max_push);
     if (fault_ext) g_fault_info = (PFN_vkGetDeviceFaultInfoEXT)gipa(g_inst, "vkGetDeviceFaultInfoEXT");
     if (cp_ext) {
         g_checkpoint = (PFN_vkCmdSetCheckpointNV)gipa(g_inst, "vkCmdSetCheckpointNV");
@@ -606,8 +626,10 @@ bool weak_gpu() {
     return props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU || vram_bytes() < (4ull << 30);
 }
 
-// NX_RES=8k|4k|1440p|1080p|720p or NX_RES_SCALE=n (1..6): integer render scale over the game's 1280x720 (4k = 3, 1440p and
-// 1080p = 2: 1080p renders 1440p and the present blit downsamples it, 720p = 1, the default)
+// NX_RES=8k|4k|1440p|1080p|720p or NX_RES_SCALE=n (1..6, fractions allowed): render scale over the game's 1280x720 (4k = 3,
+// 1440p = 2, 1080p = 1.5, 720p = 1, the default). s118 (Augs, #11): 1080p was 2x = 2560x1440 downsampled, 78% more pixels
+// than a 1080p screen shows (RTX 3050 city: GPU waits 8 ms / frame); render targets already take fractional scales (FSR 3
+// lo twins), so 1080p is now exactly 1920x1080.
 // Ultrawide (setting aspect, NX_ASPECT: 16:9 default, 21:9, 32:9, auto = the desktop's shape, or a number; user request 11-24):
 // the game's 16:9 screen-size render targets are made wider by this factor; scene and post draws into them stretch over the
 // width (vk_replay.cpp draw) while the game's cameras get the wider aspect (hle_sys.cpp cam_proj_update), so the 3D image
@@ -631,9 +653,9 @@ float wide_factor() {
     }();
     return f;
 }
-uint32_t res_scale() {
-    static const uint32_t s = [] {
-        uint32_t n = 1;
+float res_scale() {
+    static const float s = [] {
+        float n = 1;
         // res = auto (fresh-install default, PORTABILITY rule 11-10): fit the screen, capped by the GPU: integrated GPUs and
         // cards under 3 GB of VRAM 720p (s85 Shibuya: 720p 1.8 GB in blocks, 1080p 2.0 GB), under 8 GB 1080p at most (= 1440p,
         // the same 2x render scale: 4K = 3x, 2.25x the pixels, too heavy for a GTX 1060 / RX 580 class card). The resolved
@@ -653,11 +675,11 @@ uint32_t res_scale() {
             int h = atoi(r);
             if (!_stricmp(r, "4k")) h = 2160;
             if (!_stricmp(r, "8k")) h = 4320;  // supersampling on 4K displays: the present blit halves it (2x2 box)
-            n = h > 720 ? (uint32_t)(h + 719) / 720 : 1;
+            n = h > 720 ? (h <= 1080 ? h / 720.f : (float)((h + 719) / 720)) : 1;  // 1080p 1.5x, else whole steps
         }
-        if (const char* r = getenv("NX_RES_SCALE")) n = (uint32_t)atoi(r);
-        n = std::clamp(n, 1u, 6u);
-        log("vk: render scale %ux (%ux%u)", n, 1280 * n, 720 * n);
+        if (const char* r = getenv("NX_RES_SCALE")) n = (float)atof(r);
+        n = std::clamp(std::round(n * 80) / 80, 1.f, 6.f);  // k / 80: 1280x720 x n stays whole pixels
+        log("vk: render scale %gx (%ux%u)", n, (uint32_t)lround(1280 * n), (uint32_t)lround(720 * n));
         return n;
     }();
     return s;
@@ -708,7 +730,7 @@ static float lo_for_setting() {
     if (!rt::fsr3_setting()) return 0;  // anti-aliasing is not FSR 3 / DLSS: no upscaling, no lo images in VRAM
     static const float ratio[5] = {1, 1.5f, 1.7f, 2, 3};  // AMD's Quality / Balanced / Performance / Ultra Performance
     const int m = std::clamp(rt::fsr3_quality(), 0, 4);
-    const float hi = (float)res_scale();
+    const float hi = res_scale();
     float lo = std::max(floorf(hi / ratio[m] * 80) / 80, 0.5f);  // k / 80: 1280x720 x lo stays whole pixels; #11: below 720p too (weak GPUs at res 720p)
     if (!m || lo >= hi) lo = 0;
     return lo;
@@ -716,7 +738,7 @@ static float lo_for_setting() {
 static std::atomic<float> g_lo{-1.f};  // current scene scale, written under g_twin_lock
 static void log_lo(float lo) {
     log("vk: FSR 3 / DLSS upscaling %s (mode %d, scene %ux%u of %ux%u)", lo > 0 ? "on" : "off", rt::fsr3_quality(),
-        (uint32_t)(1280 * lo), (uint32_t)(720 * lo), 1280 * res_scale(), 720 * res_scale());
+        (uint32_t)(1280 * lo), (uint32_t)(720 * lo), (uint32_t)lround(1280 * res_scale()), (uint32_t)lround(720 * res_scale()));
 }
 float upscale_lo_scale() {
     float s = g_lo.load(std::memory_order_relaxed);
@@ -727,7 +749,7 @@ float upscale_lo_scale() {
     return s;
 }
 static Image* twin_register(nvn::Texture* t, Image* im, VkFormat fmt, bool depth, bool stencil) {
-    if (!(t->flags & 8) || (t->flags & 1) || t->target != 1 || t->width != 1280 || t->height != 720 || t->levels > 1 || im->scale != (float)res_scale())
+    if (!(t->flags & 8) || (t->flags & 1) || t->target != 1 || t->width != 1280 || t->height != 720 || t->levels > 1 || im->scale != res_scale())
         return im;
     const float lo = upscale_lo_scale();
     std::lock_guard<std::mutex> l(g_twin_lock);
@@ -776,7 +798,7 @@ static Image* make_image(nvn::Texture* t, VkFormat fmt, bool depth, bool stencil
     bool shadow = shadow_native && depth && pow2(t->width) && pow2(t->height);
     static int n_shadow = 0;
     if (shadow && (t->flags & 8) && res_scale() > 1 && n_shadow++ < 4) log("vk: shadow map %ux%u kept at game size", t->width, t->height);
-    im->scale = force_scale > 0 ? force_scale : (t->flags & 8) && t->target == 1 && !small_post && !shadow ? (float)res_scale() : 1.f;
+    im->scale = force_scale > 0 ? force_scale : (t->flags & 8) && t->target == 1 && !small_post && !shadow ? res_scale() : 1.f;
     im->w = (uint32_t)lround(std::max(1u, t->width) * im->scale);
     // ultrawide: 16:9 screen-size targets (the scene, its post chain, the window textures) get wider; shadow maps and other
     // shapes keep theirs
@@ -1122,14 +1144,35 @@ static void end_and_wait(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal =
 extern int g_log_draws;
 
 // NX_SYNC_SUBMIT=1: wait for every submit as before (A/B test of the asynchronous path)
+// OP_CALL (nvn_hle.cpp CallCommands, s117): the called list, expanded here on the render thread. Blobs are copied as
+// views; the submit job keeps the lists, and they keep the lists they call.
+static void flatten(const std::vector<Cmd>& in, std::vector<Cmd>& out) {
+    for (const Cmd& k : in) {
+        if (k.op == OP_CALL) {
+            flatten(*(const std::vector<Cmd>*)(uintptr_t)((uint64_t)k.a[1] << 32 | k.a[0]), out);
+            continue;
+        }
+        Cmd& d = out.emplace_back();
+        d.op = k.op;
+        memcpy(d.a, k.a, sizeof d.a);
+        d.blob.v = k.blob.v;
+    }
+}
 void backend_submit(const std::vector<const std::vector<Cmd>*>& lists) {
     std::lock_guard<std::mutex> l(g_vk_lock);
     if (!dev) return;
+    rt::profile_start(true);  // NX_PROFILE=2
     HitchTimer ht{HITCH_SUBMIT};
     static const bool sync = getenv("NX_SYNC_SUBMIT") != nullptr;
     begin();
     g_submit_serial++;
-    for (auto* cmds : lists) replay(g_cb, *cmds);
+    static std::vector<Cmd> flat;  // g_vk_lock held
+    for (auto* cmds : lists) {
+        if (std::none_of(cmds->begin(), cmds->end(), [](const Cmd& k) { return k.op == OP_CALL; })) { replay(g_cb, *cmds); continue; }
+        flat.clear();
+        flatten(*cmds, flat);
+        replay(g_cb, flat);
+    }
     if (sync || g_log_draws) end_and_wait();  // drawlog statistics are read after the fence
     else end_and_submit();
 }

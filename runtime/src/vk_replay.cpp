@@ -63,10 +63,25 @@ static uint64_t g_stats_clears = 0, g_stats_copies = 0, g_stats_tex_draws = 0, g
 
 // ponytail: every image lives in GENERAL and a full barrier separates passes and copies; split barriers by hazard
 // once a profile says they cost
+// s115 (#11, GeForce 920MX): it costs. Fortuna Office switches the scene between two depth buffers on one colour target
+// 25-59 times a frame; each switch ended our pass with this barrier = ~0.25 ms of GPU idle each on that card (15 of 40 ms
+// per frame). Now a pass that ends because the game set other targets defers its barrier (end_rendering defer): the
+// targets it wrote go to g_unsynced and the barrier comes before anything reads one of them as a texture (bind_resources),
+// before any copy / clear / dispatch / upload (they all call end_rendering first) and at the end of the replay. Pass to
+// pass attachment writes rely on the GPU's in-order raster output. 1x passes only (MSAA keeps the old rule).
+// NX_PASS_BARRIER=1: the old barrier at every pass end (A/B, or a driver that shows wrong pictures with the new rule).
+static bool g_bar_pending = false;
+static uint32_t g_ms_samples = 1;       // sample count of the pass being recorded (pipeline())
+static std::vector<Image*> g_unsynced;  // attachments written by passes since the last full barrier
 static void full_barrier(VkCommandBuffer cb) {
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_MEMORY_WRITE_BIT,
                        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    g_bar_pending = false;
+    g_unsynced.clear();
+}
+static bool unsynced(const Image* im) {
+    return g_bar_pending && std::find(g_unsynced.begin(), g_unsynced.end(), im) != g_unsynced.end();
 }
 // Upscaling twins (vk.cpp twin_register): a screen-size target written while the frame ran on one size and read while it
 // runs on the other (s86: the battle-start field capture is copied at the scene size, the transition's later frames have
@@ -149,18 +164,28 @@ void pass_timing_report(uint64_t frames) {  // frames line (vk.cpp): top 14 labe
 }
 static std::string pt_target();
 // NX_PASS_SEQ=<present n> (debug, s75): log frame n's passes, resolves and expands in order (targets, samples, draws)
-static uint32_t g_seq_draws = 0;
+static uint32_t g_seq_draws = 0, g_seq_dsuse = 0;
 std::atomic<int> g_seq_request{0};  // NX_CONTROL "seq": log the next frame's pass order
 static bool seq_on() {
     static uint32_t at = getenv("NX_PASS_SEQ") ? (uint32_t)atoi(getenv("NX_PASS_SEQ")) : 0;
     if (g_seq_request.exchange(0)) at = g_present_no + 1;
     return at && g_present_no == at;
 }
-static void end_rendering(VkCommandBuffer cb) {
+static void end_rendering(VkCommandBuffer cb, bool defer = false) {  // defer: see g_unsynced
     if (g_st.rendering) {
         vkCmdEndRendering(cb); g_st.rendering = false;
-        if (seq_on()) log("seq:   end, %u draws", g_seq_draws);
+        if (seq_on()) log("seq:   end, %u draws, %u use depth / stencil", g_seq_draws, g_seq_dsuse);
         if (g_pt_pool) pt_mark(cb, "after " + pt_target());
+        static const bool old = getenv("NX_PASS_BARRIER") && atoi(getenv("NX_PASS_BARRIER")) != 0;
+        if (defer && !old && g_ms_samples == 1) {
+            for (uint32_t i = 0; i < g_st.ncolors; i++)
+                if (Image* im = image_of(g_st.colors[i]); im && !unsynced(im)) g_unsynced.push_back(im);
+            if (Image* im = image_of(g_st.depth); im && !unsynced(im)) g_unsynced.push_back(im);
+            g_bar_pending = true;
+            return;
+        }
+        full_barrier(cb);
+    } else if (g_bar_pending && !defer) {
         full_barrier(cb);
     }
 }
@@ -190,7 +215,6 @@ static std::unordered_map<Image*, MsTwin> g_ms;
 static std::mutex g_ms_dead_lock;
 static std::vector<std::pair<Image*, VkImage>> g_ms_dead;  // g_ms_dead_lock: images vk.cpp freed (ms_image_dead)
 static std::vector<Image*> g_ms_dirty;  // images whose twin is newer (attachments of the last MSAA pass)
-static uint32_t g_ms_samples = 1;       // sample count of the pass being recorded (pipeline())
 static uint32_t g_clear_ahead = 0;      // OP_RENDER_TARGETS: bit i colour i, bit 8 depth: cleared before the first draw
 static std::unordered_map<Image*, uint32_t> g_ms_1x_frame;  // colour target -> frame (g_present_no) its scene pass ran 1x
 static std::unordered_set<Image*> g_scene_depth;  // depths a scene pass (colour + depth, same size) has used: depth-only passes on them take MSAA
@@ -226,7 +250,7 @@ static uint32_t ms_wanted() {  // the setting, limited to what the GPU supports 
         if (const char* e = getenv("NX_MSAA_VRAM_MB")) vram = (uint64_t)atoi(e) << 20;  // debug: test the cap as a smaller GPU
         return vram / 4;
     }();
-    const uint64_t px = 1280ull * 720 * res_scale() * res_scale();
+    const uint64_t px = (uint64_t)(1280.0 * 720 * res_scale() * res_scale());
     const uint32_t want = n;
     while (n > 1 && 12 * px * 4 * n > budget) n >>= 1;
     static bool told = false;
@@ -510,7 +534,7 @@ static void begin_rendering(VkCommandBuffer cb) {
             dbg--;
             Image* c0 = atts[0];
             log("vk: MSAA pass? %s (expand bad %d) colours %u c0 %ux%u fmt %d written %d | depth %ux%u scale %u/%u layers %u levels %u written %d | clear ahead %#x",
-                ok ? "yes" : "no", (int)g_ms_expand_bad, natt, c0->w, c0->h, (int)c0->format, c0->written, dimg->w, dimg->h, (uint32_t)dimg->scale, res_scale(),
+                ok ? "yes" : "no", (int)g_ms_expand_bad, natt, c0->w, c0->h, (int)c0->format, c0->written, dimg->w, dimg->h, (uint32_t)dimg->scale, (uint32_t)res_scale(),
                 dimg->layers, dimg->levels, dimg->written, g_clear_ahead);
         }
         if (!ok) samples = 1;
@@ -581,8 +605,8 @@ static void begin_rendering(VkCommandBuffer cb) {
         for (uint32_t i = 0; i < g_st.ncolors; i++)
             if (Image* im = image_of(g_st.colors[i])) snprintf(t, sizeof t, " c%u=%p(%ux%u f%d)", i, (void*)im, im->w, im->h, (int)im->format), c += t;
         Image* d = image_of(g_st.depth);
-        log("seq: pass x%u%s depth=%p%s clear_ahead %#x", samples, c.c_str(), (void*)d, d ? (d->scale == res_scale() ? "" : " (not scene scale)") : "", g_clear_ahead);
-        g_seq_draws = 0;
+        log("seq: pass x%u%s depth=%p(%ux%u f%d)%s clear_ahead %#x", samples, c.c_str(), (void*)d, d ? d->w : 0, d ? d->h : 0, d ? (int)d->format : 0, d ? (d->scale == res_scale() ? "" : " (not scene scale)") : "", g_clear_ahead);
+        g_seq_draws = 0, g_seq_dsuse = 0;
     }
     if (g_pt_pool) pt_mark(cb, "pass " + pt_target());
     vkCmdBeginRendering(cb, &ri);
@@ -1475,7 +1499,7 @@ static void dispatch(VkCommandBuffer cb, const Cmd& k) {  // groups x, y, z
     }
     VkDescriptorSet set = bind_resources(cb, pv);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, p);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pv->layout, 0, 1, &set, 0, nullptr);
+    if (set) vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pv->layout, 0, 1, &set, 0, nullptr);
     vkCmdDispatch(cb, std::max(1u, k.a[0]), std::max(1u, k.a[1]), std::max(1u, k.a[2]));
     full_barrier(cb);
     if (g_dispatches++ < 3) log("vk: dispatch %ux%ux%u", k.a[0], k.a[1], k.a[2]);
@@ -1928,7 +1952,7 @@ static bool fsr3_in_place(VkCommandBuffer cb, Image* im) {
 
 static uint64_t g_resist_hash;  // bind_resources: the draw samples a resistance atlas drawn with icons (its hash)
 static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
-    VkDescriptorSet set = alloc_set(pv->set_layout);
+    VkDescriptorSet set = pv->push ? VK_NULL_HANDLE : alloc_set(pv->set_layout);
     g_resist_hash = 0;
     // per-draw lists, kept per thread (s72: their heap allocations were ~4% of the game thread in big areas)
     thread_local std::vector<VkWriteDescriptorSet> writes;
@@ -2029,6 +2053,11 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                 pool_texture(g_st.tex_pool, (uint32_t)(h & 0xFFFFF), &t, &tv);
                 bool have_smp = pool_sampler(g_st.smp_pool, (uint32_t)((h >> 20) & 0xFFF), &s);
                 Image* im = image_of(t);
+                if (im && unsynced(im)) {  // a target an earlier pass wrote with its barrier deferred (g_unsynced)
+                    bool was = g_st.rendering;
+                    end_rendering(cb);
+                    if (was) begin_rendering(cb);
+                }
                 if (im && !g_ms_dirty.empty() && ms_is_dirty(im)) {  // sampled while its MSAA twin is newer
                     if (seq_on()) log("seq:   draw samples dirty %p (%ux%u f%d) -> flush", (void*)im, im->w, im->h, (int)im->format);
                     bool was = g_st.rendering;
@@ -2103,6 +2132,10 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
     VkWriteDescriptorSet sw{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER};
     sw.pBufferInfo = &bufs.back();
     writes.push_back(sw);
+    if (pv->push) {  // VK_NULL_HANDLE: the callers skip vkCmdBindDescriptorSets
+        g_push_desc(cb, compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS, pv->layout, 0, (uint32_t)writes.size(), writes.data());
+        return VK_NULL_HANDLE;
+    }
     vkUpdateDescriptorSets(dev, (uint32_t)writes.size(), writes.data(), 0, nullptr);
     return set;
 }
@@ -2453,6 +2486,7 @@ static void ui_sprite_smooth(const Cmd& k) {
 }
 static void draw(VkCommandBuffer cb, const Cmd& k) {
     g_seq_draws++;
+    if (g_st.ds[0] & 7) g_seq_dsuse++;
     g_st.draws++;
     Program* progs[6] = {g_st.programs[0], g_st.programs[1], g_st.programs[2], g_st.programs[3], g_st.programs[4], nullptr};
     g_recent[g_recent_n++ % 1024] = {{progs[0] ? (uint32_t)progs[0]->stages[0].code : 0, progs[1] ? (uint32_t)progs[1]->stages[0].code : 0},
@@ -2573,7 +2607,7 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
                 for (int c = 0; c < 3; c++) st32(v0 + 36 * i + 12 + 4 * c, 0x3f800000);
     }
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pv->layout, 0, 1, &set, 0, nullptr);
+    if (set) vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pv->layout, 0, 1, &set, 0, nullptr);
     // NVN (like D3D) maps NDC +Y to the top of the target; Vulkan maps -Y there. A negative-height viewport flips Y
     // and with it the winding, so the game's front-face / cull settings keep their meaning.
     VkViewport vp = g_st.vp;
@@ -2773,7 +2807,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                  k.a[5], k.a[6], k.a[7], k.blob.size());
         switch (k.op) {
             case OP_RENDER_TARGETS: {
-                end_rendering(cb);
+                end_rendering(cb, true);
                 if (seq_on()) log("seq: targets c0 %p depth %p", (void*)image_of(k.a[0] ? get<Texture>(k.a[1]) : nullptr), (void*)image_of(get<Texture>(k.a[9])));
                 g_st.ncolors = std::min<uint32_t>(8, k.a[0]);
                 for (uint32_t i = 0; i < 8; i++) g_st.colors[i] = i < g_st.ncolors ? get<Texture>(k.a[1 + i]) : nullptr;

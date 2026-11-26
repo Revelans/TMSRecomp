@@ -171,9 +171,16 @@ uint32_t host_callback(HleFn fn, uintptr_t tag) {
 }
 uint32_t host_callback(HleFn fn) { return host_callback(fn, 0); }
 HleFn host_callback_at(uint32_t a) {
+    // s117: every NVN call through a proc pointer lands here (2-3% of the game thread with the lock). Entries are never
+    // changed or removed once added, so a per-thread cache of hits never goes stale.
+    struct Hit { uint32_t a; HleFn fn; uintptr_t tag; };
+    thread_local Hit hits[256];
+    Hit& h = hits[(a >> 2) & 255];
+    if (h.a == a && h.fn) { t_cb_tag = h.tag; return h.fn; }
     std::lock_guard<std::mutex> l(g_cb_lock);
     auto it = g_host_cb.find(a);
     if (it == g_host_cb.end()) return nullptr;
+    h = {a, it->second.first, it->second.second};
     t_cb_tag = it->second.second;
     return it->second.first;
 }
@@ -247,9 +254,11 @@ static bool sym_init() {  // dbghelp symbols (tms.pdb) for watch, guest_chain an
 // NX_PROFILE=1: sampling profiler of the calling thread (the game thread, from pace_present). A sampler thread stops it
 // every millisecond, records the host instruction and the innermost generated function (F_<guest addr>) on its stack,
 // and every 10 s logs the top entries of both (where frame time goes: guest code, runtime, waits).
-void rt::profile_start() {
-    static bool on = getenv("NX_PROFILE") != nullptr, started = false;
-    if (!on || started) return;
+// NX_PROFILE=2 (s115): the thread that submits NVN command lists (the replay runs there) instead of the game thread.
+void rt::profile_start(bool submit) {
+    static const char* e = getenv("NX_PROFILE");
+    static bool on = e != nullptr, started = false;
+    if (!on || started || submit != (atoi(e) == 2)) return;
     started = true;
     HANDLE target;
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &target,
@@ -277,7 +286,7 @@ void rt::profile_start() {
             }
             return it->second;
         };
-        std::unordered_map<DWORD64, uint32_t> leaf, guest;
+        std::unordered_map<DWORD64, uint32_t> leaf, guest, caller;  // caller: runtime function under a leaf outside our modules
         static uint64_t stack[1024];
         uint32_t n = 0;
         auto last = std::chrono::steady_clock::now();
@@ -334,6 +343,7 @@ void rt::profile_start() {
             for (size_t i = 0; !h && !ours(ctx.Rip) && i < got / 8; i++)
                 if (stack[i] >= lo && stack[i] < hi && !lookup(stack[i]).second) h = lookup(stack[i]).first;
             frame.push_back({lookup(ctx.Rip).first, g, h});
+            if (h) caller[h]++;
             if (now - last < std::chrono::seconds(10)) continue;
             last = now;
             auto top = [&](std::unordered_map<DWORD64, uint32_t>& m, const char* what) {
@@ -353,7 +363,8 @@ void rt::profile_start() {
             };
             top(leaf, "host functions (leaf)");
             top(guest, "innermost guest function");
-            leaf.clear(), guest.clear(), n = 0;
+            top(caller, "runtime caller of a leaf outside tms.exe / game.dll (driver, locks, waits)");
+            leaf.clear(), guest.clear(), caller.clear(), n = 0;
         }
     }).detach();
 }
@@ -524,7 +535,7 @@ static LONG WINAPI on_crash(EXCEPTION_POINTERS* e) {
 // The Windows debugging aids (NX_PROFILE sampling profiler, NX_CONTROL "watch", guest call chains from tms.pdb) use
 // dbghelp; on Linux they report that they are not available. Crashes are reported by a SIGSEGV / SIGBUS / SIGILL /
 // SIGFPE handler, which first gives memory.cpp's write watch its faults.
-void rt::profile_start() {
+void rt::profile_start(bool) {
     static bool said = false;
     if (getenv("NX_PROFILE") && !said) said = true, log("[profile] not available on Linux (use perf)");
 }

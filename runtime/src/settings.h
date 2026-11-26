@@ -1,6 +1,6 @@
 #pragma once
 // Release version (the launcher compares it with GitHub release tags).
-static const char k_version[] = "0.1.4";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
+static const char k_version[] = "0.1.5";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
 
 // Keyboard / mouse bindings (ui.cpp poll_input, launcher Game page): settings.ini key_<name> = up to 3 names, comma
 // separated; "none" = unbound. Names: SDL key names (K, Return, Left Shift, Keypad 4...), Mouse1..Mouse5, WheelUp / WheelDown.
@@ -26,6 +26,8 @@ static const char k_default_settings[] =
     "window = borderless\n"
     "; present_mode: mailbox (default, no tearing), fifo (classic vsync), vrr (G-SYNC / FreeSync: vsync + a frame cap 3 under\n"
     ";   the refresh rate), immediate (tearing, lowest latency)\n"
+    "; language: en (default), ja (Japanese), fr (French), zh-Hans (Simplified Chinese), zh-Hant (Traditional Chinese):\n"
+    ";   game text and menus (voices stay; the Uncensored mod's text is English only)\n"
     "; mute = 1 turns the sound off\n"
     "; walk_speed: player walk/run speed in the field (1.0 = the game's own)\n"
     "; post_native: 1 (default) keeps depth-of-field/bloom targets at the game's size (no halos at 4K), 0 scales them\n"
@@ -41,6 +43,8 @@ static const char k_default_settings[] =
     "; exp_gap = 0: members above the enemy's level get full EXP (default 1: less per level above, the game's rule)\n"
     "; battle_retry = 0: no \"Retry the battle?\" after a party wipe (default 1: retry with the battle's starting HP / EP / items)\n"
     "; item_max99 = 0: consumables keep the game's stock caps (Life Stone 40, Patra Stone 90, Magic Mirror 5...; default 1: 99 each)\n"
+    "; ng_plus_requests = 0: requests 49 (Versus Grandmaster Mirage!) and 50 (The Dragon Descends) stay New Game+ only\n"
+    ";   (default 1: also in a fresh game, same conditions otherwise)\n"
     "; map_reveal = 1: every Idolasphere floor shows its whole layout on the minimap / map when entered (default 0)\n"
     "; aspect: 16:9 (default, the game's), 21:9 / 32:9 ultrawide (wider 3D view, HUD and menus 16:9 in the middle), auto = the screen's shape\n"
     "; field_costume = 1: outside battle (field, dungeons, story scenes) party members wear their equipped costume (default 0: story clothes)\n"
@@ -59,6 +63,11 @@ static const char k_default_settings[] =
     ";   dlss_preset: DLSS model: 0 auto (NVIDIA's pick, default), 11 K, 12 L, 13 M (L / M = DLSS 4.5)\n"
     "; msaa: 0 (default), 2, 4 or 8 samples for the 3D scene (with fx_fxaa 0 / 1 / 2; unused with 3 / 4: FSR 3 / DLSS\n"
     ";   smooth edges themselves)\n"
+    "; movie_gpu = 0: 4K movies decode on the CPU (default 1: on the GPU with Windows' VP9 decoder when there is one)\n"
+    "; movie_hd_fallback = 0: 4K movies stay 4K when this PC decodes them too slowly (default 1: that movie drops to 720p)\n"
+    "; async_replay = 0: draw replay on the game thread (default 1: on its own thread at every frame rate but 30)\n"
+    "; host_libc = 0: the game's memcpy / memset / memcmp / strlen / strcmp run as the game's own code (default 1: as PC code)\n"
+    "; nan_guard: auto (default: on with AMD GPUs), 1, 0: invalid shader colours become black instead of black effect shapes\n"
     "; tex_pack: auto (default: on unless integrated GPU or under 4 GB VRAM), 1 on, 0 off (UHD texture pack, <data>\\textures\\pack)\n"
     "; voice_subs = 0 turns the English battle voice subtitles off (subtitles_en.tsv next to tms.exe)\n"
     "; key_<button> = keyboard / mouse keys for a Switch button or stick direction, up to 3, comma separated (\"none\" = unbound):\n"

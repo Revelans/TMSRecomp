@@ -95,7 +95,9 @@ void pack_released(Image* im);  // vk_texture.cpp: a replaced image goes away (d
 // vk.cpp: destroy once the GPU is past every submit made so far (views, then image, then memory; any may be null)
 void defer_destroy(VkImage image, VkImageView view, std::map<uint64_t, VkImageView> views, VkDeviceMemory mem, VkDeviceSize off, VkDeviceSize size);
 VkImageView sampled_view(nvn::Texture* t, Image* im, const nvn::TexView& v);  // vk.cpp
-uint32_t res_scale();  // vk.cpp: NX_RES / NX_RES_SCALE, render target scale
+extern PFN_vkCmdPushDescriptorSetKHR g_push_desc;  // vk.cpp: VK_KHR_push_descriptor, null when the device lacks it
+extern uint32_t g_max_push;  // its maxPushDescriptors
+float res_scale();  // vk.cpp: NX_RES / NX_RES_SCALE, render target scale (1080p = 1.5)
 float wide_factor();   // vk.cpp: setting aspect (NX_ASPECT) over 16:9: 1 = the game's 16:9, 1.3125 = 21:9 (1280 -> 1680)
 uint64_t vram_bytes();  // vk.cpp: largest device-local heap (NX_VRAM_MB pretends a smaller GPU, for tests)
 bool weak_gpu();        // vk.cpp: integrated GPU or under 4 GB of VRAM (weak-PC defaults: res auto, UHD pack auto)

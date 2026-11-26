@@ -312,12 +312,87 @@ static std::vector<uint32_t> integer_samplers(const std::vector<uint32_t>& in) {
     o[3] = bound;
     return o;
 }
+// NaN guard (GitHub #15, AMD RX 7800 XT: effects - orb glows, Bufu - drawn as black shapes, FSR 3 on; not seen on NVIDIA,
+// also not with the D32S8 depth fallback forced there): a NaN colour output turns black through blending and FSR 3
+// spreads it over the next frames. Fragment shaders get, before each OpReturn of main, every float vec4 colour output
+// replaced by 0 where it is NaN. Default on with AMD GPUs only (driver float behaviour differs from NVIDIA's);
+// NX_NAN_GUARD=1 / 0 forces it on / off. Applied in make_module like integer_samplers: spirv_hash is unchanged.
+static std::vector<uint32_t> nan_guard(const std::vector<uint32_t>& in) {
+    static const char* e = getenv("NX_NAN_GUARD");  // setting nan_guard: auto (default) / 1 / 0
+    static const bool on = e && (*e == '0' || *e == '1') ? *e == '1' : vk::props.vendorID == 0x1002;
+    if (!on) return {};
+    uint32_t entry = 0, tfloat = 0, tvec4 = 0, tbool = 0, tbvec4 = 0;
+    bool frag = false;
+    std::vector<uint32_t> located, outs;
+    std::unordered_map<uint32_t, uint32_t> out_ptr;  // Output pointer type -> pointee
+    size_t first_fn = 0;
+    for (size_t w = 5; w < in.size();) {
+        const uint32_t op = in[w] & 0xFFFF, n = in[w] >> 16;
+        if (!n) return {};
+        if (op == 15) frag = in[w + 1] == 4, entry = in[w + 2];                                  // OpEntryPoint Fragment
+        else if (op == 71 && in[w + 2] == 30) located.push_back(in[w + 1]);                      // OpDecorate Location
+        else if (op == 20) tbool = in[w + 1];                                                    // OpTypeBool
+        else if (op == 22 && in[w + 2] == 32) tfloat = in[w + 1];                                // OpTypeFloat 32
+        else if (op == 23 && in[w + 3] == 4 && in[w + 2] == tfloat && tfloat) tvec4 = in[w + 1]; // OpTypeVector float 4
+        else if (op == 23 && in[w + 3] == 4 && in[w + 2] == tbool && tbool) tbvec4 = in[w + 1];  // OpTypeVector bool 4
+        else if (op == 32 && in[w + 2] == 3) out_ptr[in[w + 1]] = in[w + 3];                     // OpTypePointer Output
+        else if (op == 59 && in[w + 3] == 3 && tvec4 && out_ptr[in[w + 1]] == tvec4 &&
+                 std::count(located.begin(), located.end(), in[w + 2])) outs.push_back(in[w + 2]);  // OpVariable Output
+        else if (op == 54 && !first_fn) first_fn = w;                                            // OpFunction
+        w += n;
+    }
+    // only outputs the shader stores to (directly or through an access chain): storing an output it never writes would
+    // overwrite that render target (unwritten outputs leave it unchanged on NVIDIA; battle cut-in portraits turned into
+    // the colour-bar background with every declared output guarded)
+    std::vector<uint32_t> written;
+    std::unordered_map<uint32_t, uint32_t> chain_base;
+    for (size_t w = first_fn; first_fn && w < in.size();) {
+        const uint32_t op = in[w] & 0xFFFF, n = in[w] >> 16;
+        if (!n) return {};
+        if (op == 65 || op == 66) chain_base[in[w + 2]] = in[w + 3];  // OpAccessChain / OpInBoundsAccessChain
+        else if (op == 62) {                                          // OpStore
+            auto b = chain_base.find(in[w + 1]);
+            const uint32_t v = b == chain_base.end() ? in[w + 1] : b->second;
+            if (std::count(outs.begin(), outs.end(), v) && !std::count(written.begin(), written.end(), v)) written.push_back(v);
+        }
+        w += n;
+    }
+    outs = written;
+    if (!frag || outs.empty() || !first_fn) return {};
+    uint32_t bound = in[3];
+    std::vector<uint32_t> o(in.begin(), in.begin() + first_fn);
+    o.reserve(in.size() + 64);
+    if (!tbool) tbool = bound++, o.insert(o.end(), {2u << 16 | 20, tbool});
+    if (!tbvec4) tbvec4 = bound++, o.insert(o.end(), {4u << 16 | 23, tbvec4, tbool, 4});
+    const uint32_t zero = bound++;
+    o.insert(o.end(), {3u << 16 | 46, tvec4, zero});  // OpConstantNull vec4
+    bool in_main = false;
+    for (size_t w = first_fn; w < in.size();) {
+        const uint32_t op = in[w] & 0xFFFF, n = in[w] >> 16;
+        if (op == 54) in_main = in[w + 2] == entry;
+        if (op == 253 && in_main)  // OpReturn
+            for (uint32_t v : outs) {
+                const uint32_t x = bound++, nan = bound++, s = bound++;
+                o.insert(o.end(), {4u << 16 | 61, tvec4, x, v,              // OpLoad
+                                   4u << 16 | 156, tbvec4, nan, x,          // OpIsNan
+                                   6u << 16 | 169, tvec4, s, nan, zero, x,  // OpSelect
+                                   3u << 16 | 62, v, s});                   // OpStore
+            }
+        o.insert(o.end(), in.begin() + w, in.begin() + w + n);
+        w += n;
+    }
+    o[3] = bound;
+    static bool told = false;
+    if (!told) told = true, log("vk: NaN guard on fragment colour outputs (%s)", e && (*e == '0' || *e == '1') ? "setting nan_guard" : "AMD GPU");
+    return o;
+}
 static std::unordered_map<uint64_t, VkShaderModule> g_module_by_hash;  // one module per SPIR-V hash; g_mh_lock
 VkShaderModule make_module(const Translated& t, bool shared) {
     const uint64_t h = spirv_hash(t);
     if (shared) { std::lock_guard<std::mutex> l(g_mh_lock); if (auto it = g_module_by_hash.find(h); it != g_module_by_hash.end()) return it->second; }
     const std::vector<uint32_t> patched = integer_samplers(t.spirv);
-    const std::vector<uint32_t>& code = patched.empty() ? t.spirv : patched;
+    const std::vector<uint32_t> guarded = nan_guard(patched.empty() ? t.spirv : patched);
+    const std::vector<uint32_t>& code = !guarded.empty() ? guarded : patched.empty() ? t.spirv : patched;
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     ci.codeSize = code.size() * 4;
     ci.pCode = code.data();
@@ -677,12 +752,12 @@ Combo* combo_of(nvn::Program* const per_stage[6]) {
     }
     std::vector<std::pair<VkShaderStageFlagBits, const Translated*>> ls;
     for (auto* st : c->stages) ls.push_back({st->vk_stage, &st->t});
-    make_layout(ls, &c->set_layout, &c->layout);
+    make_layout(ls, &c->set_layout, &c->layout, &c->push);
     cache[key] = c;
     return c;
 }
 
-void make_layout(const std::vector<std::pair<VkShaderStageFlagBits, const Translated*>>& stages, VkDescriptorSetLayout* set_layout, VkPipelineLayout* layout) {
+void make_layout(const std::vector<std::pair<VkShaderStageFlagBits, const Translated*>>& stages, VkDescriptorSetLayout* set_layout, VkPipelineLayout* layout, bool* push) {
     // one descriptor set: every resource of every stage at its own binding
     std::vector<VkDescriptorSetLayoutBinding> b;
     VkShaderStageFlags all = 0;
@@ -701,7 +776,12 @@ void make_layout(const std::vector<std::pair<VkShaderStageFlagBits, const Transl
     // private after ~40 minutes. Identical bindings make identical layouts, so the pair is shared (never destroyed).
     static std::mutex lock;
     static std::unordered_map<std::string, std::pair<VkDescriptorSetLayout, VkPipelineLayout>> made;
-    std::string key;
+    // push descriptors (s118) when every resource fits the device limit; only callers that ask (Combo layouts) get one
+    uint32_t total = 0;
+    for (auto& x : b) total += x.descriptorCount;
+    const bool use_push = push && g_push_desc && total <= g_max_push;
+    if (push) *push = use_push;
+    std::string key(use_push ? "P" : "S");
     for (auto& x : b) key.append((const char*)&x.binding, 4).append((const char*)&x.descriptorType, 4)
                          .append((const char*)&x.descriptorCount, 4).append((const char*)&x.stageFlags, 4);
     std::lock_guard<std::mutex> l(lock);
@@ -709,6 +789,7 @@ void make_layout(const std::vector<std::pair<VkShaderStageFlagBits, const Transl
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     lci.bindingCount = (uint32_t)b.size();
     lci.pBindings = b.data();
+    if (use_push) lci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     VKC(vkCreateDescriptorSetLayout(dev, &lci, nullptr, set_layout));
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plci.setLayoutCount = 1;

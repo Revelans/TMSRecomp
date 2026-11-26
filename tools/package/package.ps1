@@ -64,7 +64,7 @@ Copy-Item "$root\tools\recomp\link.py", "$root\tools\recomp\lift.py", "$root\too
 Copy-Item "$root\tools\nso.py", "$root\tools\cpk.py", "$root\tools\vcdiff.py" "$su\tools"  # vcdiff: launcher Guide, xdelta mods
 Copy-Item "$root\tools\texextract\texextract.py", "$root\tools\texextract\fasttex.dll" "$su\tools\texextract"
 Copy-Item "$root\tools\shaderscan\shaderscan.py" "$su\tools\shaderscan"
-Copy-Item "$root\tools\setup\setup.py", "$root\tools\setup\build_game.py" "$su\tools\setup"
+Copy-Item "$root\tools\setup\setup.py", "$root\tools\setup\build_game.py", "$root\tools\setup\tms.profdata" "$su\tools\setup"
 
 # no game code or data in the program ZIP (plan: the release must not contain translated game code or game-derived data)
 $bad = Get-ChildItem $stage -Recurse -File | Where-Object {

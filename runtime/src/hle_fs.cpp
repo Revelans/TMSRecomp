@@ -65,12 +65,16 @@ static bool host_path(uint32_t gpath, fs::path& out) {
     while (!rest.empty() && rest[0] == '/') rest.erase(0, 1);
     fs::path rel = fs::u8path(rest);
     std::error_code ec;
+    // Language option (s116): the Uncensored mod's pack_031_message.cpk holds its English text in all five language
+    // folders (JP_Japanese, EUfr, CNzh, TWzh = USen copies), so with another language the base pack wins.
+    static const bool non_en = strcmp(rt::language(), "en-US") != 0;
+    const size_t mods = non_en && rest == "Pack/pack_031_message.cpk" ? 0 : it->second.size() - 1;
 #ifdef _WIN32
-    for (size_t i = 0; i + 1 < it->second.size(); i++)
+    for (size_t i = 0; i < mods; i++)
         if (fs::is_regular_file(it->second[i] / rel, ec)) { out = it->second[i] / rel; return true; }
     out = it->second.back() / rel;
 #else
-    for (size_t i = 0; i + 1 < it->second.size(); i++)
+    for (size_t i = 0; i < mods; i++)
         if (fs::path q = ci_path(it->second[i], rel); fs::is_regular_file(q, ec)) { out = q; return true; }
     out = ci_path(it->second.back(), rel);
 #endif
