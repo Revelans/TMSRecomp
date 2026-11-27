@@ -34,6 +34,7 @@ su="$stage/setup"
 mkdir -p "$su/sdk" "$su/tools/recomp" "$su/tools/texextract" "$su/tools/shaderscan" "$su/tools/setup"
 cp "$NX_NSTOOL" "$su/nstool"
 cp -r "$NX_PYTHON" "$su/python"
+rm -rf "$su"/python/lib/python3.*/config-3.*  # static lib + python.o for building C extensions: not needed
 cp "$root/runtime/include/guest.h" "$su/sdk/"
 cp "$root"/tools/recomp/{link.py,lift.py,a32.py,vfp.py,names.txt} "$su/tools/recomp/"
 cp "$root"/tools/{nso.py,cpk.py,vcdiff.py} "$su/tools/"
