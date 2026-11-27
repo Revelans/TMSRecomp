@@ -166,7 +166,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 
 ## What's new in v0.1.6
 
-- **Loose-file mods** (P5R style): a mod holds only the files it changes. Launcher > Mods > **Dump game files** unpacks
+- **Loose-file mods**: a mod holds only the files it changes. Launcher > Mods > **Dump game files** unpacks
   the game to `<game files>\dump\<pack>\...`; copy a file to `mods\<ModName>\cpk\<pack>\<same path>` and edit it. See
   [Mods](#mods). Whole-pack mods like the Uncensored patch keep working, and loose files work on top of them.
 - **3D models in video memory** (#11): the graphics card read the game's 3D model data over the PCIe bus every frame;
