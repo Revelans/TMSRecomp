@@ -9,16 +9,16 @@ and translates all shaders. It takes about 5 to 15 minutes and needs no internet
 
 Requirements
 - x86-64 Linux with glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, SteamOS 3.7 or newer), a GPU with Vulkan 1.3
-- clang and lld from your package manager (setup compiles the game code with them):
-    Ubuntu / Debian: sudo apt install clang lld        Fedora: sudo dnf install clang lld        Arch: sudo pacman -S clang lld
 - cairo and pango (installed on every desktop)
 - About 15 GB free disk space for the game files
-- Python, nstool, the .NET runtime of the shader translator, SDL3 and libvpx are in this tarball
+- Nothing to install: Python, clang + lld (they compile the game code), nstool, the .NET runtime of the shader
+  translator, SDL3 and libvpx are in this tarball (works on the Steam Deck's read-only SteamOS)
 
 Start
 1. Extract this folder anywhere (keep the setup/ folder): tar xzf TMSRecomp-*-linux-x64.tar.gz
 2. Run ./launcher. The Setup page opens: pick your game, press "Set up game files", wait for "Done".
-3. PLAY. The game's saves, caches, logs and screenshots live in the game files folder.
+3. PLAY. Steam Deck: in Desktop Mode add tms (or launcher) to Steam as a non-Steam game for Game Mode.
+   The game's saves, caches, logs and screenshots live in the game files folder.
 
 Files
 - tms          the game (F1 or L3+R3: settings overlay; F12: screenshot; Alt+Enter / F11: window)
@@ -26,7 +26,7 @@ Files
 - launcher     settings + PLAY
 - settings.ini written on the first start next to tms (or ~/.config/TMSRecomp/ when this folder is read-only)
 - shaderc/     shader translator (Ryujinx shader compiler, MIT; carries its own .NET runtime)
-- setup/       first-run setup: Python, nstool, our build tools
+- setup/       first-run setup: Python, clang + lld (LLVM), nstool, our build tools
 - game.so      made by setup from your game (not in the tarball)
 
 Differences from Windows: no AMD FSR 3 and no NVIDIA DLSS (they fall back to SMAA); the launcher's Update button opens

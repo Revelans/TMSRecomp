@@ -399,8 +399,12 @@ def main():
 
     if LINUX:
         say("STEP", 5, 6, "Compiling the game code (game.so)")
-        clang = a.clang or shutil.which("clang")
-        lld = shutil.which("ld.lld")
+        # the tarball's own setup/llvm (clang 23, as on Windows: nothing to install, e.g. Steam Deck), else the system's
+        own = [os.path.join(llvm, n) for n in ("clang", "ld.lld")]
+        if all(os.access(p, os.X_OK) for p in own) and not a.clang:
+            clang, lld = own
+        else:
+            clang, lld = a.clang or shutil.which("clang"), shutil.which("ld.lld")
         if not clang or not lld:
             fail("clang and lld are needed to compile the game code (install them with your package manager)")
         run([py, os.path.join(HERE, "build_game.py"), "--gen", os.path.join(data, "gen"),

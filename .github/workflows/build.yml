@@ -25,6 +25,7 @@ jobs:
       RYU_SHA: a82350bb774f70fcbd41c9987bf67a3775409963  # the Ryubing commit tools/shaderc/patches are made for
       PY_URL: https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.12.14+20260929-x86_64-unknown-linux-gnu-install_only.tar.gz
       CAPSTONE: capstone==5.0.9
+      LLVM_VER: 23.1.6  # the same clang as the Windows ZIP's setup\llvm
     steps:
       - uses: actions/checkout@v4
 
@@ -79,6 +80,16 @@ jobs:
           "$RUNNER_TEMP/python/bin/python3" -m pip install --no-cache-dir --disable-pip-version-check "$CAPSTONE"
           "$RUNNER_TEMP/python/bin/python3" -I -c "import capstone; print('capstone', capstone.__version__)"
 
+      - name: clang + lld (bundled, setup compiles game.so with them)
+        run: |
+          mkdir -p "$RUNNER_TEMP/llvm"
+          curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VER/LLVM-$LLVM_VER-Linux-X64.tar.xz" |
+            tar -xJ -C "$RUNNER_TEMP/llvm" --strip-components=2 --wildcards "*/bin/clang-${LLVM_VER%%.*}" "*/bin/lld"
+          mv "$RUNNER_TEMP/llvm/clang-${LLVM_VER%%.*}" "$RUNNER_TEMP/llvm/clang"
+          mv "$RUNNER_TEMP/llvm/lld" "$RUNNER_TEMP/llvm/ld.lld"
+          curl -fsSL -o "$RUNNER_TEMP/llvm/LICENSE.TXT" "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$LLVM_VER/llvm/LICENSE.TXT"
+          ls -la "$RUNNER_TEMP/llvm"; ldd "$RUNNER_TEMP/llvm/clang" "$RUNNER_TEMP/llvm/ld.lld"
+
       - name: Package
         run: |
           name=TMSRecomp-linux-x64
@@ -86,7 +97,7 @@ jobs:
           echo "NAME=$name" >> "$GITHUB_ENV"
           NX_SDL3_LIB="$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" NX_SDL3_LICENSE="$RUNNER_TEMP/sdl/LICENSE.txt" \
           NX_NSTOOL="$(find "$RUNNER_TEMP/nstool/bin" -type f -name nstool | head -1)" NX_NSTOOL_LICENSE="$RUNNER_TEMP/nstool/LICENSE" \
-          NX_PYTHON="$RUNNER_TEMP/python" NX_SHADERC="$RUNNER_TEMP/shaderc" NX_RYU_LICENSE="$RUNNER_TEMP/ryubing/LICENSE.txt" \
+          NX_LLVM="$RUNNER_TEMP/llvm" NX_LLVM_LICENSE="$RUNNER_TEMP/llvm/LICENSE.TXT"           NX_PYTHON="$RUNNER_TEMP/python" NX_SHADERC="$RUNNER_TEMP/shaderc" NX_RYU_LICENSE="$RUNNER_TEMP/ryubing/LICENSE.txt" \
             bash tools/package/package_linux.sh build "$name.tar.gz"
 
       - name: Smoke test (the bundled pieces start)
@@ -95,6 +106,11 @@ jobs:
           if ldd tms launcher | grep "not found"; then exit 1; fi
           ./setup/python/bin/python3 -I setup/tools/setup/setup.py --help > /dev/null
           ./setup/nstool 2>&1 | head -2
+          # the bundled compiler builds a shared library the way build_game.py does (no system headers or libraries)
+          echo 'double f(double x){return x*2;}' > t.c
+          ./setup/llvm/clang --target=x86_64-linux-gnu -O2 -nostdinc -fPIC -c t.c -o t.o
+          ./setup/llvm/clang --target=x86_64-linux-gnu -shared -nostdlib --ld-path="$PWD/setup/llvm/ld.lld" -o t.so t.o
+          ./setup/llvm/clang --version | head -1; file t.so; rm t.c t.o t.so
           r=0; timeout 20 ./shaderc/NxShader < /dev/null || r=$?
           echo "NxShader exit $r (empty input: no shader requests)"; [ $r -ne 124 ] && [ $r -ne 126 ] && [ $r -ne 127 ]
 

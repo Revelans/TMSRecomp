@@ -7,6 +7,7 @@
 #   NX_NSTOOL     nstool binary (built from source)                          NX_NSTOOL_LICENSE
 #   NX_PYTHON     python-build-standalone "install_only" folder (bin/python3) with capstone installed
 #   NX_SHADERC    self-contained linux-x64 publish of tools/shaderc          NX_RYU_LICENSE   Ryujinx LICENSE.txt
+#   NX_LLVM       folder with clang + ld.lld (LLVM's Linux release; setup compiles game.so with them)  NX_LLVM_LICENSE
 set -euo pipefail
 build=$(realpath "$1"); out=$(realpath -m "$2")
 root=$(realpath "$(dirname "$0")/../..")
@@ -29,10 +30,11 @@ cp "$root/tools/package/README_linux.txt" "$stage/README.txt"
 cp "$root/LICENSE" "$stage/"
 cp -r "$NX_SHADERC" "$stage/shaderc"
 
-# setup/: what the first-run setup needs to build game.so from the player's own game (system clang + lld compile it)
+# setup/: what the first-run setup needs to build game.so from the player's own game (bundled clang + lld compile it)
 su="$stage/setup"
 mkdir -p "$su/sdk" "$su/tools/recomp" "$su/tools/texextract" "$su/tools/shaderscan" "$su/tools/setup"
 cp "$NX_NSTOOL" "$su/nstool"
+mkdir -p "$su/llvm" && cp "$NX_LLVM/clang" "$NX_LLVM/ld.lld" "$su/llvm/"
 cp -r "$NX_PYTHON" "$su/python"
 rm -rf "$su"/python/lib/python3.*/config-3.*  # static lib + python.o for building C extensions: not needed
 cp "$root/runtime/include/guest.h" "$su/sdk/"
@@ -57,6 +59,7 @@ notice() { printf '==== %s\n\n' "$1"; cat "$2"; printf '\n\n'; }
     notice "Ryujinx shader translator (shaderc/) and BC7 tables (in tms, runtime/src/bc7.h), MIT" "$NX_RYU_LICENSE"
     printf '==== .NET runtime (shaderc/, self-contained), MIT: https://github.com/dotnet/runtime/blob/main/LICENSE.TXT\n\n'
     notice "nstool (setup/nstool), MIT" "$NX_NSTOOL_LICENSE"
+    notice "LLVM clang + lld (setup/llvm/), Apache-2.0 WITH LLVM-exception" "$NX_LLVM_LICENSE"
     notice "Python (setup/python/), PSF licence" "$(ls "$NX_PYTHON"/lib/python3.*/LICENSE.txt | head -1)"
     printf '==== Capstone (setup/python/.../site-packages/capstone), BSD-3-Clause: https://github.com/capstone-engine/capstone\n\n'
 } > "$stage/THIRD_PARTY.txt"
