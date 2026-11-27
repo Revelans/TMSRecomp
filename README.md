@@ -62,6 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
+- [What's new in v0.1.8](#whats-new-in-v018)
 - [What's new in v0.1.7](#whats-new-in-v017)
 - [What's new in v0.1.6](#whats-new-in-v016)
 - [What's new in v0.1.5](#whats-new-in-v015)
@@ -164,6 +165,20 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.8
+
+- **4K Uncensored movies without stutter** (Tsubasa's song m07, m12): in still shots the 4K frame matching could step
+  back a frame or two, which restarted the 4K decoder (short stutters, flashes of the 720p picture). It now follows the
+  movie forward; the 4K picture also stays during a late frame and appears sooner at a movie's start (thanks
+  UchiLazuli, Promise!).
+- **WEAK in the skill list now follows the game's own rule** for its "!" marker: also slayer skills against their
+  foe type (Horseslayer on cavalry), lance / bow passives, Special Performances, and foes' repel / null guard buffs.
+  Before only elemental weaknesses showed. Checked against the game's marker: 1100 of 1100 agree.
+- **Linux (experimental): a ready-made download**, built by GitHub Actions for every release
+  (`TMSRecomp-v0.1.8-linux-x64.tar.gz`): nothing to install, Python and the compiler are inside, so it can run on the
+  Steam Deck. See [Linux](#linux-experimental).
+- nx.log names each battle's difficulty values (damage dealt / taken, escape chance) for difficulty reports.
 
 ## What's new in v0.1.7
 
@@ -489,7 +504,7 @@ level instead of +10%. Enemy HP and stats are the same on every difficulty.
 - **Screen tearing with VRR.** Turn on G-SYNC / FreeSync in your GPU driver and use VSync = VRR in the launcher.
 - **The game does not start / closes at once.** Update your GPU driver, then send the bug report described below.
 - **Can I use an updated game (1.0.1+) or DLC?** Not yet: the hooks use fixed addresses of the 1.0.0 build.
-- **Linux / Steam Deck?** An experimental native Linux build can be built from source: see [Linux (experimental)](#linux-experimental). Proton is untested.
+- **Linux / Steam Deck?** Download `TMSRecomp-<version>-linux-x64.tar.gz` from the release (experimental, nothing to install): see [Linux (experimental)](#linux-experimental). Proton is untested.
 - **Where are my files?** Everything (game files, saves, cache, logs, screenshots, mods) is in the game files folder
   chosen during setup; settings are in `settings.ini` next to `tms.exe`.
 
@@ -539,6 +554,11 @@ built on your PC from your own dump; nothing of the game is in the repository or
 **Tested so far** (Ubuntu 26.04, NVIDIA GTX 1650, driver 620): setup from an extracted folder, launcher, title screen,
 intro movie, story scenes, field, camp menu, saving and loading, the F1 menu, at a steady 60 fps. Battles, AMD and Intel
 GPUs and the Steam Deck are not tested yet.
+
+**Download**: `TMSRecomp-<version>-linux-x64.tar.gz` on the release page, built by GitHub Actions
+(`.github/workflows/build.yml`). Extract it and run `./launcher`: nothing to install (also on the Steam Deck).
+Python, clang + lld (game code compiler), nstool, SDL3, libvpx and the shader translator's .NET runtime are inside; glibc 2.39 or newer (Ubuntu 24.04,
+Debian 13, Fedora 40, SteamOS 3.7).
 
 **Differences from Windows**
 - No AMD FSR 3 and no NVIDIA DLSS: AMD ships the FidelityFX API only as Windows DLLs, and the NGX (DLSS) path is not
