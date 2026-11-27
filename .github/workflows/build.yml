@@ -53,7 +53,7 @@ jobs:
       - name: Runtime (tms + launcher)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          cmake --build build --target tms launcher
+          cmake --build build --target tms launcher -- -k 0
 
       - name: Shader translator (self-contained linux-x64)
         run: |
@@ -126,12 +126,9 @@ jobs:
           curl -fsSL -o sdl.zip "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VER/SDL3-devel-$SDL_VER-VC.zip"
           unzip -q sdl.zip
           git clone -q --depth 1 --branch "$VKH_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git vkh
-          # FidelityFX: the API / upscaler headers and the two Vulkan DLLs only (the SDK's signedbin is ~170 MB)
-          git clone -q --depth 1 --branch "$FFX_TAG" --filter=blob:none --sparse https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git ffx
-          git -C ffx sparse-checkout set --no-cone /Kits/FidelityFX/api/include/ /Kits/FidelityFX/upscalers/include/
-          mkdir -p ffx/Kits/FidelityFX/signedbin
-          for d in amd_fidelityfx_loader_vk.dll amd_fidelityfx_upscaler_vk.dll; do
-            curl -fsSL -o "ffx/Kits/FidelityFX/signedbin/$d" "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/$FFX_TAG/Kits/FidelityFX/signedbin/$d"
+          # FidelityFX: the files vk_fsr3.cpp uses and the two Vulkan DLLs only (the whole SDK is several hundred MB)
+          for f in api/include/ffx_api.h api/include/ffx_api_loader.h api/include/ffx_api_types.h api/include/vk/ffx_api_vk.h                    upscalers/include/ffx_upscale.h signedbin/amd_fidelityfx_loader_vk.dll signedbin/amd_fidelityfx_upscaler_vk.dll; do
+            curl -fsSL --create-dirs -o "ffx/Kits/FidelityFX/$f" "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/$FFX_TAG/Kits/FidelityFX/$f"
           done
           # libvpx: VP9 decoder, portable C (README "Building from source" step 5)
           git clone -q --depth 1 --branch "$VPX_TAG" https://github.com/webmproject/libvpx.git libvpx
@@ -153,6 +150,6 @@ jobs:
             "-DNX_SDL3=$t\SDL3-$env:SDL_VER" "-DNX_VULKAN_INCLUDE=$t\vkh\include" "-DNX_FFX=$t\ffx\Kits\FidelityFX" `
             "-DNX_LIBVPX=$t\libvpx" "-DNX_VPX_GEN=$t\vpx-gen"
           if ($LASTEXITCODE) { exit 1 }
-          cmake --build build --target tms launcher
+          cmake --build build --target tms launcher -- -k 0
           if ($LASTEXITCODE) { exit 1 }
           Get-Item build\tms.exe, build\tmslauncher.exe | Format-Table Name, Length

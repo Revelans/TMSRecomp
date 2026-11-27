@@ -10,8 +10,10 @@
 #include <dwrite.h>
 #include <wincodec.h>
 #endif
+#include <algorithm>
 #include <cmath>
 #include <mutex>
+#include "plat.h"
 
 namespace rt {
 static std::atomic<int> g_mode{-1};
