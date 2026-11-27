@@ -40,9 +40,9 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.7 beta.** It is tested until the chapter 2 Idolasphere with
-> saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
-> PCs: bug reports are very welcome.
+> **v0.1.8 beta.** It is tested until the chapter 2 Idolasphere with
+> saving and loading, on NVIDIA RTX and AMD Radeon (desktop and handheld). **Anything after that is unknown territory**,
+> as are Intel GPUs, weaker PCs and Linux / Steam Deck: bug reports are very welcome.
 
 *TMSRecomp is not affiliated with, endorsed or sponsored by Nintendo, ATLUS, SEGA or Intelligent Systems. Tokyo Mirage
 Sessions #FE Encore and all related names, characters and assets are trademarks and copyrights of their owners.*
@@ -64,12 +64,6 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 
 - [Features](#features)
 - [What's new in v0.1.8](#whats-new-in-v018)
-- [What's new in v0.1.7](#whats-new-in-v017)
-- [What's new in v0.1.6](#whats-new-in-v016)
-- [What's new in v0.1.5](#whats-new-in-v015)
-- [What's new in v0.1.4](#whats-new-in-v014)
-- [What's new in v0.1.3](#whats-new-in-v013)
-- [What's new in v0.1.2](#whats-new-in-v012)
 - [Requirements](#requirements)
 - [Installing and playing](#installing-and-playing)
 - [Updating](#updating)
@@ -181,122 +175,14 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
   Steam Deck. See [Linux](#linux-experimental).
 - nx.log names each battle's difficulty values (damage dealt / taken, escape chance) for difficulty reports.
 
-## What's new in v0.1.7
-
-- **4K Uncensored movies play smoothly** (m06 / m07 / m12 with the MovieHD pack, e.g. Tsubasa's song in chapter 2): the
-  4K frames are decoded ahead on their own thread instead of on the game thread (8-29 ms per movie frame before, worst
-  at high frame rates). Now an even frame time at 240 fps.
-- **All PC settings in the game's own Settings screen**: a new page PC 5/5 with 3D resolution, HDR highlights, HDR
-  colour, Auto 30, Crowd density, Shadow detail, WEAK in the skill list, Reveal dungeon maps, Attack Session, Aspect
-  ratio and Outline; Language on PC 4/5.
-- Fixes: F11 / Alt+Enter could leave the picture at the old window size in a corner (#17); clicking PLAY several times
-  started several games, and could leave the launcher running without a window (then files could not be replaced).
-  Only one game runs at a time now.
-
-## What's new in v0.1.6
-
-- **Loose-file mods**: a mod holds only the files it changes. Launcher > Mods > **Dump game files** unpacks
-  the game to `<game files>\dump\<pack>\...`; copy a file to `mods\<ModName>\cpk\<pack>\<same path>` and edit it. See
-  [Mods](#mods). Whole-pack mods like the Uncensored patch keep working, and loose files work on top of them.
-- **3D models in video memory** (#11): the graphics card read the game's 3D model data over the PCIe bus every frame;
-  unchanged model data is now copied to video memory. Shibuya crosswalk: about half the GPU time here, 14-17 ms -> 4-5
-  ms on an RTX 3050 (60 fps in all hub areas). Laptop and budget cards gain the most (`vb_vram = 0` turns it off).
-- **3D resolution** (#11): 100 / 85 / 75 / 67 / 50% or **Auto** (lowered step by step while the graphics card cannot
-  keep your FPS, raised again when there is room); menus and text stay sharp. Launcher > Display & FPS, F1 menu.
-- **Auto 30** keeps full game speed while it switches between 30 and 60 FPS (it played in slow motion), locks to 30
-  in about half a second and tries 60 again when you enter a new area.
-- **HDR** on HDR screens (Windows HDR on): HDR highlights and HDR colour options; menus and text stay at normal white.
-- **WEAK in the battle skill list** next to skills that hit a weakness you already know (`weak_hint`).
-- **Weak-PC options**: Crowd density (fewer walkers and cars in town), Shadow detail (no far shadow layer).
-- **Better performance logs**: `nx.log` says every 10 s whether the graphics card or the processor is the limit, the
-  game speed, video memory use, and on NVIDIA the GPU clock, temperature and throttle reasons.
-- **Launcher**: renamed `tmslauncher.exe` with its own icon; What's new box before updating.
-- Fixes: setup stopped with "UnicodeEncodeError" when a folder name had characters like the game title's sharp sign
-  (`Tokyo Mirage Sessions ♯FE`): any folder name works now; the game window started behind other windows; 4K Uncensored movies (m06 / m07 / m12) dropped to a few FPS on
-  repeated frames; launcher froze during setup until the mouse moved (#16); shader compiling after an update no longer
-  competes with the game on 2-core CPUs.
-
-## What's new in v0.1.5
-
-- **Language option** (#12): English, Japanese, French, Simplified or Traditional Chinese for game text and menus
-  (launcher, F1 menu, `language`). Voices stay; the Uncensored mod's text is English only.
-- **Faster on weaker PCs** (#11): the game code is built with more optimisation, whole-program optimisation and a
-  speed profile from real play (setup does this, about 1 minute longer); the game's memory / string functions run as
-  PC code; draw replay runs on its own thread at 60 fps too; less CPU work per draw (no command copies on the game
-  thread, push descriptors, fewer system calls). Measured on one CPU core in Shibuya: 93 -> about 137 fps.
-- **4K movies decode on the GPU** (Windows' VP9 decoder, `movie_gpu`): the camp menu's 4K background now takes about
-  half the CPU. PCs without the decoder fall back to the CPU as before.
-- **1080p renders exactly 1920 x 1080** (Auto on 1080p screens too): it rendered 2560 x 1440 and scaled down, 78% more
-  pixels for the graphics card.
-- **Keep 4K movies at 4K** (#13): `movie_hd_fallback = 0` (launcher: Display & FPS) never drops a slow movie to 720p.
-- **New Game+ requests in a fresh game** (`ng_plus_requests`, on) and **request hints** (F1 menu: open requests, who
-  gives them, how to finish them).
-- **AMD**: effects drawn as black shapes (#15): invalid shader colours become transparent black (`nan_guard`, auto = on
-  with AMD GPUs). The first start after the update compiles shaders again on AMD.
-- **Launcher**: the scrollbar can be dragged with the mouse (#14) and Windows touch screens (Legion Go)
-  scroll with a finger swipe.
-- Fixes: rare start-up abort (vsync thread race).
-
-## What's new in v0.1.4
-
-- **P5-style battle buttons** (new, off by default): each battle command on its own button: bottom Attack, right Guard,
-  top Skills, left Items, L Tactics (Itsuki), R Change, - Escape, ZR Auto-Battle, + Stats. **Buttons + P5 panel** also
-  replaces the command wheel with a Persona 5 style panel (Windows). Change it in the launcher, in the game's Settings
-  (PC 4/4) or in the F1 / L3+R3 menu, also mid-battle. In Buttons mode, turning the wheel with the d-pad or stick gives
-  you the game's own turn-and-confirm for that turn.
-- **HD text** (new, on by default): the game's fonts scaled 4x with crisp edges at high resolutions (`font_hd`).
-- **HD button icons with the UHD pack**: button prompts now stay sharp and match your pad with the texture pack.
-- **New UHD texture pack and MovieHD pack**: textures the old pack missed are now upscaled, and the camp backgrounds are
-  redone with an anime model (cleaner faces and line art). Download links in the release notes.
-- **Launcher update progress bar**: download MB / %, unpacking, installing.
-- **Weaker GPUs** (#11): FSR 3 / DLSS upscaling can render the 3D scene below 720p. `settings.ini` also accepts the
-  `NX_` names.
-- Fixes: AMD stepped black blocks on the picture (#8); Artists > Profile portrait stretched in ultrawide (#10); button
-  icons with the Spanish mod; custom battle music without a victory theme now plays the game's victory jingle;
-  DS4Windows: only its virtual pad is used; launcher status line showed the resolution one step too high; Linux build
-  fixes.
-
-## What's new in v0.1.3
-
-- **Controller button remapping** (new, issue #7): Launcher > Game > Controller buttons. Pick the pad button for A, B, X,
-  Y, L, R, ZL, ZR, +, -, L3 and R3 with the arrows: face buttons, bumpers, triggers, Start / Back, stick clicks or back
-  paddles (Legion Go, Steam Deck, Xbox Elite). Taking a button another one has swaps the two. Button prompts show the
-  button you really press. In `settings.ini`: `pad_a` .. `pad_r3`. The D-pad stays where it is.
-
-## What's new in v0.1.2
-
-- **Ultrawide** (new): Aspect ratio 21:9, 32:9 or Auto (launcher > Display & FPS). The 3D view gets wider; HUD and menus
-  stay 16:9 in the middle; the field HUD (minimap, CALL ring, party panel) sits in the screen corners; bars and the
-  battle RESULTS panels continue to the screen edges. Fixed pictures (title screen, camp background, Tokyo Map, battle
-  start cut-in) stay 16:9 in the middle instead of stretching. Default 16:9 is unchanged.
-- **Keyboard and mouse** (new): rebind every button and stick direction (up to 3 keys each, mouse buttons and wheel
-  too) on the launcher's Game page, or `key_<button>` in `settings.ini`. The mouse turns the camera while the game has
-  focus (F1 menu or Alt+Tab frees the pointer); sensitivity and invert settings.
-- **Resist markers** (new, on by default): when a skill is highlighted, foes that resist it get a shield where the game
-  shows "!" for a weakness, also in the target panel's circle; a resisted hit shows a RESIST popup like WEAK.
-- **Button layout** (new): Xbox / PC makes the bottom face button confirm (A/B and X/Y swapped); prompts follow.
-- **DS4Windows**: with DS4Windows running, the game uses its virtual pad (fixes a pad that dropped and kept a button held).
-- **Linux (experimental)**, contributed by XCyrexX: a native Linux build from source. See [Linux](#linux-experimental).
-- Possible fix for a blank / frozen picture with working audio (issue #3), not confirmed yet.
-- After updating, the first battles and areas stutter once while the new shaders compile.
-
-## What's new in v0.1.1
-
-- **Overworld costume** (new, off by default): party members wear their equipped costume outside battle too: town,
-  dungeons and story scenes. Launcher Game page, in-game menu (F1 / L3 + R3) or System > Settings PC 4/4.
-- **Unlock all difficulties** (new, on by default): Friendly and Lunatic can be chosen from the start, and the Settings
-  difficulty row goes from Friendly to Lunatic at any time (the original allows Lunatic only on a new game).
-- **Setup: NSPs with a ticket now work.** NSPs whose game data is locked with a title key (the ticket `.tik` is inside the
-  NSP) failed with a "title.keys" message; setup now uses the NSP's own ticket. `title.keys` is not needed.
-- **Extras replace older versions**: installing a newer uncensor patch removes the old patch mod; a new UHD / MovieHD ZIP
-  removes the files the old pack had.
-- After updating, the launcher rebuilds `game.dll` once (a few minutes): setup changed.
+Older versions: see each release's notes on the [Releases](../../releases) page.
 
 ## Requirements
 
 - Windows 10 or 11, 64-bit.
 - A GPU with Vulkan 1.3 and a current driver (NVIDIA GTX 900 series or newer, AMD RX 400 or newer, Intel Arc or
-  recent integrated graphics). Only NVIDIA RTX has been tested so far.
+  recent integrated graphics). Tested on NVIDIA RTX and AMD Radeon (RX 7800 XT; Ryzen Z2 Go handheld, Legion Go S);
+  Intel not yet.
 - About 15 GB of free disk space (game files plus the built game). The UHD texture pack and 4K movies need more.
 - Your own dump of the game: an NSP of the base game 1.0.0 and `prod.keys` from your own Switch, or an already extracted
   folder with `exefs\` and `romfs\` (no keys needed then).
@@ -517,7 +403,8 @@ level instead of +10%. Enemy HP and stats are the same on every difficulty.
 ## Known issues
 
 - Tested from the start through chapter 2 only; later chapters may have problems nobody has seen yet.
-- Tested on NVIDIA RTX only (Linux: one NVIDIA GTX 1650). AMD and Intel GPUs, integrated GPUs and Steam Deck are untested.
+- Tested on NVIDIA RTX and AMD Radeon (RX 7800 XT, Legion Go S); Linux on one NVIDIA GTX 1650. Intel GPUs and the
+  Steam Deck are untested.
 - Only the base game 1.0.0 without update is supported.
 - Walking NPCs turn in small 30 Hz steps at high frame rates.
 - Custom battle music: encrypted `.adx` files need their key in `settings.ini` (`custom_bgm_key`); none is included.
