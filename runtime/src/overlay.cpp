@@ -139,6 +139,24 @@ int fsr3_quality() {
     return g_fsr3q;
 }
 void apply_fsr3_quality(int i) { save_setting("fsr3_quality", std::to_string(i)); g_fsr3q = i; }
+// scene_res = 3D resolution in percent of the output (100 default; 85 / 75 / 67 / 50) with Anti-aliasing Off / FXAA /
+// SMAA: the 3D scene renders smaller and is scaled up (linear) before the game's FXAA; menus / HUD stay full size.
+// Weak GPUs (#11, GeForce 920MX). FSR 3 / DLSS use fsr3_quality instead. Applies at the next frame end.
+// scene_res = auto (0 here): vk.cpp auto_scene_res picks the step from the GPU time of 3D frames.
+static std::atomic<int> g_scene_res{-1};
+static const int k_scene_res[] = {0, 100, 85, 75, 67, 50};
+int scene_res() {
+    if (g_scene_res < 0) {
+        const char* e = getenv("NX_SCENE_RES");
+        g_scene_res = e && !strcmp(e, "auto") ? 0 : e && atoi(e) > 0 ? std::clamp(atoi(e), 50, 100) : 100;
+    }
+    return g_scene_res;
+}
+void apply_scene_res(int i) {
+    i = k_scene_res[std::clamp(i, 0, 5)];
+    save_setting("scene_res", i ? std::to_string(i) : std::string("auto"));
+    g_scene_res = i;
+}
 void apply_aa(int i) {
     save_setting("fx_fxaa", std::to_string(i));
     fx_enabled(0);  // loaded
@@ -161,6 +179,37 @@ void apply_msaa(int i) {
 static void apply_upscaler(int i) {
     save_setting("upscaler", i ? "fsr1" : "bilinear");
     g_upscaler = i;
+}
+// HDR output (setting hdr, off by default): vk.cpp picks an HDR10 / scRGB swapchain when the screen offers one (Windows
+// HDR on) and keeps the highlights the game's frame has above SDR white; live. hdr_paper_white: nits of SDR white (UI,
+// menus); hdr_peak: the screen's brightest nits, 0 = auto (Windows' value for the screen, else 1000).
+static std::atomic<int> g_hdr{-1}, g_hdr_paper{-1}, g_hdr_peak{-1};
+static const int k_hdr_paper[] = {100, 150, 200, 300, 400};  // 5 choices: the game's Settings screen has 5 option slots
+static const int k_hdr_peak[] = {0, 400, 600, 1000, 2000};
+int hdr_setting() {
+    if (g_hdr < 0) g_hdr = env_on("NX_HDR", false) ? 1 : 0;
+    return g_hdr;
+}
+void set_hdr(int on) { g_hdr = on ? 1 : 0; }
+int hdr_paper_white() {
+    if (g_hdr_paper < 0) g_hdr_paper = env_int("NX_HDR_PAPER_WHITE", 200, 80, 500);
+    return g_hdr_paper;
+}
+int hdr_peak_setting() {
+    if (g_hdr_peak < 0) g_hdr_peak = env_int("NX_HDR_PEAK", 0, 0, 10000);
+    return g_hdr_peak;
+}
+// hdr_boost 0..4 (default 3): inverse tone mapping strength: the bright part of the game's SDR picture (3D scene only, not
+// the UI) is expanded toward the screen's peak (vk.cpp hdr_pass, s121); 0 = the plain mapping of s119. hdr_color 0..4
+// (default 2): extra colour saturation in the 3D scene with HDR.
+static std::atomic<int> g_hdr_boost{-1}, g_hdr_color{-1};
+int hdr_boost() {
+    if (g_hdr_boost < 0) g_hdr_boost = env_int("NX_HDR_BOOST", 3, 0, 4);
+    return g_hdr_boost;
+}
+int hdr_color() {
+    if (g_hdr_color < 0) g_hdr_color = env_int("NX_HDR_COLOR", 2, 0, 4);
+    return g_hdr_color;
 }
 static void apply_sharpen(int i) {
     save_setting("sharpen", std::to_string(k_sharpen[i]));
@@ -346,6 +395,15 @@ static std::vector<Item> build_items() {
     std::vector<Item> v = {
         {L"Frame rate", {L"30", L"60", L"120", L"144", L"165", L"240", L"Uncapped"}, fi,
          L"Game speed stays the same at every rate; higher is smoother. 30 is the Switch rate (switching to or from 30 needs a restart).", apply_fps},
+        {L"Auto 30 when slow", onoff, auto30_setting(),
+         L"At 60 fps: where this PC cannot hold 60 (busy streets), drop to 30 fps at full game speed instead of slow motion; back to 60 when it can.",
+         [](int c) { set_auto30(c != 0); save_setting("auto_30", c ? "1" : "0"); }},
+        {L"Crowd density", {L"Full", L"Half", L"Low"}, getenv("NX_CROWD_DENSITY") ? std::clamp(atoi(getenv("NX_CROWD_DENSITY")), 0, 2) : 0,
+         L"Walkers and cars in town streets (Shibuya). Half / Low: fewer of them close by, for weak PCs (busy streets run faster). Applies when you next enter an area.",
+         [](int c) { save_setting("crowd_density", std::to_string(c)); }},
+        {L"Shadow detail", {L"Full", L"Low"}, g_shadow_detail == 1 ? 1 : 0,
+         L"Low: no far shadow layer (shadows near you stay). Fewer draws in big areas like Shibuya, for weak PCs. Applies at once.",
+         [](int c) { g_shadow_detail = c; save_setting("shadow_detail", c ? "1" : "0"); }},
         {L"UI animation speed", {L"Switch", L"60 Hz"}, ui_speed() == 60 ? 1 : 0,
          L"Menus, dialogue, HUD and battle UI. 60 Hz (default): the 60 fps speed at every frame rate above 30. Switch: half that speed, the original 30 fps pace.",
          [](int c) { set_ui_speed(c ? 60 : 30); save_setting("ui_speed", c ? "60" : "30"); }},
@@ -376,10 +434,30 @@ static std::vector<Item> build_items() {
         {L"Screen scaler", {L"Bilinear", L"FSR 1"}, upscaler_setting(),
          L"Only when Resolution is below the screen (e.g. 1080p on a 4K screen): how the finished frame is stretched to it. FSR 1 keeps edges sharp. FSR 3 / DLSS upscale the 3D scene themselves: Anti-aliasing + FSR 3 / DLSS upscaling rows.",
          apply_upscaler},
+        {L"HDR", onoff, hdr_setting(),
+         L"HDR output: bright lights, spells and effects shine above normal white on an HDR screen. Needs Windows HDR turned on (Settings > Display); without it the picture stays as before.",
+         [](int c) { save_setting("hdr", c ? "1" : "0"); g_hdr = c; }},
+        {L"HDR highlights", {L"Off", L"Low", L"Medium", L"High", L"Max"}, hdr_boost(),
+         L"With HDR: lifts the bright parts of the 3D scene (sky, lights, spells, shiny surfaces) toward your screen's peak brightness, like AutoHDR; menus and text stay at paper white. Off = the game's own brightness only.",
+         [](int c) { save_setting("hdr_boost", std::to_string(c)); g_hdr_boost = c; }},
+        {L"HDR colour", {L"Off", L"Low", L"Medium", L"High", L"Max"}, hdr_color(),
+         L"With HDR: richer, more vivid colours in the 3D scene (menus and text unchanged).",
+         [](int c) { save_setting("hdr_color", std::to_string(c)); g_hdr_color = c; }},
+        {L"HDR paper white", {L"100", L"150", L"200", L"300", L"400"},
+         (int)(std::find(std::begin(k_hdr_paper), std::end(k_hdr_paper), hdr_paper_white()) - std::begin(k_hdr_paper)) % 5,
+         L"With HDR on: how bright normal white (menus, text, daylight) is, in nits. 200 suits most rooms; raise it in a bright room.",
+         [](int c) { save_setting("hdr_paper_white", std::to_string(k_hdr_paper[c])); g_hdr_paper = k_hdr_paper[c]; }},
+        {L"HDR peak brightness", {L"Auto", L"400", L"600", L"1000", L"2000"},
+         (int)(std::find(std::begin(k_hdr_peak), std::end(k_hdr_peak), hdr_peak_setting()) - std::begin(k_hdr_peak)) % 5,
+         L"With HDR on: the brightest your screen can show, in nits. Auto uses the value Windows reports for the screen.",
+         [](int c) { save_setting("hdr_peak", std::to_string(k_hdr_peak[c])); g_hdr_peak = k_hdr_peak[c]; }},
         {L"Anti-aliasing", {L"Off", L"FXAA", L"SMAA", L"FSR 3", L"DLSS"}, fsr3_setting() == 2 ? 4 : fsr3_setting() ? 3 : smaa_setting() ? 2 : fx_enabled(FX_FXAA) ? 1 : 0,
          L"FXAA = the game's own pass. SMAA = sharper edge smoothing. FSR 3 = AMD FSR 3 temporal AA at full size (like DLAA: smoothest edges, may ghost a little on moving characters). DLSS = NVIDIA DLSS / DLAA on RTX GPUs (setup option; else FSR 3). All under the UI. Off is sharpest.", apply_aa},
         {L"FSR 3 / DLSS upscaling", {L"Native", L"Quality", L"Balanced", L"Performance", L"Ultra perf."}, std::clamp(fsr3_quality(), 0, 4),
          L"With Anti-aliasing = FSR 3 or DLSS (Native = DLAA): the 3D scene renders smaller (Quality 1/1.5, Balanced 1/1.7, Performance 1/2, Ultra 1/3 of the screen) and it is scaled up, for more fps. UI stays full size. Applies at once.", apply_fsr3_quality},
+        {L"3D resolution", {L"Auto", L"100%", L"85%", L"75%", L"67%", L"50%"},
+         (int)(std::find(std::begin(k_scene_res), std::end(k_scene_res), scene_res()) - std::begin(k_scene_res)) % 6,
+         L"With Anti-aliasing Off, FXAA or SMAA: the 3D scene renders at this share of the screen size and is scaled up; menus and the HUD stay sharp. Lower = much more fps on weak graphics cards (fewer pixels to draw). Auto lowers it step by step while the graphics card cannot keep your fps, and raises it again when there is room. FSR 3 / DLSS use their own upscaling row. Applies at once.", apply_scene_res},
         {L"MSAA", {L"Off", L"2x", L"4x", L"8x"}, msaa_setting() >= 8 ? 3 : msaa_setting() >= 4 ? 2 : msaa_setting() >= 2 ? 1 : 0,
          L"Multisampled 3D scene (geometry edges). Works with FXAA / SMAA on top; OFF while Anti-aliasing is FSR 3 / DLSS (they anti-alias already). At 4K: 4x needs ~1.4 GB more VRAM and costs almost no fps, 8x ~2.9 GB and ~12% (measured, RTX 5070 Ti). Lowered automatically on GPUs with too little VRAM.", apply_msaa},
         {L"Button icons", {L"Auto", L"Switch", L"PlayStation", L"Xbox"}, pad_icons_setting(),
@@ -454,6 +532,9 @@ static std::vector<Item> build_items() {
         {L"Resist markers", onoff, env_on("NX_RESIST_MARKER", true),
          L"Battle: a foe that resists the highlighted skill gets a shield where the game shows \"!\" for a weakness (also in the target panel); a resisted hit shows RESIST like WEAK. Switches at once.",
          [](int c) { save_setting("resist_marker", c ? "1" : "0"); }},
+        {L"WEAK in the skill list", onoff, env_on("NX_WEAK_HINT", true),
+         L"Battle: the skill list shows WEAK next to a skill when a foe on the field is weak to it and you already know that weakness (like Persona 5 Royal). Switches at once.",
+         [](int c) { save_setting("weak_hint", c ? "1" : "0"); }},
         {L"Autosave after battles", onoff, env_on("NX_AUTOSAVE", true),
          L"After each battle, once you walk again, the game is saved to slot 20 (your own slots are never touched). Load it like any save.", apply_autosave},
         {L"Request hints", {}, 0, L"Open requests (side quests) with who gives them and how to finish them: the ones in progress and the ones waiting to be taken.",

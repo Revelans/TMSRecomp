@@ -28,6 +28,10 @@ struct Combo {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     bool push = false;  // set_layout is a push-descriptor layout (vk_replay.cpp bind_resources pushes, no set)
     std::map<std::string, VkPipeline> pipelines;  // keyed by the packed fixed-function state
+    // the last key found in pipelines and its pipeline (entries are never replaced): runs of draws with one state skip
+    // the map's string compares (s119, render thread at the Shibuya crosswalk)
+    std::string last_key;
+    VkPipeline last_pipe = VK_NULL_HANDLE;
 };
 
 // consts: offset of the shader's constant data (Maxwell cbuf 1) from `code`, for jump tables the translator reads

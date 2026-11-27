@@ -31,7 +31,36 @@ using namespace vk;
 namespace rt { extern std::atomic<int64_t> g_btl_open_ms; }  // hle_sys.cpp: steady-clock ms of the last battle opening
 namespace nvn {
 
+// Graphics state last recorded into the current command buffer by draw(): an unchanged pipeline, viewport, scissor,
+// blend constants, stencil reference or vertex buffer is not recorded again (issue #11, Augs' crosswalk: ~24 Vulkan
+// calls per draw, 16 of them vertex buffer binds; the driver was ~30% of the render thread's busy time). Other code
+// that records graphics state calls cbs_forget(). NX_CB_CACHE=0: record everything every draw (A/B).
+extern uint64_t g_cb_begins;  // vk.cpp begin()
+uint64_t pool_gen();          // nvn_hle.cpp: changes when any pool is created or finalized
+struct CbState {
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    uint64_t gen = 0;
+    bool valid = false;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    VkViewport vp{};
+    VkRect2D sc{};
+    float blend[4]{};
+    uint32_t stencil = 0;
+    VkBuffer vb[16]{};
+    VkDeviceSize vo[16]{};
+};
+static CbState g_cbs;
+static void cbs_forget() { g_cbs.valid = false; }
+static bool cbs_fresh(VkCommandBuffer cb) {  // true: g_cbs holds what cb has recorded
+    static const bool on = !getenv("NX_CB_CACHE") || atoi(getenv("NX_CB_CACHE")) != 0;
+    if (on && g_cbs.valid && g_cbs.cb == cb && g_cbs.gen == g_cb_begins) return true;
+    g_cbs.valid = false, g_cbs.cb = cb, g_cbs.gen = g_cb_begins;
+    return false;
+}
+
 struct Binding { uint64_t addr = 0, size = 0; };
+static void vb_gpu_wrote(uint64_t addr, uint64_t size);  // vertex data in video memory (below): the GPU writes there
+static void vb_frame_end();  // ... its frame-end cleanup
 struct State {
     Texture* colors[8] = {};
     uint32_t ncolors = 0;
@@ -124,7 +153,7 @@ static void twin_sync(VkCommandBuffer cb, Image* im) {
 // the first mark's label ("pass <target>" = inside it, "after <target>" = barriers, copies, dispatches until the next).
 // Results of a slot are read when vk.cpp reuses it (pass_timing_slot); the frames line prints the top labels.
 static VkQueryPool g_pt_pool = VK_NULL_HANDLE;
-static constexpr uint32_t PT_N = 1024;
+static constexpr uint32_t PT_N = 4096;
 static std::vector<std::string> g_pt_labels[3];
 static int g_pt_slot = 0;
 static std::map<std::string, std::pair<double, uint64_t>> g_pt_acc;  // label -> ns, count
@@ -158,7 +187,8 @@ void pass_timing_report(uint64_t frames) {  // frames line (vk.cpp): top 14 labe
     for (auto& [k, a] : g_pt_acc) v.push_back({a.first, k}), all += a.first;
     std::sort(v.rbegin(), v.rend());
     log("gpu passes: %.2f ms per frame between marks (top 14 by time):", all / 1e6 / frames);
-    for (size_t i = 0; i < v.size() && i < 14; i++)
+    static const size_t top = getenv("NX_GPU_PASSES") && atoi(getenv("NX_GPU_PASSES")) >= 2 ? 40 : 14;
+    for (size_t i = 0; i < v.size() && i < top; i++)
         log("  %6.3f ms/frame  %5.1f/frame  %s", v[i].first / 1e6 / frames, g_pt_acc[v[i].second].second / (double)frames, v[i].second.c_str());
     g_pt_acc.clear();
 }
@@ -171,12 +201,33 @@ static bool seq_on() {
     if (g_seq_request.exchange(0)) at = g_present_no + 1;
     return at && g_present_no == at;
 }
+// draws / clears recorded since begin_rendering. A pass that wrote nothing needs no barrier after it (issue #11: a
+// draw's texture upload / layout change ends the pass the draw just began; 67 passes per battle frame, 7.7 ms per frame
+// between passes on a GeForce 920MX). NX_EMPTY_PASS_BARRIER=1 puts the barrier back.
+static uint32_t g_pass_writes = 0;
+// Depth targets live in DEPTH_STENCIL_ATTACHMENT_OPTIMAL from their first pass on (issue #11, s120): in GENERAL the
+// driver keeps depth uncompressed (8K office test: switching GENERAL -> optimal -> GENERAL per pass cost +0.7..1.7 ms,
+// i.e. a decompress each time). Every other use (sampling, copies, clears, blits, MSAA resolve / expand, FSR 3) already
+// goes through transition() to GENERAL first, and the next pass moves it back. A depth a draw samples while it is the
+// pass's own depth (a feedback read) stays GENERAL for good (g_ds_feedback). NX_DS_OPT=0 = all GENERAL as before.
+static bool ds_opt() { static const bool on = !getenv("NX_DS_OPT") || atoi(getenv("NX_DS_OPT")) != 0; return on; }
+static Image* g_pass_depth = nullptr;
+static std::unordered_set<Image*> g_ds_feedback;
+static const char* g_break = "";  // debug (ctl seq): why the next end_rendering ends the pass
 static void end_rendering(VkCommandBuffer cb, bool defer = false) {  // defer: see g_unsynced
+    const char* why = g_break;
+    g_break = "";
     if (g_st.rendering) {
         vkCmdEndRendering(cb); g_st.rendering = false;
-        if (seq_on()) log("seq:   end, %u draws, %u use depth / stencil", g_seq_draws, g_seq_dsuse);
+        g_pass_depth = nullptr;
+        if (seq_on()) log("seq:   end, %u draws, %u use depth / stencil (%s)", g_seq_draws, g_seq_dsuse, why);
         if (g_pt_pool) pt_mark(cb, "after " + pt_target());
         static const bool old = getenv("NX_PASS_BARRIER") && atoi(getenv("NX_PASS_BARRIER")) != 0;
+        static const bool empty_barrier = getenv("NX_EMPTY_PASS_BARRIER") && atoi(getenv("NX_EMPTY_PASS_BARRIER")) != 0;
+        if (g_pass_writes == 0 && g_ms_samples == 1 && !old && !empty_barrier) {
+            if (g_bar_pending && !defer) full_barrier(cb);  // an earlier pass's deferred barrier the caller relies on
+            return;
+        }
         if (defer && !old && g_ms_samples == 1) {
             for (uint32_t i = 0; i < g_st.ncolors; i++)
                 if (Image* im = image_of(g_st.colors[i]); im && !unsynced(im)) g_unsynced.push_back(im);
@@ -471,6 +522,7 @@ static bool ms_expand(VkCommandBuffer cb, Image* im, MsTwin& t) {
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &set, 0, nullptr);
     vkCmdDraw(cb, 3, 1, 0, 0);
     vkCmdEndRendering(cb);
+    cbs_forget();
     full_barrier(cb);
     if (g_pt_pool) pt_mark(cb, "after expand");
     t.valid = true;
@@ -586,10 +638,12 @@ static void begin_rendering(VkCommandBuffer cb) {
     if (Image* im = image_of(g_st.depth)) {
         // upscaling twins only (MSAA is off then; other depths keep their old written logic): the other size is newer
         if (samples == 1 && im->twin && im->twin->wgen > im->wgen && !(g_clear_ahead >> 8 & 1)) twin_sync(cb, im);
-        transition(cb, im, VK_IMAGE_LAYOUT_GENERAL);
+        const VkImageLayout dl = ds_opt() && samples == 1 && !g_ds_feedback.count(im) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+        transition(cb, im, dl);
+        if (dl != VK_IMAGE_LAYOUT_GENERAL) g_pass_depth = im;
         if (im->twin) vk::mark_written(im);
         da.imageView = samples > 1 ? g_ms[im].view : im->view;
-        da.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        da.imageLayout = dl;
         da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         ri.pDepthAttachment = &da;
@@ -611,6 +665,7 @@ static void begin_rendering(VkCommandBuffer cb) {
     if (g_pt_pool) pt_mark(cb, "pass " + pt_target());
     vkCmdBeginRendering(cb, &ri);
     g_st.rendering = true;
+    g_pass_writes = 0;
 }
 static std::string pt_target() {  // the pass's first colour (or depth) target: size, format, samples
     Texture* t = nullptr;
@@ -854,6 +909,11 @@ static bool async_pipelines() {
     return on;
 }
 static void pipe_worker() {
+    // 2-core / 4-thread CPUs (#11): a compile storm after an update must not take time from the game / replay threads;
+    // a late pipeline only skips a draw. Failure (no right) keeps normal priority.
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
     for (;;) {
         PipeJob* j;
         {
@@ -1127,8 +1187,12 @@ static VkPipeline pipeline(Combo* pv, uint32_t mode) {
     put(g_st.blend, sizeof g_st.blend); put(&g_st.color, 4); put(&g_st.channel, 4); put(g_st.ds, 8); put(&g_st.polygon, 4);
     put(g_st.attribs.data(), 4 * g_st.attribs.size());
     put(g_st.streams.data(), 4 * g_st.streams.size());
+    if (pv->last_pipe && pv->last_key == key) return pv->last_pipe;
     auto it = pv->pipelines.find(key);
-    if (it != pv->pipelines.end()) return it->second;
+    if (it != pv->pipelines.end()) {
+        if (it->second) pv->last_key = key, pv->last_pipe = it->second;
+        return it->second;
+    }
     if (auto pc = g_pipe_pending.find(pv); pc != g_pipe_pending.end() && pc->second.count(key)) return pipe_wait(pv, key);
     static const bool pipe_dbg = getenv("NX_PIPE_DEBUG") != nullptr;
     if (pipe_dbg && pv->pipelines.size() >= 4) {  // which key bytes differ from an existing pipeline of this combo
@@ -1575,6 +1639,7 @@ static SmaaPass smaa_pipe(const uint32_t* spv, size_t size) {
     return p;
 }
 }  // namespace nvn
+std::atomic<int> rt::g_shadow_detail{getenv("NX_SHADOW_DETAIL") ? atoi(getenv("NX_SHADOW_DETAIL")) : 0};  // setting shadow_detail: 0 full, 1 low
 std::atomic<int> rt::g_skip_shadow{0};  // NX_CONTROL "skipshadow N" (debug): 1 casters off, 2 off every other frame
 namespace nvn {
 static bool smaa_in_place(VkCommandBuffer cb, Image* im) {
@@ -1668,6 +1733,43 @@ static Image* smaa_target(Combo* pv) {
     return nullptr;
 }
 
+// 3D resolution (setting scene_res, #11): the scene ran on the lo twins; at the game's FXAA draw its input (the lo scene
+// colour) is blitted linearly onto the full-size twin and every screen target switches to full size, so FXAA / SMAA, the
+// UI and the present run sharp. Other lo targets read later sync through twin_sync (the same path FSR 3 uses).
+static void spatial_upscale(VkCommandBuffer cb, Combo* pv) {
+    Image* lo = nullptr;
+    for (auto* st : pv->stages) {
+        if (nvn_stage(st->stage) != 1 || lo) continue;
+        for (auto& r : st->t.res) {
+            if (r.kind != 2) continue;
+            int idx = r.handle >= 8 ? ((r.handle - 8) / 2) % 32 : 0;
+            Texture* t = nullptr;
+            TexView tv;
+            pool_texture(g_st.tex_pool, (uint32_t)(g_st.tex[1][idx] & 0xFFFFF), &t, &tv);
+            lo = image_of(t);
+            break;
+        }
+    }
+    g_break = "3d resolution";
+    end_rendering(cb);
+    if (Image* hi = lo ? vk::upscale_hi(lo) : nullptr; hi && lo->written && hi->format == lo->format) {
+        Image* only[1] = {lo};
+        ms_flush(cb, "3d resolution", only, 1);
+        transition(cb, lo, VK_IMAGE_LAYOUT_GENERAL);
+        transition(cb, hi, VK_IMAGE_LAYOUT_GENERAL);
+        full_barrier(cb);
+        VkImageBlit b{};
+        b.srcSubresource = b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        b.srcOffsets[1] = {(int32_t)lo->w, (int32_t)lo->h, 1};
+        b.dstOffsets[1] = {(int32_t)hi->w, (int32_t)hi->h, 1};
+        vkCmdBlitImage(cb, lo->image, VK_IMAGE_LAYOUT_GENERAL, hi->image, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_LINEAR);
+        full_barrier(cb);
+        vk::mark_written(hi);
+    }
+    vk::scene_phase(false);
+    cbs_forget();
+}
+
 // AMD FSR 3 (Anti-aliasing = FSR 3, setting fx_fxaa 3; NOTES s62): temporal anti-aliasing at native size (like DLAA)
 // at the game's FXAA draw, in place of FXAA / SMAA, through vk_fsr3.cpp.
 // - Camera: the 3D scene's vertex uniform 1 (736 bytes, measured 11-08) starts with the target size in game pixels,
@@ -1754,10 +1856,18 @@ static bool invert4(const double* m, double* out) {  // row-major 4x4, Gauss-Jor
     return true;
 }
 static bool g_up_ok;  // upscaling: FSR 3 made its context at the full size (the DLLs are there)
+Image* hdr_scene_target(uint32_t w, uint32_t h, VkFormat from);  // vk.cpp: HDR scene snapshot image, or null
+uint64_t g_spatial_frame = ~0ull - 1;  // 3D resolution: the last frame with the game's FXAA draw
+uint64_t g_fxaa_frame = ~0ull - 1;     // the last frame with the game's FXAA draw (a 3D scene), any setting
 }  // namespace nvn
 void vk::upscale_frame_end() {
+    nvn::vb_frame_end();
+    vk::auto_scene_res(nvn::g_fxaa_frame + 1 == nvn::g_present_no);
     vk::upscale_apply_setting();  // FSR 3 / DLSS mode or anti-aliasing changed: lo images rebuilt before the next frame
-    vk::scene_phase(vk::upscale_lo_scale() > 0 && rt::fsr3_setting() && nvn::g_up_ok && nvn::g_cam.frame + 1 == nvn::g_present_no);
+    // FSR 3 / DLSS: once their context exists and the last frame had the 3D camera; 3D resolution (spatial): once the last
+    // frame had the game's FXAA draw (= a 3D scene frame), whose input the linear upscale fills
+    vk::scene_phase(vk::upscale_lo_scale() > 0 && (rt::fsr3_setting() ? nvn::g_up_ok && nvn::g_cam.frame + 1 == nvn::g_present_no
+                                                                       : nvn::g_spatial_frame + 1 == nvn::g_present_no));
 }
 namespace nvn {
 static bool fsr3_in_place(VkCommandBuffer cb, Image* im) {
@@ -2001,6 +2111,7 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                         VKC(vkBindBufferMemory(dev, dummy, m, off));
                         // zeroed: shaders may take loop counts from an unbound buffer (garbage could hang the GPU)
                         bool was = g_st.rendering;
+                        g_break = "dummy buffer";
                         end_rendering(cb);
                         vkCmdFillBuffer(cb, dummy, 0, VK_WHOLE_SIZE, 0);
                         VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT};
@@ -2013,6 +2124,7 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                 uint64_t cap = r.kind == 0 ? 65536 : UINT64_MAX;  // uniform ranges stop at 64 KiB (maxUniformBufferRange)
                 uint64_t range = std::min<uint64_t>({b.size ? b.size : 65536, cap, gb.size ? gb.size : 65536});
                 bufs.push_back({gb.buf, gb.offset, range});
+                if (r.kind == 1 && b.addr) vb_gpu_wrote(b.addr, range);  // storage buffers may be written
                 w.descriptorType = r.kind == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                 w.pBufferInfo = &bufs.back();
                 if (g_log_bindings) {
@@ -2055,12 +2167,14 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                 Image* im = image_of(t);
                 if (im && unsynced(im)) {  // a target an earlier pass wrote with its barrier deferred (g_unsynced)
                     bool was = g_st.rendering;
+                    g_break = "unsynced";
                     end_rendering(cb);
                     if (was) begin_rendering(cb);
                 }
                 if (im && !g_ms_dirty.empty() && ms_is_dirty(im)) {  // sampled while its MSAA twin is newer
                     if (seq_on()) log("seq:   draw samples dirty %p (%ux%u f%d) -> flush", (void*)im, im->w, im->h, (int)im->format);
                     bool was = g_st.rendering;
+                    g_break = "ms dirty";
                     end_rendering(cb);
                     ms_flush(cb, "sampled", &im, 1);
                     if (was) begin_rendering(cb);
@@ -2068,12 +2182,14 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                 if (im) check_pool_texture(t, im);
                 if (im && t && has_texels(t)) {  // CPU-written texels (outside the pass)
                     bool was = g_st.rendering;
+                    g_break = "texels";
                     end_rendering(cb);
                     apply_texels(cb, t, im);
                     if (was) begin_rendering(cb);
                 }
                 if (im && im->twin && im->twin->wgen > im->wgen) {  // upscaling: the other size holds the newer picture
                     bool was = g_st.rendering;
+                    g_break = "twin";
                     end_rendering(cb);
                     twin_sync(cb, im);
                     if (was) begin_rendering(cb);
@@ -2081,6 +2197,7 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                 if (im && im->pack_wait && pack_arrived(im)) im->written = false;  // its UHD pack file is read now
                 if (im && !im->written && t) {  // data the game wrote into the pool: upload it (outside the pass)
                     bool was = g_st.rendering;
+                    g_break = "pool upload";
                     end_rendering(cb);
                     upload_from_pool(cb, t, im);
                     if (was) begin_rendering(cb);
@@ -2096,8 +2213,11 @@ static VkDescriptorSet bind_resources(VkCommandBuffer cb, Combo* pv) {
                     if (!made) { dummy_t.width = dummy_t.height = 4; dummy_t.levels = 1; dummy_t.format = 0x25; dummy_t.target = 1; made = true; }
                     im = image_of(&dummy_t);
                 }
+                if (im->layout != VK_IMAGE_LAYOUT_GENERAL && g_st.rendering && im == g_pass_depth && g_ds_feedback.insert(im).second)
+                    log("vk: depth %ux%u sampled while it is the pass's depth: kept in GENERAL", im->w, im->h);
                 if (im->layout != VK_IMAGE_LAYOUT_GENERAL) {  // never-written image: give it a layout outside the pass
                     bool was = g_st.rendering;
+                    g_break = "layout";
                     end_rendering(cb);
                     transition(cb, im, VK_IMAGE_LAYOUT_GENERAL);
                     if (was) begin_rendering(cb);
@@ -2295,6 +2415,7 @@ static void ui_edge_extend(VkCommandBuffer cb, const Cmd& k, const VkViewport& v
     if (gb.buf) vkCmdBindVertexBuffers(cb, 0, 1, &gb.buf, &gb.offset);
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
+    cbs_forget();  // vertex buffer 0 is not restored when it was the zero buffer
 }
 
 // ultrawide SELECT checker (see the call in draw()): vertices for the bar in a host-visible ring of its own memory
@@ -2356,6 +2477,7 @@ static void ui_grid_extend(VkCommandBuffer cb, const Cmd& k, const VkViewport& v
     if (gb.buf) vkCmdBindVertexBuffers(cb, 0, 1, &gb.buf, &gb.offset);
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
+    cbs_forget();  // vertex buffer 0 is not restored when it was the zero buffer
 }
 
 struct UiMatch { std::vector<uint32_t> idx; };  // unused ones first
@@ -2484,6 +2606,172 @@ static void ui_sprite_smooth(const Cmd& k) {
         }
     }
 }
+// Vertex data in video memory (s126, Augs' crosswalk / #11): every memory pool is system RAM imported zero-copy, so
+// the GPU read each vertex over PCIe every frame (crosswalk: ~2 M vertices; 3.35 -> 1.80 ms GPU here with the streams
+// in video memory, more on x4 / x8 laptop and budget cards). A vertex stream (address, size) that the CPU left alone for
+// 2 frames gets a device-local copy (one copy command, a pass break, at most 64 per frame); later frames bind the copy
+// while the CPU write ticks (memory.cpp) show no write to its pages since it was taken. A written stream is copied again
+// at its next use; one written in 3 checks in a row stays in system RAM for 10 s (per-frame rings, skinning). Ranges the
+// GPU itself writes (storage buffers, buffer copies, inline updates) are never copied. Budget min(768 MB, VRAM / 5);
+// copies unused for ~20 s are freed. PORTABILITY: needs the write ticks (Windows); else and with NX_VB_VRAM=0 as before.
+struct VbEntry {
+    uint64_t addr = 0, size = 0;
+    VkBuffer buf = VK_NULL_HANDLE;
+    VkDeviceMemory mem = VK_NULL_HANDLE;
+    VkDeviceSize moff = 0, msize = 0;
+    uint32_t gen = 0;                       // write tick when the content was taken (or the watch started)
+    uint32_t gaddr = 0, span_lo = 0, span_len = 0;  // guest address, its pool (for the write ticks)
+    uint64_t pgen = ~0ull;                  // pool_gen() those were looked up at
+    uint64_t checked = ~0ull, used = 0, dyn_until = 0;
+    uint8_t quiet = 0, writes = 0;          // frames without a write / checks in a row with one
+    bool gpu = false, stale = false;
+};
+static std::unordered_map<uint64_t, VbEntry> g_vbc;
+static std::map<uint64_t, uint64_t> g_vb_gpu;  // GPU-written ranges [start, end)
+static uint64_t g_vb_bytes = 0, g_vb_epoch = 1;  // epoch: bumped when entries are erased (stream caches drop pointers)
+struct VbDead { uint64_t serial; VkBuffer buf; VkDeviceMemory mem; VkDeviceSize off, size; };
+static std::vector<VbDead> g_vb_dead;
+static VkBuffer g_vb_use[16];  // this draw: the device-local copy per stream, or null (system RAM)
+static uint64_t g_vb_use_addr[16], g_vb_use_size[16];  // the stream each g_vb_use was decided for
+static bool vb_on() {
+    static const bool on = (!getenv("NX_VB_VRAM") || atoi(getenv("NX_VB_VRAM")) != 0) && mem_write_ticks_ok();
+    static bool told = false;
+    if (!told) told = true, log("vk: vertex data in video memory %s", on ? "on" : "off (NX_VB_VRAM=0 or no write ticks on this OS)");
+    return on;
+}
+static uint64_t vb_key(uint64_t addr, uint64_t size) { return addr * 0x9E3779B97F4A7C15ull ^ size; }
+static bool vb_overlaps_gpu(uint64_t a, uint64_t n) {
+    auto it = g_vb_gpu.upper_bound(a + n - 1);  // first range starting after our end
+    return it != g_vb_gpu.begin() && std::prev(it)->second > a;
+}
+static void vb_release(VbEntry& e) {
+    if (!e.buf) return;
+    g_vb_dead.push_back({vk::gpu_recording_serial() + 1, e.buf, e.mem, e.moff, e.msize});
+    g_vb_bytes -= e.msize;
+    e.buf = VK_NULL_HANDLE, e.mem = VK_NULL_HANDLE;
+}
+// the GPU writes [addr, addr+size): streams there stay in system RAM (where the GPU writes)
+static void vb_gpu_wrote(uint64_t addr, uint64_t size) {
+    if (!addr || !size || !vb_on()) return;
+    if (vb_overlaps_gpu(addr, size)) {  // usually the same range again: covered?
+        auto it = std::prev(g_vb_gpu.upper_bound(addr));
+        if (it->first <= addr && it->second >= addr + size) return;
+    }
+    uint64_t lo = addr, hi = addr + size;
+    for (auto it = g_vb_gpu.lower_bound(lo); it != g_vb_gpu.end() && it->first <= hi;) hi = std::max(hi, it->second), it = g_vb_gpu.erase(it);
+    if (auto it = g_vb_gpu.lower_bound(lo); it != g_vb_gpu.begin() && std::prev(it)->second >= lo) lo = std::prev(it)->first, hi = std::max(hi, std::prev(it)->second), g_vb_gpu.erase(std::prev(it));
+    g_vb_gpu[lo] = hi;
+    for (auto& [k, e] : g_vbc)
+        if (!e.gpu && e.addr < hi && e.addr + e.size > lo) e.gpu = true, vb_release(e);
+}
+static void vb_copy(VkCommandBuffer cb, VbEntry& e, const GuestBuffer& gb) {
+    if (!e.buf) {
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = e.size;
+        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        if (vkCreateBuffer(dev, &bci, nullptr, &e.buf) != VK_SUCCESS) { e.buf = VK_NULL_HANDLE; return; }
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(dev, e.buf, &req);
+        e.mem = vk::alloc(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &e.moff);
+        e.msize = req.size;
+        VKC(vkBindBufferMemory(dev, e.buf, e.mem, e.moff));
+        g_vb_bytes += e.msize;
+    }
+    g_break = "vertex copy";
+    end_rendering(cb);
+    VkBufferCopy c{gb.offset, 0, e.size};
+    vkCmdCopyBuffer(cb, gb.buf, e.buf, 1, &c);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT};
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    e.stale = false;
+}
+// before the draw's pass begins: per stream, decide system RAM or the copy (copying first when needed)
+static uint64_t g_vbs_us = 0, g_vbs_new = 0, g_vbs_checks = 0, g_vbs_pages = 0, g_vbs_harv = 0, g_vbs_harv_us = 0, g_vbs_look = 0;  // debug NX_VB_STATS
+static void vb_prepare(VkCommandBuffer cb) {
+    static const bool vbs = getenv("NX_VB_STATS") != nullptr;
+    const auto vbs_t0 = vbs ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    struct VbsEnd { bool on; std::chrono::steady_clock::time_point t; ~VbsEnd() { if (on) g_vbs_us += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t).count(); } } vbs_end{vbs, vbs_t0};
+    static const uint64_t cap = getenv("NX_VB_CAP_MB") ? strtoull(getenv("NX_VB_CAP_MB"), nullptr, 10) << 20 : std::min<uint64_t>(768ull << 20, vk::vram_bytes() / 5);
+    static uint64_t copies_frame = ~0ull;
+    static uint32_t copies = 0;
+    if (copies_frame != g_present_no) copies_frame = g_present_no, copies = 0;
+    thread_local uint64_t c_addr[16], c_size[16], c_epoch[16];
+    thread_local VbEntry* c_e[16];
+    for (uint32_t s = 0; s < 16; s++) {
+        g_vb_use[s] = VK_NULL_HANDLE;
+        const uint64_t addr = g_st.vbuf[s].addr, size = g_st.vbuf[s].size;
+        g_vb_use_addr[s] = addr, g_vb_use_size[s] = size;
+        if (!addr || size < 1024 || size > (64u << 20)) continue;
+        VbEntry* e;
+        if (c_e[s] && c_addr[s] == addr && c_size[s] == size && c_epoch[s] == g_vb_epoch) e = c_e[s];
+        else {
+            const uint64_t key = vb_key(addr, size);
+            g_vbs_look++;
+            auto it = g_vbc.find(key);
+            if (it == g_vbc.end()) {
+                if (g_vbc.size() > 200000) continue;
+                it = g_vbc.emplace(key, VbEntry{}).first, g_vbs_new++;
+                it->second.addr = addr, it->second.size = size, it->second.gpu = vb_overlaps_gpu(addr, size);
+            }
+            if (it->second.addr != addr || it->second.size != size) continue;  // hash collision: system RAM
+            e = &it->second;
+            c_e[s] = e, c_addr[s] = addr, c_size[s] = size, c_epoch[s] = g_vb_epoch;
+        }
+        e->used = g_present_no;
+        if (e->gpu) continue;
+        if (e->checked != g_present_no) {  // once per frame: did the CPU write it?
+            e->checked = g_present_no;
+            if (e->pgen != pool_gen()) {  // pools are made again on loads: look the guest range up again
+                uint32_t off;
+                nvn::Pool* p = nvn::pool_of(addr, &off);
+                e->pgen = pool_gen(), e->span_len = 0;
+                if (p) e->gaddr = p->addr + off, e->span_lo = p->addr, e->span_len = p->size;
+            }
+            if (!e->span_len) continue;
+            g_vbs_checks++, g_vbs_pages += size >> 12;
+            const uint32_t now = mem_write_tick(e->gaddr, (uint32_t)size, g_present_no);  // its 2 MB chunks, once per frame
+            const bool written = !e->gen || mem_written_tick(e->gaddr, (uint32_t)size) >= e->gen;
+            if (written) {
+                e->quiet = 0, e->gen = now, e->stale = e->buf != VK_NULL_HANDLE;
+                if (++e->writes >= 3) e->dyn_until = g_present_no + 600, vb_release(*e);
+            } else e->quiet = (uint8_t)std::min(e->quiet + 1, 200), e->writes = 0;
+        }
+        if (g_present_no < e->dyn_until) continue;
+        if (e->buf && !e->stale) { g_vb_use[s] = e->buf; continue; }
+        if (e->quiet < 2 && !e->stale) continue;  // new or just written: system RAM this frame
+        if (copies >= 64 || (!e->buf && g_vb_bytes + e->size > cap)) continue;
+        GuestBuffer gb = guest_buffer(addr);
+        if (!gb.buf || gb.size < size) continue;
+        vb_copy(cb, *e, gb);
+        if (e->buf) g_vb_use[s] = e->buf, copies++;
+    }
+}
+// frame end (vk::upscale_frame_end): free copies the GPU is done with; every ~5 s drop streams unused for ~20 s
+static void vb_frame_end() {
+    for (size_t i = 0; i < g_vb_dead.size();)
+        if (vk::gpu_wait(g_vb_dead[i].serial, 0)) {
+            vkDestroyBuffer(dev, g_vb_dead[i].buf, nullptr);
+            vk::free_mem(g_vb_dead[i].mem, g_vb_dead[i].off, g_vb_dead[i].size);
+            g_vb_dead[i] = g_vb_dead.back(), g_vb_dead.pop_back();
+        } else i++;
+    if (getenv("NX_VB_STATS") && g_present_no % 600 == 0)
+        log("vb stats per frame: harvest calls %.3f ms, prepare %.3f ms, lookups %.0f, new %.0f, checks %.0f, pages %.0f, harvests %.0f, entries %zu", g_vbs_harv_us / 600e3, g_vbs_us / 600e3,
+            g_vbs_look / 600.0, g_vbs_new / 600.0, g_vbs_checks / 600.0, g_vbs_pages / 600.0, g_vbs_harv / 600.0, g_vbc.size()),
+            g_vbs_harv_us = g_vbs_us = g_vbs_look = g_vbs_new = g_vbs_checks = g_vbs_pages = g_vbs_harv = 0;
+    if (g_present_no % 300) return;
+    size_t freed = 0;
+    for (auto it = g_vbc.begin(); it != g_vbc.end();)
+        if (g_present_no - it->second.used > (it->second.buf ? 1200u : 120u)) vb_release(it->second), it = g_vbc.erase(it), freed++;
+        else ++it;
+    if (freed) g_vb_epoch++;
+    static uint64_t next_log = 0;
+    if (g_present_no >= next_log && !g_vbc.empty()) {
+        next_log = g_present_no + 3600;
+        size_t n = 0;
+        for (auto& [k, e] : g_vbc) n += e.buf != VK_NULL_HANDLE;
+        log("vk: vertex data in video memory: %zu of %zu streams, %.0f MB", n, g_vbc.size(), g_vb_bytes / 1048576.0);
+    }
+}
 static void draw(VkCommandBuffer cb, const Cmd& k) {
     g_seq_draws++;
     if (g_st.ds[0] & 7) g_seq_dsuse++;
@@ -2511,21 +2799,51 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
         const uint32_t w = g_st.depth->width, h = g_st.depth->height;
         if (w >= 256 && h >= 256 && !(w & (w - 1)) && !(h & (h - 1))) { g_skip[5]++; return; }
     }
+    // Shadow detail Low (setting shadow_detail = 1, weak PCs): town / field frames draw two shadow maps, the near one first
+    // (Shibuya / Daitama 1024x2048: tree, bins, characters) and a smaller far one (1024x1024: 187 of the crosswalk's 1445
+    // draws, no visible difference near the player, shots shs1 / sh0 s119). Casters into a smaller depth-only power-of-two
+    // target after a larger one in the same frame are skipped; the game still clears that map, so it reads as lit. A frame
+    // with one map, or the smaller one first, keeps everything.
+    if (rt::g_shadow_detail == 1 && !g_st.colors[0] && g_st.depth) {
+        const uint32_t w = g_st.depth->width, h = g_st.depth->height;
+        static uint32_t frame = ~0u, first_area = 0;
+        if (w >= 256 && h >= 256 && !(w & (w - 1)) && !(h & (h - 1))) {
+            if (frame != g_present_no) frame = g_present_no, first_area = w * h;
+            else if (w * h < first_area) { g_skip[5]++; return; }
+        }
+    }
     // Character rim (setting fx_char_rim): the game's outline shell around characters is the mesh again with front faces
     // culled, alpha-blended in its vertex colour (light grey / lavender, e.g. 9d9fb0 on Itsuki's jacket), so it shows as
     // a pale line on dark floors (user 11-03, save 2 Observatory door). Off skips those draws (cull front + src alpha /
     // one minus src alpha colour blend: only the shells use it, drawlog 11-03).
     if (!fx_enabled(FX_CHAR_RIM) && (g_st.polygon & 3) == 1 && g_st.blend[0][4] == 5 && g_st.blend[0][5] == 6 &&
         g_st.blend[0][6] == 1 && g_st.blend[0][7] == 2) { g_skip[5]++; return; }
+    const bool is_fx = fxaa_frag(pv) != 0;
+    if (is_fx) g_fxaa_frame = g_present_no;
+    const bool hdr_fx = vk::g_hdr_mode && is_fx;  // HDR: snapshot this FXAA draw's output (below)
+    if (!rt::fsr3_setting() && vk::upscale_lo_scale() > 0 && is_fx) {  // 3D resolution: upscale, then full size
+        g_spatial_frame = g_present_no;
+        if (vk::scene_phase_lo()) spatial_upscale(cb, pv);
+    }
     g_smaa_ran = false;
     if (Image* aa = smaa_target(pv)) {
+        g_break = "smaa";
         end_rendering(cb);
         ms_flush(cb, "smaa");
         ms_stale(aa);
         g_smaa_ran = (rt::fsr3_setting() && fsr3_in_place(cb, aa)) || smaa_in_place(cb, aa);  // FSR 3 unavailable: SMAA
+        cbs_forget();  // FSR 3 / DLSS record into cb with their own state
     }
+    if (vb_on()) vb_prepare(cb);
     begin_rendering(cb);
     if (!g_st.rendering) { g_skip[1]++; return; }
+    g_pass_writes++;
+    static const bool pt_draws = getenv("NX_GPU_PASSES") && atoi(getenv("NX_GPU_PASSES")) >= 2;  // debug: per shader pair
+    if (pt_draws && g_pt_pool) {
+        char b[64];
+        snprintf(b, sizeof b, "draw vs %08x fs %08x", progs[0] ? (uint32_t)progs[0]->stages[0].code : 0, progs[1] ? (uint32_t)progs[1]->stages[1].code : 0);
+        pt_mark(cb, b);
+    }
     uint32_t mode = k.a[0];
     VkPipeline p = pipeline(pv, mode);
     if (!p) { g_skip[2]++; return; }
@@ -2606,7 +2924,8 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
             for (int i = 0; i < 4; i++)
                 for (int c = 0; c < 3; c++) st32(v0 + 36 * i + 12 + 4 * c, 0x3f800000);
     }
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    const bool fresh = cbs_fresh(cb);
+    if (!fresh || g_cbs.pipe != p) vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
     if (set) vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pv->layout, 0, 1, &set, 0, nullptr);
     // NVN (like D3D) maps NDC +Y to the top of the target; Vulkan maps -Y there. A negative-height viewport flips Y
     // and with it the winding, so the game's front-face / cull settings keep their meaning.
@@ -2698,17 +3017,18 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
     vp.y += vp.height;
     vp.height = -vp.height;
     if (g_draw_jitter) vp.x += g_jx, vp.y += g_jy;  // FSR 3 sub-pixel jitter (scene camera draws only)
-    vkCmdSetViewport(cb, 0, 1, &vp);
+    if (!fresh || memcmp(&g_cbs.vp, &vp, sizeof vp)) vkCmdSetViewport(cb, 0, 1, &vp);
     VkRect2D sc = g_st.scissor;
     sc.offset.x = (int32_t)floorf(std::max(0, sc.offset.x) * rsx + oxd);
     sc.offset.y = (int32_t)floorf(std::max(0, sc.offset.y) * rs);
     sc.extent.width = (uint32_t)ceilf(std::min<uint32_t>(sc.extent.width, 16384) * rsx);
     sc.extent.height = (uint32_t)ceilf(std::min<uint32_t>(sc.extent.height, 16384) * rs);
-    vkCmdSetScissor(cb, 0, 1, &sc);
+    if (!fresh || memcmp(&g_cbs.sc, &sc, sizeof sc)) vkCmdSetScissor(cb, 0, 1, &sc);
     static const float magenta[4] = {1, 0, 1, 1};
     static const bool dbg_magenta = getenv("NX_DEBUG_BLEND") || getenv("NX_DEBUG_SKIN");  // getenv per draw cost ~15% CPU
-    vkCmdSetBlendConstants(cb, dbg_magenta ? magenta : g_st.blend_color);
-    vkCmdSetStencilReference(cb, VK_STENCIL_FACE_FRONT_AND_BACK, g_st.stencil_ref);
+    const float* bc = dbg_magenta ? magenta : g_st.blend_color;
+    if (!fresh || memcmp(g_cbs.blend, bc, sizeof g_cbs.blend)) vkCmdSetBlendConstants(cb, bc);
+    if (!fresh || g_cbs.stencil != g_st.stencil_ref) vkCmdSetStencilReference(cb, VK_STENCIL_FACE_FRONT_AND_BACK, g_st.stencil_ref);
     static VkBuffer zero_vb = VK_NULL_HANDLE;
     if (!zero_vb) {  // stands in for unbound streams: reading an unbound binding can lose the device
         VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -2721,12 +3041,27 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
         VkDeviceMemory m = alloc(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &off);
         VKC(vkBindBufferMemory(dev, zero_vb, m, off));
     }
+    VkBuffer vb[16];
+    VkDeviceSize vo[16];
+    uint32_t lo = 16, hi = 0;  // the changed streams: one bind for [lo, hi)
+    // the 16 stream lookups (guest_buffer -> pool_of) per draw were ~7% of the replay thread: streams whose address is
+    // unchanged since the last draw on this thread reuse the answer until any pool is created or finalized
+    thread_local uint64_t vb_addr[16], vb_gen = 0;
+    thread_local VkBuffer vb_buf[16];
+    thread_local VkDeviceSize vb_off[16];
+    if (const uint64_t pg = pool_gen(); pg != vb_gen) vb_gen = pg, memset(vb_buf, 0, sizeof vb_buf);
     for (uint32_t s = 0; s < 16; s++) {
-        GuestBuffer gb = g_st.vbuf[s].addr ? guest_buffer(g_st.vbuf[s].addr) : GuestBuffer{VK_NULL_HANDLE, 0};
-        VkDeviceSize zo = 0;
-        if (gb.buf) vkCmdBindVertexBuffers(cb, s, 1, &gb.buf, &gb.offset);
-        else vkCmdBindVertexBuffers(cb, s, 1, &zero_vb, &zo);
+        if (!vb_buf[s] || vb_addr[s] != g_st.vbuf[s].addr) {
+            GuestBuffer gb = g_st.vbuf[s].addr ? guest_buffer(g_st.vbuf[s].addr) : GuestBuffer{VK_NULL_HANDLE, 0};
+            vb_addr[s] = g_st.vbuf[s].addr, vb_buf[s] = gb.buf ? gb.buf : zero_vb, vb_off[s] = gb.buf ? gb.offset : 0;
+        }
+        if (g_vb_use[s] && g_vb_use_addr[s] == g_st.vbuf[s].addr && g_vb_use_size[s] == g_st.vbuf[s].size) vb[s] = g_vb_use[s], vo[s] = 0;  // the stream's copy in video memory (vb_prepare)
+        else vb[s] = vb_buf[s], vo[s] = vb_off[s];
+        if (!fresh || vb[s] != g_cbs.vb[s] || vo[s] != g_cbs.vo[s]) lo = std::min(lo, s), hi = s + 1;
     }
+    if (lo < hi) vkCmdBindVertexBuffers(cb, lo, hi - lo, vb + lo, vo + lo);
+    g_cbs.valid = true, g_cbs.pipe = p, g_cbs.vp = vp, g_cbs.sc = sc, g_cbs.stencil = g_st.stencil_ref;
+    memcpy(g_cbs.blend, bc, sizeof g_cbs.blend), memcpy(g_cbs.vb, vb, sizeof vb), memcpy(g_cbs.vo, vo, sizeof vo);
     bool stats = g_log_bindings && g_vk_pipeline_stats && g_stats_pending.size() < 4096;
     if (stats && !g_stats_pool) {
         VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -2790,10 +3125,33 @@ static void draw(VkCommandBuffer cb, const Cmd& k) {
     }
     g_st.drawn++;
     if (g_st.ncolors && g_st.colors[0]) g_last_rt = g_st.colors[0];
+    // HDR (s121): the game's FXAA output = the finished 3D scene before its gamma pass and the UI: copied for hdr_pass,
+    // which expands only the pixels the UI did not change
+    if (hdr_fx && g_st.colors[0])
+        if (Image* im = image_of(g_st.colors[0]); im && im->layers == 1)
+            if (Image* sn = hdr_scene_target(im->w, im->h, im->format)) {
+                g_break = "hdr scene";
+                end_rendering(cb);
+                transition(cb, im, VK_IMAGE_LAYOUT_GENERAL);
+                transition(cb, sn, VK_IMAGE_LAYOUT_GENERAL);
+                full_barrier(cb);
+                VkImageBlit b{};
+                b.srcSubresource = b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                b.srcOffsets[1] = b.dstOffsets[1] = {(int32_t)im->w, (int32_t)im->h, 1};
+                vkCmdBlitImage(cb, im->image, VK_IMAGE_LAYOUT_GENERAL, sn->image, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_NEAREST);
+                full_barrier(cb);
+            }
     for (uint32_t i = 0; i < g_st.ncolors; i++) if (g_st.colors[i]) g_draws_into[g_st.colors[i]]++;
 }
 
-void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
+// A list of commands by pointer: what vk.cpp flatten builds for lists that call others (no ~80-byte Cmd copies, s119)
+struct CmdRefs {
+    const Cmd* const* p;
+    size_t n;
+    size_t size() const { return n; }
+    const Cmd& operator[](size_t i) const { return *p[i]; }
+};
+template <class L> static void replay_list(VkCommandBuffer cb, const L& cmds) {
     static int seen[OP_UNKNOWN + 1] = {};
     if (g_ms_dirty.empty()) ms_prune();
     if (g_log_draws > 0) log("  replay %zu cmds", cmds.size());
@@ -2807,11 +3165,24 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                  k.a[5], k.a[6], k.a[7], k.blob.size());
         switch (k.op) {
             case OP_RENDER_TARGETS: {
+                // The same targets set again (the game does it between draw groups: 42 of 49 pass breaks in the office,
+                // s120) keep the open pass: every break cost ~0.9 ms on a 1280x720 target on a GeForce 920MX (#11),
+                // scaling with the target's area. NX_PASS_MERGE=0 ends the pass as before.
+                static const bool merge = !getenv("NX_PASS_MERGE") || atoi(getenv("NX_PASS_MERGE")) != 0;
+                bool same = merge && g_st.rendering && std::min<uint32_t>(8, k.a[0]) == g_st.ncolors && get<Texture>(k.a[9]) == g_st.depth;
+                for (uint32_t i = 0; same && i < g_st.ncolors; i++) same = get<Texture>(k.a[1 + i]) == g_st.colors[i];
+                if (same) {
+                    if (seq_on()) log("seq: targets again, pass kept");
+                    if (vk::g_hdr_mode && g_st.colors[0]) vk::hdr_note_target(g_st.colors[0]->guest);
+                    break;
+                }
+                g_break = "targets";
                 end_rendering(cb, true);
                 if (seq_on()) log("seq: targets c0 %p depth %p", (void*)image_of(k.a[0] ? get<Texture>(k.a[1]) : nullptr), (void*)image_of(get<Texture>(k.a[9])));
                 g_st.ncolors = std::min<uint32_t>(8, k.a[0]);
                 for (uint32_t i = 0; i < 8; i++) g_st.colors[i] = i < g_st.ncolors ? get<Texture>(k.a[1 + i]) : nullptr;
                 g_st.depth = get<Texture>(k.a[9]);
+                if (vk::g_hdr_mode && g_st.colors[0]) vk::hdr_note_target(g_st.colors[0]->guest);  // drawn into after the copy
                 g_clear_ahead = 0;  // MSAA: which targets this pass clears before drawing
                 for (size_t q = ci + 1; q < cmds.size(); q++) {
                     const Cmd& c = cmds[q];
@@ -2839,11 +3210,13 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
             case OP_CLEAR_COLOR: {
                 begin_rendering(cb);
                 if (!g_st.rendering || k.a[0] >= g_st.ncolors || !g_st.colors[k.a[0]]) break;
+                g_pass_writes++;
                 Image* im = image_of(g_st.colors[k.a[0]]);
                 VkClearAttachment ca{VK_IMAGE_ASPECT_COLOR_BIT, k.a[0]};
                 memcpy(&ca.clearValue.color, k.blob.data(), 16);
                 static const bool dbg_clear = getenv("NX_DEBUG_CLEAR") != nullptr;
                 if (dbg_clear) ca.clearValue.color = {{1.0f, 0.0f, 1.0f, 1.0f}};
+                if (seq_on()) log("seq:   clear colour %u %ux%u", k.a[0], im->w, im->h);
                 g_stats_clears++;
                 VkClearRect r{{{0, 0}, {im->w, im->h}}, 0, 1};
                 vkCmdClearAttachments(cb, 1, &ca, 1, &r);
@@ -2853,10 +3226,12 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 begin_rendering(cb);
                 Image* im = image_of(g_st.depth);
                 if (!g_st.rendering || !im) break;
+                g_pass_writes++;
                 VkClearAttachment ca{};
                 if (k.a[1]) ca.aspectMask |= VK_IMAGE_ASPECT_DEPTH_BIT & im->aspect;
                 if (k.a[3]) ca.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT & im->aspect;
                 if (!ca.aspectMask) break;
+                if (seq_on()) log("seq:   clear ds depth %u stencil %u (mask %#x) %ux%u", k.a[1], k.a[3], (unsigned)ca.aspectMask, im->w, im->h);
                 float d;
                 memcpy(&d, &k.a[0], 4);
                 ca.clearValue.depthStencil = {d, k.a[2]};
@@ -2865,6 +3240,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 break;
             }
             case OP_COPY_BUF_BUF: {  // (r1 padding), src addr64, dst addr64, size (32-bit size_t), flags
+                g_break = "copy buf";
                 end_rendering(cb);
                 GuestBuffer src = guest_buffer((uint64_t)k.a[2] << 32 | k.a[1]), dst = guest_buffer((uint64_t)k.a[4] << 32 | k.a[3]);
                 if (!src.buf || !dst.buf || !k.a[5]) {
@@ -2874,11 +3250,13 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 }
                 VkBufferCopy r{src.offset, dst.offset, k.a[5]};
                 vkCmdCopyBuffer(cb, src.buf, dst.buf, 1, &r);
+                vb_gpu_wrote((uint64_t)k.a[4] << 32 | k.a[3], k.a[5]);
                 g_stats_copies++;
                 full_barrier(cb);
                 break;
             }
             case OP_COPY_BUF_TEX: {
+                g_break = "copy buf tex";
                 end_rendering(cb);
                 Texture* t = get<Texture>(k.a[2]);
                 Image* im = image_of(t);
@@ -2907,6 +3285,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 break;
             }
             case OP_COPY_TEX_TEX: {  // src texture, dst texture, regions {x, y, z, w, h, d} x2, flags
+                g_break = "copy tex";
                 end_rendering(cb);
                 if (g_window_tex.count((uint32_t)k.a[2])) g_ui_target = (uint32_t)k.a[0];  // ultrawide: the frame's scene + UI target
                 Image* src = image_of(get<Texture>(k.a[0]));
@@ -2920,6 +3299,13 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 memcpy(s, k.blob.data(), 24);
                 memcpy(d, k.blob.data() + 24, 24);
                 for (int q : {0, 1, 3, 4}) s[q] = (int32_t)lround(s[q] * src->scale * (q % 3 ? 1 : src->sx)), d[q] = (int32_t)lround(d[q] * dst->scale * (q % 3 ? 1 : dst->sx));  // image pixels (x: ultrawide factor too)
+                // HDR: the game copies its whole float frame (scene + UI, highlights above 1) into the 8-bit window
+                // texture; the HDR present reads the float one (vk.cpp hdr_pass)
+                if (vk::g_hdr_mode && g_window_tex.count((uint32_t)k.a[2])) {
+                    const bool fl = src->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 || src->format == VK_FORMAT_R16G16B16A16_SFLOAT;
+                    const bool whole = !s[0] && !s[1] && (uint32_t)s[3] == src->w && (uint32_t)s[4] == src->h && !(k.a[5] & 6);
+                    vk::hdr_note_copy((uint32_t)k.a[2], fl && whole && src->layers == 1 ? src : nullptr);
+                }
                 transition(cb, src, VK_IMAGE_LAYOUT_GENERAL);
                 transition(cb, dst, VK_IMAGE_LAYOUT_GENERAL);
                 VkImageBlit b{};
@@ -2955,6 +3341,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 break;
             }
             case OP_CLEAR_TEX: {  // texture, channel mask; blob: region {x, y, z, w, h, d}, colour (raw 16 bytes)
+                g_break = "clear tex";
                 end_rendering(cb);
                 Texture* t = get<Texture>(k.a[0]);
                 Image* im = image_of(t);
@@ -3051,6 +3438,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 break;
             case OP_DISPATCH:
                 g_recent[g_recent_n++ % 1024] = {{g_st.programs[5] ? (uint32_t)g_st.programs[5]->stages[0].code : 0, 0}, k.op, k.a[0], k.a[1], 0};
+                g_break = "dispatch";
                 end_rendering(cb);
                 ms_flush(cb, "dispatch");
                 dispatch(cb, k);
@@ -3062,6 +3450,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
             case OP_STENCIL_REF: g_st.stencil_ref = k.a[1]; break;
             case OP_ALPHA_REF: memcpy(&g_st.alpha_ref, &k.a[0], 4); break;
             case OP_INLINE_UNIFORM: {  // update buffer contents in GPU order
+                g_break = "inline uniform";
                 end_rendering(cb);
                 GuestBuffer gb = guest_buffer((uint64_t)k.a[1] << 32 | k.a[0]);
                 if (!gb.buf || k.blob.empty() || k.blob.size() > 65536 || ((gb.offset + k.a[2]) & 3) ||
@@ -3071,6 +3460,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                     break;
                 }
                 vkCmdUpdateBuffer(cb, gb.buf, gb.offset + k.a[2], (k.blob.size() + 3) & ~3ull, k.blob.data());
+                vb_gpu_wrote(((uint64_t)k.a[1] << 32 | k.a[0]) + k.a[2], k.blob.size());
                 full_barrier(cb);
                 break;
             }
@@ -3081,6 +3471,7 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
                 break;
         }
     }
+    g_break = "end of list";
     end_rendering(cb);
     ms_flush(cb, "end");
     // once a minute (was every 20000 draws = ~7 pairs of lines a second at high fps: disk writes + a buried log)
@@ -3096,6 +3487,8 @@ void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) {
             (unsigned long long)g_reuploads);
     }
 }
+void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds) { replay_list(cb, cmds); }
+void replay(VkCommandBuffer cb, const std::vector<const Cmd*>& cmds) { replay_list(cb, CmdRefs{cmds.data(), cmds.size()}); }
 
 }  // namespace nvn
 

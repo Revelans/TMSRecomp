@@ -322,6 +322,7 @@ static void item_cap_poll() {
     log("items: consumable stock cap %s (table %08x)", on ? "99" : "the game's", table);
 }
 static double g_ui_time = 0;  // seconds of frame steps (g_base_dt) since start: the UI's clock, 1x in fast battles
+float rt::game_base_dt() { return g_base_dt; }
 void rt::frame_begin() {
     static float acc = 0, acc60 = 0, accui = 0;
     levelup_poll();
@@ -1437,7 +1438,8 @@ HLE_FN(field_roam_update, "field_roam_update") {
     const int kind = (int16_t)ld16(0x9f52a8 + 0x74), area = (int16_t)ld16(0x9f52a8 + 0x76), sub = (int16_t)ld16(0x9f52a8 + 0x78);
     static int last_map = -1;
     if (const int m = kind << 16 | (area & 0xff) << 8 | (sub & 0xff); m != last_map)
-        last_map = m, log("field: free roam in map kind %d area %d sub %d (X map gate %d)", kind, area, sub, ld8(0x9f52a8 + 6));
+        last_map = m, log("field: free roam in map kind %d area %d sub %d (X map gate %d)", kind, area, sub, ld8(0x9f52a8 + 6)),
+        auto30_new_area();
     // Idolaspheres (kind 1): reveal the floor once per map / drawn part while the setting is on (live from the F1 menu)
     if (kind == 1 && getenv("NX_MAP_REVEAL") && atoi(getenv("NX_MAP_REVEAL"))) {
         // once per (map, map data, drawn part): a floor change reloads the map data, so a stale first frame is redone
@@ -1854,8 +1856,72 @@ HLE_FN(btl_dmg_popup_draw, "btl_dmg_popup_draw") {
     }
     c->r[0] = call_unhooked(c, "btl_dmg_popup_draw", {c->r[0], c->r[1], c->r[2]});
 }
+// WEAK in the skill list (Augs 11-27, like P5R; setting weak_hint, default 1): the "!" marker draw runs per frame for
+// each unit while the skill list is open; the foes among them (weak_hint_seen) are remembered 250 ms. A list row
+// (btl_skill_row_draw 0x2f2154: row, x, y, highlighted, [sp] alpha; skill id u16 row+0xc) gets the WEAK popup sprite
+// (bank 45 #490, id 0x1ad2766a) small at its right when a foe is weak to the skill and the player knows it. Same rule
+// as the target panel (0x3014d8): offensive skill (record +8 bit 0), element +0x12 below 11 (11 = almighty), not
+// ignoring affinity (+0x20 != 1), affinity byte foe data (unit+0x818 = vf 0x14c) +0x42 + element 0-2, known =
+// 0x354390(foe id = data u16 +0, element) != 0. Guard buffs etc. are not checked (the target panel shows the full truth).
+static std::map<uint32_t, uint32_t> g_weak_foes;  // unit -> GetTickCount of its last "!" draw
+static bool weak_hint_on() { return !getenv("NX_WEAK_HINT") || atoi(getenv("NX_WEAK_HINT")) != 0; }
+static bool skill_offensive(uint16_t id) {
+    const uint32_t table = ld32(ld32(0x9ef4c4));
+    return id && table && (ld8(table + 0xc + id * 0x84 + 8) & 1);
+}
+// The "!" draw runs for party members too; the game puts the highlighted skill (u16 unit+0xac8) only on the units it
+// can target (s120 log: Zio -> both foes 9, Itsuki / Tsubasa 0). A unit counts as a foe once an attack skill was
+// highlighted on it, and stays one while its "!" draw keeps running.
+static void weak_hint_seen(uint32_t unit) {
+    const uint16_t hl = ld16(unit + 0xac8);
+    if (g_weak_foes.count(unit) || (hl && skill_offensive(hl))) g_weak_foes[unit] = GetTickCount();
+}
+static bool skill_hits_weak(Cpu* c, uint16_t id) {
+    if (!skill_offensive(id)) return false;
+    const uint32_t skill = ld32(ld32(0x9ef4c4)) + 0xc + id * 0x84;
+    const int16_t el = (int16_t)ld16(skill + 0x12);
+    if (el < 0 || el >= 11 || ld16(skill + 0x20) == 1) return false;
+    const uint32_t now = GetTickCount();
+    bool weak = false;
+    const Cpu keep = *c;
+    for (auto it = g_weak_foes.begin(); it != g_weak_foes.end();) {
+        if (now - it->second > 250) { it = g_weak_foes.erase(it); continue; }
+        const uint32_t unit = it->first;
+        ++it;
+        const uint32_t data = unit + 0x818;  // what vf 0x14c returns (btl_weak_mark_draw reads it so)
+        if (weak || !ld32(unit + 0x804) || ld8(data + 0x42 + el) > 2) continue;
+        static const bool test = getenv("NX_WEAK_HINT_TEST") != nullptr;  // debug: unknown weaknesses count too
+        c->r[0] = ld16(data), c->r[1] = (uint32_t)el;
+        call_guest(c, 0x354390);
+        weak = c->r[0] != 0 || test;
+    }
+    *c = keep;
+    return weak;
+}
+HLE_FN(btl_skill_row_draw, "btl_skill_row_draw") {
+    const uint32_t row = c->r[0], x = c->r[1], y = c->r[2], alpha = ld32(c->r[13]);
+    call_unhooked(c, "btl_skill_row_draw", {c->r[0], c->r[1], c->r[2], c->r[3]});
+    if (!weak_hint_on() || g_weak_foes.empty() || !skill_hits_weak(c, ld16(row + 0xc))) return;
+    static const float sx = getenv("NX_WEAK_HINT_X") ? (float)atof(getenv("NX_WEAK_HINT_X")) : 236.f,
+                       sy = getenv("NX_WEAK_HINT_Y") ? (float)atof(getenv("NX_WEAK_HINT_Y")) : 4.f,
+                       sc = getenv("NX_WEAK_HINT_SCALE") ? (float)atof(getenv("NX_WEAK_HINT_SCALE")) : 0.38f;
+    const uint32_t sprite = 0x1ad2766a;
+    const Cpu keep = *c;
+    c->r[0] = sprite;
+    call_guest(c, 0x23e174);  // sprite record: +0x10 / +0x14 size
+    const uint32_t rec = c->r[0];
+    if (rec >= 0x10000000) {
+        const float w = (float)(int32_t)ld32(rec + 0x10) * sc, h = (float)(int32_t)ld32(rec + 0x14) * sc;
+        c->r[0] = sprite, c->r[1] = alpha;
+        c->vr.f[0] = w, c->vr.f[1] = h, c->vr.f[2] = 1.0f;
+        c->vr.f[3] = (float)(int32_t)x + sx, c->vr.f[4] = (float)(int32_t)y + sy - h / 2;
+        call_guest(c, 0x23cba4);
+    }
+    *c = keep;
+}
 HLE_FN(btl_weak_mark_draw, "btl_weak_mark_draw") {
     const uint32_t unit = c->r[0];
+    weak_hint_seen(unit);
     const uint16_t before = ld16(unit + 0xaca);
     const bool hold = fps_setting() != 30 && g_ui_gate != 0 && !ui_tick_due(unit + 0xaca);
     c->r[0] = call_unhooked(c, "btl_weak_mark_draw", {unit});
@@ -1867,11 +1933,21 @@ HLE_FN(btl_weak_mark_draw, "btl_weak_mark_draw") {
         if (units.size() < 16 && units.insert(unit).second) {
             std::string a;
             for (int i = 0; i < 24; i++) a += std::to_string(ld8(unit + 0x85a + i)) + " ";
-            log("battle: weak marker unit %08x affinities %s", unit, a.c_str());
+            std::string w;
+            for (uint32_t o = 4; o < 0x80; o += 4) w += std::to_string((int32_t)ld32(unit + o)) + " ";
+            w += "| slots";
+            if (const uint32_t b = ld32(0x9ef428))
+                for (uint32_t i = 0; i < 16; i++) w += " " + std::to_string(ld32(b + 0xd8 + 4 * i) == unit ? 1 : 0);
+            w += " | data";
+            for (uint32_t o = 0; o < 0x20; o += 2) w += " " + std::to_string(ld16(unit + 0x818 + o));
+            log("battle: weak marker unit %08x affinities %s; %s", unit, a.c_str(), w.c_str());
             if (const char* t = getenv("NX_AFF_TEST"))  // debug: comma list, element i gets value i (both copies)
                 for (int i = 0; i < 12 && *t; i++, t += strcspn(t, ",") + (t[strcspn(t, ",")] != 0))
                     st8(unit + 0x85a + i, (uint8_t)atoi(t)), st8(unit + 0x866 + i, (uint8_t)atoi(t));
         }
+        static std::map<uint32_t, uint16_t> hl;
+        if (hl.count(unit) == 0 || hl[unit] != ld16(unit + 0xac8))
+            hl[unit] = ld16(unit + 0xac8), log("battle: unit %08x (id %u) highlighted skill %u", unit, ld16(unit + 0x818), hl[unit]);
         static int steps = 0;
         static uint32_t t0 = GetTickCount();
         steps += ld16(unit + 0xaca) != before;
@@ -2389,6 +2465,13 @@ static void town_log(const char* kind, uint32_t obj, uint32_t pos, bool ran) {
 // and the next frame pulled it back = cars shaking back and forth, USER 11-14 video.)
 HLE_FN(vehicle_update, "vehicle_update") {
     const uint32_t v = c->r[0], actor = ld32(v + 0xb4);
+    static const bool crowd_log = getenv("NX_CROWD_LOG") != nullptr;
+    if (crowd_log) {  // debug: distinct cars updated per ~5 s
+        static std::unordered_set<uint32_t> seen;
+        static uint64_t f0 = 0;
+        seen.insert(v);
+        if (g_frame_no - f0 >= 300) log("[crowd] cars %zu", seen.size()), seen.clear(), f0 = g_frame_no;
+    }
     if (!town_gate() || !actor) { call_unhooked(c, "vehicle_update", {v}); town_log("car", actor, v + 4, true); return; }
     if (!town_tick_due(v)) { town_log("car", actor, actor + 0xc, false); return; }
     town_restore_true(actor);  // the update reads the actor position and yaw as its own
@@ -2399,12 +2482,48 @@ HLE_FN(vehicle_update, "vehicle_update") {
 }
 HLE_FN(mob_mgr_update, "mob_mgr_update") {
     const uint32_t m = c->r[0];
+    static const bool crowd_log = getenv("NX_CROWD_LOG") != nullptr;
+    if (crowd_log && g_frame_no % 300 == 0) {  // debug: crowd manager counts every ~5 s
+        uint32_t active = 0;
+        for (uint32_t i = 0, n = ld32(m + 0x10); i < n && i < 512; i++) active += ld32(ld32(ld32(m + 0x18) + 4 * i)) != 0;
+        log("[crowd] mgr %08x actors %u slots %u (active %u) walkers %u cap %u pool %u", m, ld32(m + 4), ld32(m + 0x10), active,
+            ld32(m + 0x1c), ld32(m + 0xbc), ld32(m + 0xc0));
+    }
     static const bool mob_on = !getenv("NX_MOB30") || atoi(getenv("NX_MOB30")) != 0;  // debug: crowd gate only
     const bool run = !town_gate() || !mob_on || town_tick_due(m);
     if (!run) return;
     t_in_mob_mgr = town_gate();
     call_unhooked(c, "mob_mgr_update", {m});
     t_in_mob_mgr = false;
+}
+
+// Crowd density (setting crowd_density: 0 the game's, 1 half, 2 low; USER 11-27 for weak PCs, issue #11 Shibuya crosswalk).
+// Town areas build two pools when they load: the crowd manager makes params[5] full walker models (mgr +0xc0; the nearest
+// walkers get them, the rest of the ~300 walkers are the cheap far crowd) and the traffic manager makes params[6] cars
+// (+0x1c, in the same frame). Shibuya: 50 + 50; those characters were ~1/3 of the crosswalk frame's draws (130 scene +
+// 186 shadow map). The counts are scaled in the constructors' parameters, so the game builds the smaller pools itself and
+// everything else stays its own logic; a change applies at the next area load.
+static int crowd_density() {
+    const char* e = getenv("NX_CROWD_DENSITY");  // read at each area load: the F1 menu's save_setting updates it
+    return e ? std::clamp(atoi(e), 0, 2) : 0;
+}
+static uint32_t crowd_scaled(uint32_t n) { const int d = crowd_density(); return d ? std::max<uint32_t>(4, d == 1 ? n / 2 : n / 4) : n; }
+HLE_FN(mob_mgr_ctor, "mob_mgr_ctor") {
+    const uint32_t p = c->r[1], n = ld32(p + 5 * 4), k = n >= 4 && n <= 512 ? crowd_scaled(n) : n;
+    if (k != n) st32(p + 5 * 4, k), log("crowd density: walker models %u -> %u", n, k);
+    // walker slots (params[4], Shibuya 300: the far crowd and the crowd logic) shrink with the models; 75 measured stable
+    const uint32_t cap = ld32(p + 4 * 4), cap_k = cap >= 4 && cap <= 4096 ? std::max(crowd_scaled(cap), k) : cap;
+    if (cap_k != cap) st32(p + 4 * 4, cap_k), log("crowd density: walker slots %u -> %u", cap, cap_k);
+    const uint32_t r = call_unhooked(c, "mob_mgr_ctor", {c->r[0], p});
+    if (k != n) st32(p + 5 * 4, n);  // the caller's parameter block as it was
+    if (cap_k != cap) st32(p + 4 * 4, cap);
+    c->r[0] = r;  // returns the manager
+}
+HLE_FN(traffic_mgr_create, "traffic_mgr_create") {
+    const uint32_t p = c->r[0], n = ld32(p + 6 * 4), k = n >= 4 && n <= 512 ? crowd_scaled(n) : n;
+    if (k != n) st32(p + 6 * 4, k), log("crowd density: cars %u -> %u", n, k);
+    call_unhooked(c, "traffic_mgr_create", {p});
+    if (k != n) st32(p + 6 * 4, n);
 }
 
 // Character action blends (_chrPlayAction 0x41ebfc: blend seconds x 30 -> 0x3ce298 sets step +0x11fc = 1 / frames):

@@ -1,7 +1,7 @@
 // spvgen <shader> <out.h>: the runtime's own SPIR-V shaders as uint32_t arrays. Shaders: sharpen (Sharpen.cs ->
 // runtime/src/sharpen_spv.h), overlay (Overlay.cs -> runtime/src/overlay_spv.h), smaa0/smaa1/smaa2 (Smaa.cs ->
 // runtime/src/smaa0_spv.h ...), upscale (Upscale.cs ->
-// runtime/src/upscale_spv.h), motion (Motion.cs -> runtime/src/motion_spv.h). One argument = sharpen (old usage).
+// runtime/src/upscale_spv.h), hdr (Hdr.cs -> runtime/src/hdr_spv.h), motion (Motion.cs -> runtime/src/motion_spv.h). One argument = sharpen (old usage).
 using System;
 using System.IO;
 using System.Text;
@@ -11,10 +11,10 @@ static class Program
     static int Main(string[] args)
     {
         string name = args.Length > 1 ? args[0] : "sharpen", outPath = args[args.Length - 1];
-        byte[] spv = name == "mvcheck" ? MvCheck.Build() : name == "motion" ? Motion.Build() : name == "overlay" ? Overlay.Build() : name == "upscale" ? Upscale.Build()
+        byte[] spv = name == "hdr" ? Hdr.Build() : name == "mvcheck" ? MvCheck.Build() : name == "motion" ? Motion.Build() : name == "overlay" ? Overlay.Build() : name == "upscale" ? Upscale.Build()
                    : name.StartsWith("smaa") ? Smaa.Build(name[4] - '0') : name.StartsWith("msx") ? MsExpand.Build(name == "msxv")
                    : Sharpen.Build();
-        string what = name == "mvcheck" ? "Motion vector debug check compute shader, source tools/spvgen/Motion.cs." : name == "motion" ? "Camera motion vectors from depth (temporal upscaler input) compute shader, source tools/spvgen/Motion.cs."
+        string what = name == "hdr" ? "HDR output (PQ / scRGB encode + subtitles) compute shader, source tools/spvgen/Hdr.cs." : name == "mvcheck" ? "Motion vector debug check compute shader, source tools/spvgen/Motion.cs." : name == "motion" ? "Camera motion vectors from depth (temporal upscaler input) compute shader, source tools/spvgen/Motion.cs."
                     : name.StartsWith("msx") ? $"MSAA expand (1x image -> multisampled twin) {(name == "msxv" ? "vertex" : "fragment")} shader, source tools/spvgen/MsExpand.cs."
                     : name.StartsWith("smaa") ? $"SMAA-style anti-aliasing pass {name[4]} compute shader, source tools/spvgen/Smaa.cs."
                     : name == "overlay" ? "Subtitle overlay blend compute shader, source tools/spvgen/Overlay.cs."

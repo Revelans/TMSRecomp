@@ -9,6 +9,7 @@
 // Frames are decoded with libvpx on the thread that sends the input. Output format 4 (the game's) is tight NV12,
 // as subsdk1's DecoderImpl::GetOutputBuffer writes it: Y rows of `width` bytes, then height/2 rows of interleaved
 // UV, copied INTO the movie::Buffer the game passes (sized by GetOutputBufferSize = w*h*3/2).
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -16,6 +17,8 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include "movie_mf.h"
@@ -518,7 +521,24 @@ bool movie_hd_plane(uint64_t fp, std::shared_ptr<std::vector<uint8_t>>* nv12, si
 // the HD frame's I420 planes are registered by the fingerprints vk_texture.cpp computes, so a wrong or unknown movie
 // just stays 720p. NX_MOVIE_HD=0 turns it off.
 namespace {
-struct Prime { std::filesystem::path ivf; std::vector<uint8_t> thm; };
+// The whole 4K stream in memory (m07: 377 MB, 3211 frames) + its keyframes (camphd: every 60 frames). Read once on a
+// worker thread (Reddit 11-27: reading it on the game thread at every reopen = 2 s hitches); 720p shows meanwhile.
+struct PrimeFile {
+    std::shared_ptr<const std::vector<uint8_t>> bytes;
+    std::vector<std::pair<int, size_t>> keys;  // (frame number, IVF record offset)
+};
+struct Prime {
+    std::filesystem::path ivf;
+    std::vector<uint8_t> thm;
+    std::shared_ptr<PrimeFile> file;  // set by the reader thread (g_prime_io)
+    bool reading = false;
+};
+std::mutex g_prime_io;
+// VP9 uncompressed header: frame_marker(2) profile_low profile_high [reserved when profile 3] show_existing frame_type
+bool vp9_keyframe(uint8_t b) {
+    const int profile = (b >> 5 & 1) | (b >> 4 & 1) << 1, i = profile == 3 ? 5 : 4;
+    return !(b >> (7 - i) & 1) && !(b >> (6 - i) & 1);
+}
 std::vector<Prime>& prime_index() {
     static std::vector<Prime> v = [] {
         std::vector<Prime> r;
@@ -549,15 +569,48 @@ int thm_diff(const uint8_t* a, const uint8_t* b) {
     for (int i = 0; i < 144; i++) s += abs(a[i] - b[i]);
     return s / 144;
 }
-// decode the HD stream up to frame `target` (reopen when behind); false while not there yet (at most 30 per call)
+// the movie's stream when it is in memory, else null (and the read starts on a worker thread)
+std::shared_ptr<PrimeFile> prime_file(int mv) {
+    Prime& p = prime_index()[mv];
+    std::lock_guard<std::mutex> l(g_prime_io);
+    if (p.file || p.reading) return p.file;
+    p.reading = true;
+    std::thread([&p] {
+        auto f = std::make_shared<PrimeFile>();
+        std::ifstream in(p.ivf, std::ios::binary);
+        auto b = std::make_shared<std::vector<uint8_t>>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        for (size_t pos = 32, n = 0; pos + 13 <= b->size(); n++) {
+            uint32_t len;
+            memcpy(&len, &(*b)[pos], 4);
+            if (vp9_keyframe((*b)[pos + 12])) f->keys.push_back({(int)n, pos});
+            pos += 12 + (size_t)len;
+        }
+        f->bytes = std::move(b);
+        log("movie: %s read (%zu MB, %zu keyframes)", p.ivf.filename().string().c_str(), f->bytes->size() >> 20, f->keys.size());
+        std::lock_guard<std::mutex> l2(g_prime_io);
+        p.file = f, p.reading = false;
+    }).detach();
+    return nullptr;
+}
+// decode the HD stream up to frame `target`; false while not there yet (at most 30 frames per call). Jumps go to the
+// nearest keyframe at or before the target instead of decoding from frame 0 (Reddit 11-27: a match one frame behind
+// reopened the stream and decoded from the start every frame: 150-390 ms per frame, growing through the movie).
 bool prime_seek(PrimeState& st, int target) {
+    const auto f = prime_file(st.movie);
+    if (!f) return false;
+    if (st.hd && st.img && st.decoded > target && st.decoded - target <= 8) return true;  // a repeated frame: keep the 4K one
     if (!st.hd || st.decoded > target) {
         st.hd = std::make_unique<Hd>(), st.decoded = -1, st.img.reset();
-        std::ifstream in(prime_index()[st.movie].ivf, std::ios::binary);
-        st.hd->ivf = std::make_shared<const std::vector<uint8_t>>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        st.hd->ivf = f->bytes;
         hd_decoder_open(*st.hd);
         log("movie: 4K stream %s %s", prime_index()[st.movie].ivf.filename().string().c_str(), st.hd->on() ? (st.hd->mf ? "playing (GPU)" : "playing") : "FAILED");
     }
+    auto k = std::upper_bound(f->keys.begin(), f->keys.end(), std::make_pair(target, SIZE_MAX)) - 1;
+    const bool jump = k >= f->keys.begin() && k->first > st.decoded + 1;
+    // far past a keyframe (movie start while the file was read, a skip): 720p until the next keyframe (at most 60 frames)
+    // rather than a burst of 4K decodes in one game frame (s120: 46 frames = 325 ms)
+    if (target - (jump ? k->first : st.decoded + 1) > 12) return false;
+    if (jump) st.hd->pos = k->second, st.decoded = k->first - 1;
     for (int n = 0; st.hd->on() && !st.hd->slow && st.decoded < target && n < 30; n++) {
         const auto t0 = std::chrono::steady_clock::now();
         const auto& b = *st.hd->ivf;

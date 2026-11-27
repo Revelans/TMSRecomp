@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- tms.exe + tmslauncher.exe (CMakeLists icon.rc). activeCodePage UTF-8 (Windows 10 1903+; older Windows ignores it):
+     the ANSI code page of the process is UTF-8, so argv, getenv, fopen and std::filesystem::path::string() carry any
+     folder name (Reddit 11-28: an install folder named "Tokyo Mirage Sessions #FE" with the real sharp sign U+266F). -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

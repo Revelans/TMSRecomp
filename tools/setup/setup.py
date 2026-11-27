@@ -96,7 +96,9 @@ def fail(msg):
 
 def run(cmd, what, progress=False):
     """Run a tool; pass its "compile i/n" lines on as PROGRESS, keep the rest for the error message."""
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    if cmd[0] == sys.executable:  # our Python steps in UTF-8 mode too: install / game folders may be non-ASCII (U+266F)
+        cmd = [cmd[0], "-X", "utf8"] + cmd[1:]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     tail = []
     for line in p.stdout:
         line = line.rstrip()

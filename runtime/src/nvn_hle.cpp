@@ -66,6 +66,7 @@ uint64_t Buffer::gpu() const {
 // The replay asks once per buffer binding (profile s71: lock + map walk ~10% of the game thread in big areas): each thread
 // keeps its last 4 answers with the exact address range each holds for, dropped when any pool is created or finalized.
 static std::atomic<uint64_t> g_pool_gen{1};
+uint64_t pool_gen() { return g_pool_gen.load(std::memory_order_acquire); }  // changes when any pool is created or finalized
 Pool* pool_of(uint64_t gpu, uint32_t* off) {
     struct Hit { uint64_t gen = 0, lo = 0, hi = 0; Pool* p = nullptr; };
     thread_local Hit hits[16];  // draws alternate a few pools (vertex, index, uniform): last 16 answers (s115: 4 missed,

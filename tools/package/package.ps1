@@ -36,12 +36,15 @@ if (-not (Test-Path "$rel\build.ninja")) {
 }
 cmake --build $rel --target tms launcher
 if ($LASTEXITCODE) { throw "release build failed" }
-if (Test-Path "$rel\icon.rc") { throw "$rel embeds an icon (the game's art): delete $rel and run again" }
-foreach ($f in "tms.exe", "launcher.exe", "SDL3.dll", "subtitles_en.tsv") { Copy-Item "$rel\$f" $stage }
+if (-not (Select-String -Quiet -SimpleMatch "runtime/launcher/app.ico" "$rel\icon.rc")) { throw "$rel embeds another icon (the game's art?): delete $rel and run again" }
+foreach ($f in "tms.exe", "tmslauncher.exe", "SDL3.dll", "subtitles_en.tsv") { Copy-Item "$rel\$f" $stage }
+# shortcut: 0.1.5 and older launchers restart "launcher.exe" after an update; this copy carries them over to tmslauncher.exe
+# (it starts tmslauncher.exe, which removes it). Drop it once nobody updates from 0.1.5.
+Copy-Item "$rel\tmslauncher.exe" "$stage\launcher.exe"
 # AMD FSR 3 (Anti-aliasing = FSR 3): the SDK's MIT-licensed signed Vulkan DLLs, unmodified (NOTES s62). Nothing from NVIDIA.
 foreach ($f in "amd_fidelityfx_loader_vk.dll", "amd_fidelityfx_upscaler_vk.dll") { Copy-Item "$rel\$f" $stage }
 # Microsoft C++ runtime next to the exes (Distributable Code, app-local): without it a PC lacking the VC++ redistributable cannot even
-# open launcher.exe to say why. Newest toolset installed, so never older than the one that built the exes.
+# open tmslauncher.exe to say why. Newest toolset installed, so never older than the one that built the exes.
 $crt = Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory | Sort-Object { [version]$_.Parent.Parent.Name } | Select-Object -Last 1
 if (-not $crt) { throw "no Visual C++ redistributable folder found (Visual Studio is needed to package)" }
 foreach ($f in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_atomic_wait.dll") { Copy-Item (Join-Path $crt.FullName $f) $stage }
@@ -99,7 +102,7 @@ Write-Output "wrote $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
 if ($Uhd) {
     $ustage = Join-Path $env:TEMP "tmsr_package\uhd"
     New-Item -ItemType Directory -Force $ustage | Out-Null
-    Set-Content "$ustage\README_UHD.txt" ("TMSRecomp UHD textures. Install: launcher.exe, Guide page, UHD textures, Install ZIP. Or by hand: extract into your game data folder (the one with romfs), so that " +
+    Set-Content "$ustage\README_UHD.txt" ("TMSRecomp UHD textures. Install: tmslauncher.exe, Guide page, UHD textures, Install ZIP. Or by hand: extract into your game data folder (the one with romfs), so that " +
         "textures\pack\*.dds sits next to romfs. Toggle: F1 overlay 'UHD textures' (after a restart) or settings.ini tex_pack.") -Encoding utf8
     $uzip = Join-Path $Out "TMSRecomp-UHD-$date.zip"
     # the pack is added in place (-C <data> textures/pack): no copy of tens of GB
@@ -113,7 +116,7 @@ if ($MovieHd) {
     $mstage = Join-Path $env:TEMP "tmsr_package\moviehd"
     New-Item -ItemType Directory -Force $mstage | Out-Null
     Set-Content "$mstage\README_MovieHD.txt" ("TMSRecomp 4K movies: story movies + camp menu backgrounds (AI-upscaled offline from the " +
-        "game's 720p movies with Real-ESRGAN, VP9; camp backgrounds redone 11-25 with the anime model: sharper faces).`r`nInstall: launcher.exe, Guide page, 4K movies, Install ZIP. " +
+        "game's 720p movies with Real-ESRGAN, VP9; camp backgrounds redone 11-25 with the anime model: sharper faces).`r`nInstall: tmslauncher.exe, Guide page, 4K movies, Install ZIP. " +
         "Or by hand: extract into your game data folder (the one with romfs), so that movie_hd\ sits next to romfs. The game " +
         "plays them in place of the 720p movies; any movie without a 4K file plays as before.`r`nstory_mod = m06 / m07 / m12 of " +
         "the uncensored mod (used only while that mod is on).`r`nOff: settings.ini line movie_hd = 0, or delete the folder. " +

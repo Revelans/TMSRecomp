@@ -102,6 +102,7 @@
 0x002efdb0 btl_banner_requests  # (banner part): pending action-banner requests (+0x28: 24 x {unit, kind, ?}) -> banner queue (+0x148, 0x34 each); then 0x2f0238 starts the next
 0x004a7088 field_enemy_spawn  # (group desc, deferred): spawns one field enemy symbol group (map load 0x4a6c74, respawn timer 0x4a5618, 0x4a7564); returns -1 when none
 0x0025fed4 sound_play_cue  # (kind 0/1/2, cue name): plays a sound cue; the Settings screen plays the voice preview with it when row 2 changes
+0x002f2154 btl_skill_row_draw  # (row, x, y, highlighted, [sp] alpha): one battle skill list row (skill id u16 row+0xc); sprites via 0x23c8e4 (id, alpha, x, y)
 0x002f1cac btl_skill_panel_open  # (panel, unit_skill*, unit, ?, flag): early return if panel+0x28 == unit && +0x20 == skill; 0x18b = close, 0xdc = special
 0x002f13b8 btl_skill_panel_update  # +4 state (1 open, 2 closing: +0x1c counts 5..0 then +0x28/+0x20 = -1)
 0x0029049c btl_enemy_action_banner  # once per action (+0xa8), enemy path: panel open + 0x2f2118
@@ -155,6 +156,8 @@
 0x0038fe58 unity2_task_update  # (task, made by 0x38fc84 for Bloom Palace facility types 2-5 (0x36cf64 switch; type 1 = Carnage Unity 0x3720a4)): runs the manager 0x39a444 whose screens (ctors 0x39eea4 / 0x390818 / 0x39bc40, same widgets + facility bg as Unity) are the later Unity menus; always returns 1
 0x003df4fc vehicle_update  # (vehicle): Shibuya traffic car, virtual; per call: speed +0x34 eased to target +0x94, pos +4 += speed x dir (no dt), steering, then actor_set_pos 0x3c853c on the car actor +0xb4: Switch steps it at 30 Hz
 0x003d6e2c mob_mgr_update  # (crowd manager): town crowd (mob) walkers, run from field task 0x46b7f0; per call: removes finished walkers, spawns one, steers + places each walker (0x3d4b8c -> 0x3d53dc -> actor_set_pos): Switch steps it at 30 Hz
+0x003d3e90 mob_mgr_ctor  # (mgr, params*): crowd manager constructor; params[4] = walker slot capacity, params[5] = full walker models (+0xc0, built later by 0x3d2fec -> 0x3d5968): setting crowd_density scales params[5]
+0x003dc6d8 traffic_mgr_create  # (params*): traffic manager singleton (200 bytes, 0x3daca8); params[6] = car count (+0x1c, built in state 0 of 0x3dc7c4 -> 0x3db0c8, same frame): setting crowd_density scales params[6]
 0x003c853c actor_set_pos  # (actor, vec3*): sets the actor position +0xc (cut scripts via Lua 0x41a894, crowd walkers via 0x3d53dc, cars via vehicle_update)
 0x003c8734 actor_set_dir  # (actor, vec3* dir): yaw +0x1c = atan2(x, z); crowd walker step 0x3d64b0 calls it on its actor each crowd update
 0x0049c420 scene_change  # (scene id): next game scene; 0x25 = game over -> title (battle task end 0x2909c8 after a loss), 0xe after RESULTS

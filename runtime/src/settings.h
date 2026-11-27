@@ -1,6 +1,6 @@
 #pragma once
 // Release version (the launcher compares it with GitHub release tags).
-static const char k_version[] = "0.1.5";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
+static const char k_version[] = "0.1.6";  // 0.1.0 beta = first public release (tag v0.1.0-beta)
 
 // Keyboard / mouse bindings (ui.cpp poll_input, launcher Game page): settings.ini key_<name> = up to 3 names, comma
 // separated; "none" = unbound. Names: SDL key names (K, Return, Left Shift, Keypad 4...), Mouse1..Mouse5, WheelUp / WheelDown.
@@ -20,6 +20,15 @@ static const char k_default_settings[] =
     "; TMSRecomp settings. Environment variables override these (fps = NX_FPS, res = NX_RES, ...; any NX_ name works).\n"
     "; fps: 30 (the game's own), 60, N > 60 (capped at N), 0 (uncapped)\n"
     "fps = 60\n"
+    "; auto_30 = 0: at fps 60 a PC that cannot hold 60 plays in slow motion (default 1: it drops to 30 fps at full game speed\n"
+    ";   while 60 is not held, then back to 60)\n"
+    "; crowd_density: 0 (default, the game's), 1 half, 2 low: fewer walkers and cars close by in town streets (Shibuya), for weak PCs\n"
+    "; hdr_boost 0..4 (default 3): with HDR, how far the bright parts of the 3D scene are lifted toward the screen's peak\n"
+    ";   (menus / text stay at paper white; 0 = the game's own brightness); hdr_color 0..4 (default 2): more vivid scene colours\n"
+    "; scene_res: 3D resolution in % (100 default, 85, 75, 67, 50) with fx_fxaa 0 / 1 / 2: the 3D scene renders smaller and is\n"
+    ";   scaled up, menus / HUD stay sharp; for weak graphics cards (FSR 3 / DLSS use fsr3_quality). auto: lowered step by\n"
+    ";   step while the graphics card cannot keep the fps setting, raised again when there is room\n"
+    "; shadow_detail = 1: no far shadow layer (shadows near you stay), fewer draws in big areas, for weak PCs (default 0)\n"
     "; res: internal resolution: auto (fits your screen and GPU), 720p (the game's own), 1080p, 1440p, 4k, 8k (above the screen size = supersampling)\n"
     "res = auto\n"
     "; window: borderless (fullscreen; Alt+Enter or F11 switches to a window) or window\n"
@@ -49,9 +58,12 @@ static const char k_default_settings[] =
     "; aspect: 16:9 (default, the game's), 21:9 / 32:9 ultrawide (wider 3D view, HUD and menus 16:9 in the middle), auto = the screen's shape\n"
     "; field_costume = 1: outside battle (field, dungeons, story scenes) party members wear their equipped costume (default 0: story clothes)\n"
     "; resist_marker = 0: no resist shield over foes / in the target panel and no RESIST popup on resisted hits (default 1)\n"
+    "; weak_hint = 0: the battle skill list shows no WEAK next to skills a known foe weakness takes (default 1)\n"
     "; all_difficulties = 0: Friendly / Lunatic stay locked until the game unlocks them (default 1: all five selectable)\n"
     "; ko_revive = 0: members who fell stay at 0 HP after a battle (default 1: they get up with 1 HP once the battle is won or escaped)\n"
     "; upscaler: fsr1 (default: edge-adaptive upscale when res is below the window size) or bilinear\n"
+    "; hdr = 1: HDR output on HDR screens (Windows HDR on; else SDR as before); hdr_paper_white: nits of normal white (default\n"
+    ";   200); hdr_peak: the screen's brightest nits (0 = auto, from Windows)\n"
     "; sharpen: 0 (off) .. 100, contrast-adaptive sharpening; fx_fxaa / fx_bloom / fx_glow / fx_dof / fx_vignette /\n"
     ";   fx_fog / fx_outline = 0 turn that effect off; pad_icons: auto, switch, playstation, xbox\n"
     "; button_layout: switch (default: right face button = confirm, as on the Switch) or xbox (bottom = confirm, A/B and X/Y swapped)\n"
@@ -65,6 +77,8 @@ static const char k_default_settings[] =
     ";   smooth edges themselves)\n"
     "; movie_gpu = 0: 4K movies decode on the CPU (default 1: on the GPU with Windows' VP9 decoder when there is one)\n"
     "; movie_hd_fallback = 0: 4K movies stay 4K when this PC decodes them too slowly (default 1: that movie drops to 720p)\n"
+    "; vb_vram = 0: the game's vertex data stays in system RAM (default 1: unchanged vertex data is copied to video memory,\n"
+    ";   much less GPU time on PCIe-limited cards such as laptop GPUs)\n"
     "; async_replay = 0: draw replay on the game thread (default 1: on its own thread at every frame rate but 30)\n"
     "; host_libc = 0: the game's memcpy / memset / memcmp / strlen / strcmp run as the game's own code (default 1: as PC code)\n"
     "; nan_guard: auto (default: on with AMD GPUs), 1, 0: invalid shader colours become black instead of black effect shapes\n"

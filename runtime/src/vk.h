@@ -19,7 +19,7 @@ namespace vk {
     X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) X(vkAcquireNextImageKHR)          \
     X(vkQueuePresentKHR) X(vkCreateCommandPool) X(vkAllocateCommandBuffers) X(vkBeginCommandBuffer)               \
     X(vkEndCommandBuffer) X(vkResetCommandBuffer) X(vkQueueSubmit) X(vkQueueWaitIdle) X(vkDeviceWaitIdle)         \
-    X(vkCreateFence) X(vkWaitForFences) X(vkResetFences) X(vkCreateSemaphore) X(vkCreateBuffer)                    \
+    X(vkCreateFence) X(vkWaitForFences) X(vkResetFences) X(vkCreateSemaphore) X(vkCreateBuffer) X(vkDestroyBuffer)  \
     X(vkGetBufferMemoryRequirements) X(vkAllocateMemory) X(vkFreeMemory) X(vkBindBufferMemory) X(vkCreateImage)                   \
     X(vkGetImageMemoryRequirements) X(vkBindImageMemory) X(vkCreateImageView) X(vkDestroyImage) X(vkDestroyImageView) X(vkCmdPipelineBarrier)             \
     X(vkCmdBlitImage) X(vkCmdClearColorImage) X(vkCmdClearDepthStencilImage) X(vkCmdCopyBufferToImage)            \
@@ -98,6 +98,11 @@ VkImageView sampled_view(nvn::Texture* t, Image* im, const nvn::TexView& v);  //
 extern PFN_vkCmdPushDescriptorSetKHR g_push_desc;  // vk.cpp: VK_KHR_push_descriptor, null when the device lacks it
 extern uint32_t g_max_push;  // its maxPushDescriptors
 float res_scale();  // vk.cpp: NX_RES / NX_RES_SCALE, render target scale (1080p = 1.5)
+// HDR output (vk.cpp, setting hdr): swapchain mode 0 SDR, 1 HDR10, 2 scRGB. vk_replay.cpp reports the game's copy of its
+// float frame (scene + UI) into a window texture, and render passes into that window texture (they void the note).
+extern std::atomic<int> g_hdr_mode;
+void hdr_note_copy(uint32_t window_guest, Image* src);
+void hdr_note_target(uint32_t guest);
 float wide_factor();   // vk.cpp: setting aspect (NX_ASPECT) over 16:9: 1 = the game's 16:9, 1.3125 = 21:9 (1280 -> 1680)
 uint64_t vram_bytes();  // vk.cpp: largest device-local heap (NX_VRAM_MB pretends a smaller GPU, for tests)
 bool weak_gpu();        // vk.cpp: integrated GPU or under 4 GB of VRAM (weak-PC defaults: res auto, UHD pack auto)
@@ -153,7 +158,9 @@ float upscale_lo_scale();  // the scene scale over the game's 1280x720, 0: upsca
 void scene_phase(bool lo);  // every twin texture -> its lo / full-size image
 bool scene_phase_lo();
 Image* upscale_hi(Image* lo);  // the full-size twin of a lo image, null for any other image
+bool spatial_upscale_ok();   // linear blits of the scene formats work (3D resolution below 100%)
 void upscale_frame_end();  // vk_replay.cpp, after g_present_no++: next frame's phase
+void auto_scene_res(bool scene_frame);  // vk.cpp: Auto 3D resolution at a frame end (scene_frame: it had the FXAA draw)
 void upscale_apply_setting();  // vk.cpp: the upscaling setting changed -> lo images rebuilt (frame end only)
 
 }  // namespace vk

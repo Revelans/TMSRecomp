@@ -721,6 +721,26 @@ static int tms_main(int argc, char** argv) {
             return 1;
         }
     }
+    for (int i = 1; i < argc; i++)  // --dump [--all]: the game's packs as loose files for modding (launcher Mods page)
+        if (!strcmp(argv[i], "--dump")) {
+#ifdef _WIN32
+            if (!GetConsoleWindow() && AllocConsole()) freopen("CONOUT$", "w", stdout), freopen("CONIN$", "r", stdin);
+            SetConsoleTitleW(L"TMSRecomp: dumping game files");
+#endif
+            bool all = false;
+            std::string only;  // --pack pack_030_etc: just that pack
+            for (int k = 1; k < argc; k++) {
+                all |= !strcmp(argv[k], "--all");
+                if (!strcmp(argv[k], "--pack") && k + 1 < argc) only = argv[k + 1];
+            }
+            printf("Dumping the game's files to %s (movies %s). This can take a while; it continues where it stopped.\n\n",
+                   (g_data / "dump").string().c_str(), all ? "included" : "left out");
+            const int r = rt::cpk_dump(g_data.string(), all, only);
+            printf("\nPress Enter to close.\n");
+            fflush(stdout);
+            getchar();
+            return r;
+        }
     if (getenv("NX_VERBOSE")) g_verbose = 1;
     g_data_dir = g_data.string();
     const char* lp = getenv("NX_LOG");

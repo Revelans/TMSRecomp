@@ -1,4 +1,4 @@
-// TMSRecomp launcher (launcher.exe next to tms.exe): edits settings.ini, manages mods, updates from GitHub releases
+// TMSRecomp launcher (tmslauncher.exe next to tms.exe): edits settings.ini, manages mods, updates from GitHub releases
 // and starts the game. Drawn with Direct2D / DirectWrite (Windows components, no other dependency). Only keys this
 // window knows are rewritten; comments and any other lines in settings.ini are kept.
 // Linux: the same pages through linux_shim.h (SDL3 window, cairo / pango drawing); its own window loop, setup runner
@@ -139,7 +139,7 @@ struct Setting {
     std::vector<Opt> opts;  // DROP; TOGGLE: {off, on}
     float lo = 0, hi = 0, step = 0;
 };
-enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, BTLBUTTONS, LANGUAGE, NGPREQ, MOVIEFB, MOVIEGPU, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_L, PAD_R, PAD_ZL, PAD_ZR, PAD_PLUS, PAD_MINUS, PAD_L3, PAD_R3, NSET };
+enum { FPS, RES, WINDOW, PRESENT, POST, WALK, MUTE, TEXPACK, TEXDUMP, FXAA, FSR3Q, PADICONS, SHARPEN, UPSCALER, BGM, MSAA, DLSSP, MAPREV, FIELDCOS, ALLDIFF, ASPECT, BTNLAYOUT, RESMARK, MOUSECAM, MOUSESENS, MOUSEINV, BTLBUTTONS, LANGUAGE, NGPREQ, MOVIEFB, MOVIEGPU, AUTO30, CROWD, SHADOWD, WEAKHINT, HDR, HDRPAPER, HDRPEAK, SCENERES, HDRBOOST, HDRCOLOR, PAD_A, PAD_B, PAD_X, PAD_Y, PAD_L, PAD_R, PAD_ZL, PAD_ZR, PAD_PLUS, PAD_MINUS, PAD_L3, PAD_R3, NSET };
 // controller remap choices (ui.cpp pad_map): positions, so the names fit Switch, PlayStation and Xbox pads alike
 static const std::vector<Opt> k_pad_opts = {{"default", L"Default"}, {"south", L"Bottom (A / \u2715)"},
     {"east", L"Right (B / \u25cb)"}, {"west", L"Left (X / \u25a1)"}, {"north", L"Top (Y / \u25b3)"}, {"lb", L"LB / L1"},
@@ -266,6 +266,44 @@ static const Setting k_set[NSET] = {
      L"Only with the 4K movies installed. On: the GPU's video engine decodes them (Windows' VP9 decoder, \"VP9 Video "
      L"Extensions\"), about 2 CPU cores less while one plays. Off, or without that decoder: the CPU decodes them.",
      {{"0", L"Off"}, {"1", L"On"}}},
+    {"auto_30", "1", TOGGLE, L"Auto 30 FPS when slow",
+     L"Only at 60 FPS. Where this PC cannot hold 60 (busy streets like the Shibuya crossing), the game drops to 30 FPS "
+     L"at full speed instead of running in slow motion, and goes back to 60 when it can. Also in the F1 menu.",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"crowd_density", "0", DROP, L"Crowd density",
+     L"Walkers and cars in town streets like Shibuya. Fewer of them close by makes busy streets much lighter for weak "
+     L"PCs; the far crowd stays. Applies when you next enter an area. Also in the F1 menu.",
+     {{"0", L"Full · the game's own"}, {"1", L"Half"}, {"2", L"Low · for weak PCs"}}},
+    {"shadow_detail", "0", DROP, L"Shadow detail",
+     L"Low drops the far shadow layer; shadows near you stay. Fewer draws in big areas like Shibuya, for weak PCs. "
+     L"Also in the F1 menu (applies at once).",
+     {{"0", L"Full · the game's own"}, {"1", L"Low · for weak PCs"}}},
+    {"weak_hint", "1", TOGGLE, L"WEAK in the skill list",
+     L"In battle the skill list shows WEAK next to a skill when a foe on the field is weak to it and you already know "
+     L"that weakness (like Persona 5 Royal). Also in the in-game menu (F1 / L3 + R3).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"hdr", "0", TOGGLE, L"HDR",
+     L"For HDR screens: bright lights, spells and effects shine above normal white. Needs Windows HDR turned on "
+     L"(Settings > System > Display). Without it the picture stays as before. Also in the in-game menu (F1 / L3 + R3).",
+     {{"0", L"Off"}, {"1", L"On"}}},
+    {"hdr_paper_white", "200", DROP, L"HDR paper white",
+     L"Only with HDR on: how bright normal white (menus, text, daylight) is. 200 nits suits most rooms; more for a bright room.",
+     {{"100", L"100 nits"}, {"150", L"150 nits"}, {"200", L"200 nits"}, {"300", L"300 nits"}, {"400", L"400 nits"}}},
+    {"hdr_peak", "0", DROP, L"HDR peak brightness",
+     L"Only with HDR on: the brightest your screen can show. Auto uses the value Windows reports for the screen.",
+     {{"0", L"Auto · from Windows"}, {"400", L"400 nits"}, {"600", L"600 nits"}, {"1000", L"1000 nits"}, {"2000", L"2000 nits"}}},
+    {"scene_res", "100", DROP, L"3D resolution",
+     L"With Anti-aliasing Off, FXAA or SMAA: the 3D scene renders at this share of the resolution and is scaled up; "
+     L"menus, text and the HUD stay sharp. Lower = much more FPS on weak graphics cards. Auto lowers it step by step while "
+     L"the graphics card cannot keep your FPS and raises it again when there is room. Also in the F1 menu (applies at once).",
+     {{"auto", L"Auto · follows your GPU"}, {"100", L"100% · full"}, {"85", L"85%"}, {"75", L"75%"}, {"67", L"67%"}, {"50", L"50% · weakest GPUs"}}},
+    {"hdr_boost", "3", DROP, L"HDR highlights",
+     L"Only with HDR on: lifts the bright parts of the 3D scene (sky, lights, spells, shiny surfaces) toward your "
+     L"screen's peak brightness, like AutoHDR; menus and text stay at paper white. Off = the game's own brightness only.",
+     {{"0", L"Off"}, {"1", L"Low"}, {"2", L"Medium"}, {"3", L"High"}, {"4", L"Max"}}},
+    {"hdr_color", "2", DROP, L"HDR colour",
+     L"Only with HDR on: richer, more vivid colours in the 3D scene (menus and text unchanged).",
+     {{"0", L"Off"}, {"1", L"Low"}, {"2", L"Medium"}, {"3", L"High"}, {"4", L"Max"}}},
     PAD_SET("a", L"A"), PAD_SET("b", L"B"), PAD_SET("x", L"X"), PAD_SET("y", L"Y"), PAD_SET("l", L"L"), PAD_SET("r", L"R"),
     PAD_SET("zl", L"ZL"), PAD_SET("zr", L"ZR"), PAD_SET("plus", L"+"), PAD_SET("minus", L"\u2212"), PAD_SET("l3", L"L3"), PAD_SET("r3", L"R3")
 };
@@ -299,11 +337,11 @@ static void scan_mods() {
     std::error_code ec;
     auto off = disabled_mods();
     for (auto& e : fs::directory_iterator(g_data / "mods", ec)) {
-        if (!fs::is_directory(e.path() / "romfs", ec) && !fs::is_directory(e.path() / "textures", ec)) continue;
+        if (!fs::is_directory(e.path() / "romfs", ec) && !fs::is_directory(e.path() / "textures", ec) && !fs::is_directory(e.path() / "cpk", ec)) continue;
         Mod m;
         m.name = e.path().filename().string();
         m.on = std::find(off.begin(), off.end(), m.name) == off.end();
-        for (const char* sub : {"romfs", "textures"})
+        for (const char* sub : {"romfs", "textures", "cpk"})  // cpk: loose files inside the game's packs (s125)
             for (auto& f : fs::recursive_directory_iterator(e.path() / sub, ec))
                 if (f.is_regular_file(ec)) m.files++, m.bytes += f.file_size(ec);
         g_mods.push_back(m);
@@ -340,6 +378,9 @@ static const char k_update_repo[] = "godofknife/TMSRecomp";  // GitHub releases:
 enum Upd { UPD_OFF, UPD_CHECKING, UPD_LATEST, UPD_NEW, UPD_FAIL, UPD_BUSY };
 static std::atomic<int> g_upd{UPD_OFF};
 static std::string g_rel_tag, g_rel_zip, g_rel_page;
+static std::wstring g_rel_notes;  // the release's plain-words summary (release_summary), shown before updating
+static bool g_whatsnew = false;   // the What's new dialog is open
+static std::string g_as_version;  // test: --as-version X compares releases against X instead of k_version
 static HWND g_wnd;
 constexpr UINT WM_UPD = WM_APP + 1;
 // update progress (sidebar box): phase 0 download (bytes), 1 unpacking, 2 installing (files); worker thread writes
@@ -409,6 +450,72 @@ static std::string json_str(const std::string& j, const char* key, size_t from =
     return v;
 }
 
+// A JSON string value with its escapes decoded (\n, \", \\, \uXXXX -> UTF-8): the release body.
+static std::string json_text(const std::string& j, const char* key) {
+    size_t p = j.find(std::string("\"") + key + "\"");
+    if (p == std::string::npos) return "";
+    p = j.find('"', j.find(':', p) + 1);
+    if (p == std::string::npos) return "";
+    std::string v;
+    for (size_t i = p + 1; i < j.size() && j[i] != '"'; i++) {
+        if (j[i] != '\\' || i + 1 >= j.size()) { v += j[i]; continue; }
+        const char e = j[++i];
+        if (e == 'n') v += '\n';
+        else if (e == 'r') v += '\r';
+        else if (e == 't') v += ' ';
+        else if (e == 'u' && i + 4 < j.size()) {
+            unsigned c = (unsigned)strtoul(j.substr(i + 1, 4).c_str(), nullptr, 16);
+            i += 4;
+            if (c >= 0xD800 && c < 0xDC00 && i + 6 < j.size() && j[i + 1] == '\\' && j[i + 2] == 'u') {  // surrogate pair
+                const unsigned lo = (unsigned)strtoul(j.substr(i + 3, 4).c_str(), nullptr, 16);
+                c = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00), i += 6;
+            }
+            if (c < 0x80) v += (char)c;
+            else if (c < 0x800) v += (char)(0xC0 | c >> 6), v += (char)(0x80 | (c & 63));
+            else if (c < 0x10000) v += (char)(0xE0 | c >> 12), v += (char)(0x80 | (c >> 6 & 63)), v += (char)(0x80 | (c & 63));
+            else v += (char)(0xF0 | c >> 18), v += (char)(0x80 | (c >> 12 & 63)), v += (char)(0x80 | (c >> 6 & 63)), v += (char)(0x80 | (c & 63));
+        } else v += e;
+    }
+    return v;
+}
+
+// The part of the release notes players see before updating: the "### In short" section (plain words, written for
+// it), else "### What's new". Markdown is dropped: **bold**, `code`, [links](url), "(#12)" issue numbers; "- " -> bullet.
+static std::wstring release_summary(const std::string& body) {
+    size_t a = body.find("### In short");
+    if (a == std::string::npos) a = body.find("### What's new");
+    if (a == std::string::npos) return L"";
+    a = body.find('\n', a);
+    if (a == std::string::npos) return L"";
+    size_t e = body.find("\n###", a);
+    std::string t = body.substr(a + 1, e == std::string::npos ? std::string::npos : e - a - 1), out;
+    for (size_t i = 0; i < t.size();) {
+        if (t.compare(i, 2, "**") == 0) { i += 2; continue; }
+        if (t[i] == '`' || t[i] == '\r') { i++; continue; }
+        if (t[i] == '[') {  // [text](url) -> text
+            const size_t c = t.find("](", i), z = c == std::string::npos ? c : t.find(')', c);
+            if (c != std::string::npos && z != std::string::npos && t.find('\n', i) > c) { out += t.substr(i + 1, c - i - 1); i = z + 1; continue; }
+        }
+        if (t.compare(i, 3, " (#") == 0) {  // " (#12)" / " (#12, #13)"
+            const size_t z = t.find(')', i);
+            if (z != std::string::npos && z - i < 16) { i = z + 1; continue; }
+        }
+        if ((i == 0 || t[i - 1] == '\n') && t.compare(i, 2, "- ") == 0) { out += "\xE2\x80\xA2 "; i += 2; continue; }
+        out += t[i++];
+    }
+    while (!out.empty() && (out.back() == '\n' || out.back() == ' ')) out.pop_back();
+    const size_t b = out.find_first_not_of("\n ");
+    out = b == std::string::npos ? std::string() : out.substr(b);
+#ifdef _WIN32  // the body is UTF-8 (wide() is the ANSI code page)
+    std::wstring w(MultiByteToWideChar(CP_UTF8, 0, out.c_str(), -1, nullptr, 0), 0);
+    MultiByteToWideChar(CP_UTF8, 0, out.c_str(), -1, w.data(), (int)w.size());
+    w.pop_back();
+    return w;
+#else
+    return wide(out);
+#endif
+}
+
 static std::vector<int> version_parts(const std::string& v) {
     std::vector<int> n;
     for (size_t i = 0; i < v.size();)
@@ -428,6 +535,7 @@ static void check_updates() {
         if (ok) {
             g_rel_tag = json_str(j, "tag_name");
             g_rel_page = json_str(j, "html_url");
+            g_rel_notes = release_summary(json_text(j, "body"));
             g_rel_zip.clear();
             for (size_t at = 0;;) {
                 std::string u = json_str(j, "browser_download_url", at, &at);
@@ -439,7 +547,7 @@ static void check_updates() {
 #endif
         }
         g_upd = !ok || g_rel_tag.empty() ? UPD_FAIL
-              : version_parts(g_rel_tag) > version_parts(k_version) && !g_rel_zip.empty() ? UPD_NEW : UPD_LATEST;
+              : version_parts(g_rel_tag) > version_parts(g_as_version.empty() ? k_version : g_as_version) && !g_rel_zip.empty() ? UPD_NEW : UPD_LATEST;
         PostMessageW(g_wnd, WM_UPD, 0, 0);
     }).detach();
 }
@@ -967,9 +1075,9 @@ static std::vector<Hit> g_hits;
 static int g_hover = -1, g_open = -1, g_drag = -1, g_page = 0;
 static D2D1_RECT_F g_drag_track;
 enum { ID_NAV = 100, ID_SET = 1000, ID_POP = 2000, ID_MOD = 3000, ID_PLAY = 10, ID_SAVE, ID_UPDATE, ID_NOTES,
-       ID_BROWSE, ID_OPEN_GAME, ID_OPEN_SHOTS, ID_OPEN_MODS, ID_OPEN_LOG, ID_CHECK,
+       ID_BROWSE, ID_OPEN_GAME, ID_OPEN_SHOTS, ID_OPEN_MODS, ID_DUMP, ID_OPEN_LOG, ID_CHECK,
        ID_SU_SRC, ID_SU_KEYS, ID_SU_TARGET, ID_SU_SHADERS, ID_SU_DLSS, ID_SU_DLSS_RUN, ID_SU_RUN, ID_SU_CANCEL,
-       ID_G_TOPIC = 4000, ID_G_BTN = 4100, ID_X = 4200, ID_KEY = 5000 };  // ID_X: page buttons below
+       ID_G_TOPIC = 4000, ID_G_BTN = 4100, ID_X = 4200, ID_KEY = 5000, ID_WN_BG = 6000, ID_WN_UPDATE, ID_WN_LATER };  // ID_X: page buttons below
 // Scrolling pages draw shifted up by g_scroll[page] and clipped above the footer: hits move and clip with them.
 static float g_scroll[8], g_max_scroll, g_bottom;
 static bool g_clip;
@@ -989,6 +1097,33 @@ static void open_path(const fs::path& p) {
     std::error_code ec;
     fs::create_directories(p, ec);
     ShellExecuteW(g_wnd, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// "Dump game files" (s125, loose-file mods): tms.exe --dump unpacks the game's packs into <data>\dump\<pack>\<path>
+// in its own console window (progress there; it continues where a stopped dump ended). Modders copy a file from there
+// to mods\<mod>\cpk\<pack>\<same path>.
+static void dump_files() {
+    if (MessageBoxW(g_wnd, (L"This unpacks the game's files (about 19 GB, movies left out) into\n" + (g_data / "dump").wstring() +
+                            L"\n\nTo change a file, copy it from there to mods\\<your mod name>\\cpk\\<pack>\\<same path> "
+                            L"and edit the copy. Start?").c_str(),
+                    L"Dump game files", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+#ifdef _WIN32
+    std::wstring exe = (g_dir / "tms.exe").wstring(), dir = g_dir.wstring();
+    std::wstring cmd = L"\"" + exe + L"\" --data \"" + g_data.wstring() + L"\" --dump";
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi;
+    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, dir.c_str(), &si, &pi)) {
+        MessageBoxW(g_wnd, (L"Could not start " + exe).c_str(), L"TMSRecomp", MB_ICONERROR);
+        return;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+#else
+    // shortcut: no terminal is opened on Linux; the dump runs in the background (progress: run ./tms --dump in a terminal)
+    if (spawn({(g_dir / "tms").string(), "--data", g_data.string(), "--dump"}, g_dir, nullptr, true) < 0)
+        MessageBoxW(g_wnd, L"Could not start the dump. In a terminal: ./tms --dump", L"TMSRecomp", MB_ICONERROR);
+#endif
 }
 
 static void button(D2D1_RECT_F r, const wchar_t* label, int id, bool primary, std::function<void()> f,
@@ -1169,6 +1304,60 @@ static void popup() {
     }
 }
 
+// What's new before updating (user 11-27): the release's plain-words summary as a list, then Update / Close (no GitHub link).
+static void whatsnew_dialog() {
+    if (!g_whatsnew) return;
+    fill(R(0, 0, W, H), C(0x000000, 0.6f));
+    hit(R(0, 0, W, H), ID_WN_BG, [](float) {});  // clicks outside the box do nothing
+    const float bw = 680, bx = (W - bw) / 2, pad = 32, tw = bw - 2 * pad - 22;
+    std::vector<std::pair<bool, std::wstring>> items;  // (bullet, text) per line of the summary
+    const std::wstring body = g_rel_notes.empty() ? L"• Fixes and improvements. The list of changes could not be loaded right now." : g_rel_notes;
+    for (size_t i = 0; i <= body.size();) {
+        size_t e = body.find(L'\n', i);
+        if (e == std::wstring::npos) e = body.size();
+        std::wstring l = body.substr(i, e - i);
+        i = e + 1;
+        if (l.empty()) continue;
+        const bool bul = l.rfind(L"• ", 0) == 0;
+        items.push_back({bul, bul ? l.substr(2) : l});
+    }
+    float th = 0;
+    const float maxh = H - 300.f;
+    size_t shown = 0;
+    for (; shown < items.size(); shown++) {
+        const float h = text_h(items[shown].second, f_body, tw) + 12;
+        if (th + h > maxh) break;
+        th += h;
+    }
+    if (shown < items.size()) th += 30;
+    const float bh = th + 200, by = (H - bh) / 2;
+    const D2D1_RECT_F box = R(bx, by, bw, bh);
+    rounded({box.left, box.top + 6, box.right, box.bottom + 8}, 12, C(0x000000, 0.45f));
+    rounded(box, 12, C(0x141c18));
+    outline(box, 12, C(ACCENT, 0.7f));
+    rounded(R(bx + pad, by + 26, 54, 22), 11, C(ACCENT));
+    text(L"NEW", R(bx + pad, by + 26, 54, 22), f_small, C(0x0b100e), DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 1.5f);
+    text(L"What's new in " + wide(g_rel_tag), R(bx + pad, by + 54, bw - 2 * pad, 34), f_h2, C(0xffffff));
+    text(L"You have v" + wide(g_as_version.empty() ? k_version : g_as_version) + L". Updating keeps your settings, saves and mods.",
+         R(bx + pad, by + 90, bw - 2 * pad, 20), f_small, C(MUTED));
+    float y = by + 126;
+    for (size_t i = 0; i < shown; i++) {
+        const float h = text_h(items[i].second, f_body, tw);
+        if (items[i].first) {
+            g_brush->SetColor(C(ACCENT));
+            g_rt->FillEllipse({{bx + pad + 6, y + 10}, 3.5f, 3.5f}, g_brush);
+        }
+        text(items[i].second, R(bx + pad + (items[i].first ? 22 : 0), y, tw, h), f_body, C(items[i].first ? TEXT : 0xffffff),
+             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        y += h + 12;
+    }
+    if (shown < items.size()) text(L"…and " + std::to_wstring(items.size() - shown) + L" more", R(bx + pad + 22, y, tw, 20), f_small, C(DIM));
+    const float yb = by + bh - 66;
+    fill(R(bx + pad, yb - 16, bw - 2 * pad, 1), C(LINE));
+    button(R(bx + bw - pad - 120, yb, 120, 40), L"Update", ID_WN_UPDATE, true, [] { g_whatsnew = false; apply_update(); });
+    button(R(bx + bw - pad - 120 - 12 - 110, yb, 110, 40), L"Close", ID_WN_LATER, false, [] { g_whatsnew = false; });
+}
+
 static void section(const wchar_t* t, float x, float y, float w) {
     text(t, R(x, y, w, 20), f_caps, C(MUTED), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, 2.2f);
     fill(R(x, y + 26, 28, 2), C(ACCENT));
@@ -1245,13 +1434,9 @@ static void draw_sidebar() {
                 apply_update();  // Linux: the release page
                 return;
 #endif
-                std::wstring q = L"Download and install " + wide(g_rel_tag) + L" from github.com/" + wide(repo()) +
-                                 L"?\n\nSettings, saves and mods stay as they are.";
-                if (MessageBoxW(g_wnd, q.c_str(), L"Update TMSRecomp", MB_YESNO | MB_ICONQUESTION) == IDYES) apply_update();
+                g_whatsnew = true;  // What's new first; its Update now button installs
             });
-            button(R(b.left + 116, b.top + 44, 92, 34), L"What's new", ID_NOTES, false, [] {
-                ShellExecuteW(g_wnd, L"open", wide(g_rel_page).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-            });
+            button(R(b.left + 116, b.top + 44, 92, 34), L"What's new", ID_NOTES, false, [] { g_whatsnew = true; });
         }
         text(L"Installed: v" + wide(k_version), R(b.left + 16, b.top + 90, 200, 20), f_small, C(DIM));
     } else {
@@ -1392,7 +1577,9 @@ static void su_start(bool dlss_only = false, const std::wstring& extra = L"") {
         return;
     }
     // shortcut: a dev tree without setup\python uses python.exe from PATH
-    std::wstring cmd = L"\"" + (fs::exists(py) ? py.wstring() : std::wstring(L"python.exe")) + L"\" -I -u \"" +
+    // -X utf8: prints and files in UTF-8 (read back as UTF-8 = this process's code page, app.manifest); without it a
+    // folder like "Tokyo Mirage Sessions <U+266F>FE" stopped setup at its first print (Reddit 11-28, cp1252)
+    std::wstring cmd = L"\"" + (fs::exists(py) ? py.wstring() : std::wstring(L"python.exe")) + L"\" -I -X utf8 -u \"" +
                        script.wstring() + L"\"";
     if (dlss_only) cmd += L" --dlss-only";
     else if (!extra.empty()) cmd += L" " + extra + L" --data \"" + g_data.wstring() + L"\"";
@@ -1747,7 +1934,7 @@ static void copy_sysinfo() {
     }
     t += "GPU: " + (gpu.empty() ? std::string("unknown") : gpu) + "\r\nSettings:";
     for (const char* k : {"fps", "res", "window", "present_mode", "fx_fxaa", "fsr3_quality", "dlss_preset", "msaa", "upscaler", "tex_pack",
-                          "movie_hd", "mods_disabled", "random_battle_bgm"})
+                          "hdr", "movie_hd", "mods_disabled", "random_battle_bgm", "auto_30", "crowd_density", "shadow_detail", "weak_hint", "scene_res", "hdr_boost", "hdr_color"})
         if (auto v = get(k, ""); !v.empty()) t += std::string(" ") + k + "=" + v;
     int on = 0;
     for (auto& m : g_mods) on += m.on;
@@ -1772,7 +1959,7 @@ static void copy_sysinfo() {
         if (auto k = l.find("vk: "); k != std::string::npos && l.find("(driver") != std::string::npos) gpu = trim(l.substr(k + 4));
     t += "GPU: " + (gpu.empty() ? std::string("unknown (start the game once)") : gpu) + "\nSettings:";
     for (const char* k : {"fps", "res", "window", "present_mode", "fx_fxaa", "fsr3_quality", "dlss_preset", "msaa", "upscaler", "tex_pack",
-                          "movie_hd", "mods_disabled", "random_battle_bgm"})
+                          "hdr", "movie_hd", "mods_disabled", "random_battle_bgm", "auto_30", "crowd_density", "shadow_detail", "weak_hint", "scene_res", "hdr_boost", "hdr_color"})
         if (auto v = get(k, ""); !v.empty()) t += std::string(" ") + k + "=" + v;
     int on = 0;
     for (auto& m : g_mods) on += m.on;
@@ -2157,10 +2344,10 @@ static void draw_page_body() {
     {
         section(L"PRESENTATION", x, 128, w);
         float y = 166;
-        for (int i : {FPS, WINDOW, ASPECT, PRESENT}) y += row(i, x, y, w);
+        for (int i : {FPS, AUTO30, WINDOW, ASPECT, PRESENT}) y += row(i, x, y, w);
         section(L"IMAGE", x, y + 8, w);
         y += 44;
-        for (int i : {SHARPEN, FXAA, MOVIEFB, MOVIEGPU}) y += row(i, x, y, w);
+        for (int i : {SHARPEN, FXAA, SCENERES, HDR, HDRBOOST, HDRCOLOR, HDRPAPER, HDRPEAK, CROWD, SHADOWD, MOVIEFB, MOVIEGPU}) y += row(i, x, y, w);
         break;
     }
     case 3:
@@ -2174,7 +2361,7 @@ static void draw_page_body() {
         for (int i : {MAPREV, FIELDCOS, NGPREQ}) y += row(i, x, y, w);
         section(L"BATTLE", x, y + 8, w);
         y += 46;
-        for (int i : {ALLDIFF, RESMARK, BTLBUTTONS}) y += row(i, x, y, w);
+        for (int i : {ALLDIFF, RESMARK, WEAKHINT, BTLBUTTONS}) y += row(i, x, y, w);
         section(L"CONTROLS", x, y + 8, w);
         y += 46;
         y += row(PADICONS, x, y, w);
@@ -2209,9 +2396,11 @@ static void draw_page_body() {
             text(L"Install a fan patch, like the English / uncensor patch, from its folder of .xdelta files.",
                  R(c.left + 60, c.top + 162, w - 120, 24), f_body, C(MUTED), DWRITE_TEXT_ALIGNMENT_CENTER);
             const std::wstring a = ready ? L"Install patch\u2026" : L"Set up the game first", b = L"Open mods folder";
-            float aw = text_w(a, f_btn) + 44, bw = text_w(b, f_btn) + 44, bx = mx - (aw + 12 + bw) / 2;
+            const float dw = ready ? text_w(L"Dump game files…", f_btn) + 56 : 0;  // third button (loose-file mods)
+            float aw = text_w(a, f_btn) + 44, bw = text_w(b, f_btn) + 44, bx = mx - (aw + 12 + bw + dw) / 2;
             if (idle) bx = button_at(bx, c.top + 212, a, ID_X + 20, true, [ready] { if (ready) install_patch(); else g_page = 6; });
-            button_at(bx, c.top + 212, b, ID_OPEN_MODS, false, [] { open_path(g_data / "mods"); });
+            bx = button_at(bx, c.top + 212, b, ID_OPEN_MODS, false, [] { open_path(g_data / "mods"); });
+            if (ready) button_at(bx, c.top + 212, L"Dump game files\u2026", ID_DUMP, false, [] { dump_files(); });
             run_status(c.left + 40, c.top + 268, w - 80, L"\u2713  Installed.");
             break;
         }
@@ -2234,10 +2423,14 @@ static void draw_page_body() {
         float bx = x;
         if (idle) bx = button_at(bx, y, ready ? L"Install patch\u2026" : L"Set up the game first", ID_X + 20, false,
                                  [ready] { if (ready) install_patch(); else g_page = 6; });
-        button_at(bx, y, L"Open mods folder", ID_OPEN_MODS, false, [] { open_path(g_data / "mods"); });
+        bx = button_at(bx, y, L"Open mods folder", ID_OPEN_MODS, false, [] { open_path(g_data / "mods"); });
+        if (ready) button_at(bx, y, L"Dump game files\u2026", ID_DUMP, false, [] { dump_files(); });
         y += 58;
         y += run_status(x, y, w, L"\u2713  Installed.");
-        text(L"When two mods change the same file, the one later in A\u2013Z order wins.", R(x, y, w, 22), f_small, C(DIM));
+        text(L"When two mods change the same file, the one earlier in A\u2013Z order wins.", R(x, y, w, 22), f_small, C(DIM));
+        y += 22;
+        text(L"Make your own: Dump game files, copy a file to mods\\<name>\\cpk\\<pack>\\<same path>, edit the copy.",
+             R(x, y, w, 22), f_small, C(DIM));
         g_bottom = y + 24;
         break;
     }
@@ -2287,6 +2480,7 @@ static void paint() {
     draw_sidebar();
     draw_footer();
     popup();
+    whatsnew_dialog();
     if (g_rt->EndDraw() == D2DERR_RECREATE_TARGET) {
         if (g_hero) g_hero->Release(), g_hero = nullptr;
         g_brush->Release(), g_brush = nullptr;
@@ -2332,6 +2526,7 @@ static void paint() {
     draw_sidebar();
     draw_footer();
     popup();
+    whatsnew_dialog();
     cairo_destroy(cr);
     g_rt->cr = nullptr;
     cairo_surface_flush(g_surf);
@@ -2381,6 +2576,25 @@ static void play() {
         MessageBoxW(g_wnd, (L"Could not start " + exe).c_str(), L"TMSRecomp", MB_ICONERROR);
         return;
     }
+    // s125 (Augs: the game started behind other windows): Windows lets only the foreground process (us, the player just
+    // clicked PLAY) bring a window to the front, and the game's window appears seconds later. So the launcher waits (up
+    // to 30 s, messages pumped) for it, brings it to the front, then closes.
+    AllowSetForegroundWindow(pi.dwProcessId);
+    struct Find { DWORD pid; HWND hw; } f{pi.dwProcessId, nullptr};
+    for (int i = 0; i < 300 && !f.hw && WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT; i++) {
+        MSG m;
+        while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) TranslateMessage(&m), DispatchMessageW(&m);
+        EnumWindows([](HWND h, LPARAM p) -> BOOL {
+            auto* fd = (Find*)p;
+            DWORD wp = 0;
+            GetWindowThreadProcessId(h, &wp);
+            if (wp != fd->pid || !IsWindowVisible(h) || GetWindow(h, GW_OWNER)) return TRUE;
+            fd->hw = h;
+            return FALSE;
+        }, (LPARAM)&f);
+        if (!f.hw) Sleep(100);
+    }
+    if (f.hw) SetForegroundWindow(f.hw);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     DestroyWindow(g_wnd);
@@ -2433,6 +2647,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     }
     case WM_MOUSELEAVE: g_hover = -1; redraw(); return 0;
     case WM_MOUSEWHEEL:
+        if (g_whatsnew) return 0;
         if (g_cap >= 0) {
             set_slot(g_cap, GET_WHEEL_DELTA_WPARAM(wp) > 0 ? "WheelUp" : "WheelDown");
             g_cap = -1, redraw();
@@ -2520,12 +2735,16 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_UPD:
         if (lp == 1) {
             MessageBoxW(h, L"Update installed. The launcher restarts now.", L"TMSRecomp", MB_ICONINFORMATION);
-            std::wstring exe = (g_dir / "launcher.exe").wstring();
-            ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, g_dir.c_str(), SW_SHOWNORMAL);
+            wchar_t exe[MAX_PATH];
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);  // tmslauncher.exe (updated in place)
+            ShellExecuteW(nullptr, L"open", exe, nullptr, g_dir.c_str(), SW_SHOWNORMAL);
             DestroyWindow(h);
             return 0;
         }
         redraw();
+        return 0;
+    case WM_TIMER:
+        if (wp == 1 && g_su.running) redraw();
         return 0;
     case WM_SETUP:
         if (wp == 1 && g_su.done && g_su_extra) scan_mods();  // a Guide install: nothing of the build changed
@@ -2565,12 +2784,28 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     if (const wchar_t* p = wcsstr(cmd, L"--page ")) g_page = std::clamp(_wtoi(p + 7), 0, (int)std::size(k_pages) - 1);
+    if (const wchar_t* p = wcsstr(cmd, L"--as-version "))
+        for (const wchar_t* q = p + 13; *q && *q != L' '; q++) g_as_version += (char)*q;
     if (const wchar_t* p = wcsstr(cmd, L"--topic ")) g_topic = std::clamp(_wtoi(p + 8), 0, (int)std::size(k_topics) - 1);  // Guide topic
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     g_dir = fs::path(exe).parent_path();
+    {  // renamed to tmslauncher.exe after 0.1.5: a launcher.exe copy (what old launchers restart after an update) hands over
+        std::error_code ec;
+        const fs::path tl = g_dir / "tmslauncher.exe", old = g_dir / "launcher.exe";
+        if (_wcsicmp(fs::path(exe).filename().c_str(), L"launcher.exe") == 0 && fs::exists(tl, ec)) {
+            ShellExecuteW(nullptr, L"open", tl.c_str(), cmd, g_dir.c_str(), SW_SHOWNORMAL);
+            return 0;
+        }
+        if (fs::exists(old, ec)) {  // still running for a moment: renamed now, delete_old_files() removes the .old later
+            fs::path o = old;
+            o += ".old";
+            fs::remove(o, ec);
+            if (!fs::remove(old, ec)) fs::rename(old, o, ec);
+        }
+    }
     g_ini = g_dir / "settings.ini";
     load();
     if (!game_ready() && !wcsstr(cmd, L"--page ")) g_page = 6;  // first start: build the game from the player's files
@@ -2616,6 +2851,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     COLORREF cap = RGB(0x0b, 0x0f, 0x0d);  // SIDEBG
     DwmSetWindowAttribute(g_wnd, 35 /* DWMWA_CAPTION_COLOR */, &cap, sizeof cap);
     apply_icon();
+    // issue #16: while setup runs, repaint 4x a second (elapsed time, bar) even when the tool prints nothing for a while
+    // (the game.dll relink after an update); before, the page only changed when the mouse moved. Linux loop: same 250 ms.
+    SetTimer(g_wnd, 1, 250, nullptr);
     // touch: one-finger vertical pans (WM_GESTURE) scroll the page; taps stay mouse clicks
     GESTURECONFIG gc{GID_PAN, GC_PAN | GC_PAN_WITH_SINGLE_FINGER_VERTICALLY | GC_PAN_WITH_INERTIA,
                      GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY | GC_PAN_WITH_GUTTER};
@@ -2661,6 +2899,7 @@ int main(int argc, char** argv) {
     bool page_given = false;
     std::vector<std::string> setup_args;
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--as-version") && i + 1 < argc) g_as_version = argv[++i];
         if (!strcmp(argv[i], "--page") && i + 1 < argc) g_page = std::clamp(atoi(argv[++i]), 0, (int)std::size(k_pages) - 1), page_given = true;
         else if (!strcmp(argv[i], "--topic") && i + 1 < argc) g_topic = std::clamp(atoi(argv[++i]), 0, (int)std::size(k_topics) - 1);
         else if (!strcmp(argv[i], "--setup")) while (i + 1 < argc) setup_args.push_back(argv[++i]);

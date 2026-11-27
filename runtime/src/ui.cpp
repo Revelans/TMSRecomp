@@ -130,13 +130,83 @@ static int vrr_cap(int fps) {
     if (!said) said = true, log("ui: VRR: frame cap %d (display %d Hz)", hz - 3, hz);
     return hz - 3;
 }
+// Auto 30 (setting auto_30, default 1; issue #11, Augs: i5-8500 at the Shibuya crosswalk ran 48 fps). At fps 60 the
+// game steps a fixed 1/60 s per frame, so a PC that cannot hold 60 plays in slow motion. When frames miss their vsync
+// (rules in auto30, s125d), frames go out every 2nd vsync with a 1/30 s step (full game speed, the Switch's rate; menus
+// / HUD tick at 30 Hz then). Back to 60 when frames take under 13 ms of work (pace to pace, render thread wait included).
+// s125 (Augs, town: "it slows down while it's trying to lock to 30, and again while it climbs back to 60"): while at 60, a
+// frame that missed its vsync makes the next step 1/30 s instead of 1/60 (catch-up, at most 2 vsyncs), so the game
+// keeps full speed during the 1 s Auto 30 needs to decide and during a failed try of 60; on-time frames step 1/60.
+static std::atomic<int> g_auto30{-1};
+static bool g_half = false;  // game thread
+// s125c (Augs: "it doesn't let go of 30 when going into the shop from the crosswalk"): a new area's loading hitches
+// counted as slow frames in the 3 s test at 30, so 60 came back late. A new field area tries 60 again ~0.75 s after
+// it loads (past its texture uploads); with the catch-up step a failed try costs no slow motion.
+static std::atomic<uint64_t> g_auto30_retry_at{0};
+void rt::auto30_new_area() { g_auto30_retry_at = g_frame_no + 45; }
+bool rt::auto30_active() { return g_half; }
+bool rt::auto30_setting() {
+    if (g_auto30 < 0) g_auto30 = !getenv("NX_AUTO_30") || atoi(getenv("NX_AUTO_30")) != 0;
+    return g_auto30 != 0;
+}
+void rt::set_auto30(bool on) { g_auto30 = on; }
+static uint32_t auto30(uint32_t interval, bool late, uint32_t work_us) {
+    static int n = 0, hold = 30;  // n: frames since the last switch; hold: see below
+    static uint64_t back60 = 0, hist = 0;  // hist bit i = frame i ago was late (at 60) / over 13 ms (at 30)
+    const bool want = auto30_setting() && interval == 1;
+    if (!want) {
+        if (g_half) g_half = false, n = 0, hist = 0, set_game_dt(1 / 60.0f), log("fps: auto 30 off: 60 again");
+        return interval;
+    }
+    if (const uint64_t at = g_auto30_retry_at; at && g_frame_no >= at) {
+        g_auto30_retry_at = 0;
+        if (g_half) {
+            g_half = false, n = 0, hist = 0, hold = 30, set_game_dt(1 / 60.0f);
+            log("fps: new area: trying 60 again");
+            return 1;
+        }
+    }
+    // s125d (Augs: "it takes time to decide to lock to 30 when the framerate dips, and time to climb back to 60 when I
+    // know it can; standing still ~5 s lets it recover"): rolling windows instead of fixed 60 / 90-frame blocks. With
+    // the catch-up step a wrong switch costs no slow motion, so it reacts fast: 30 when 6 of the last 30 frames missed
+    // their vsync (~0.5 s); 60 again once the last 45 frames at 30 (1.5 s) all but one took under 13 ms. `hold` (frames
+    // at 30 before that check, 30 = 1 s) doubles up to 20 s each time 60 failed again within 2 s (no flip-flop in a
+    // borderline spot), back to 1 s otherwise.
+    hist = hist << 1 | (g_half ? work_us >= 13000 : late);
+    ++n;
+    if (!g_half && n >= 30 && __builtin_popcountll(hist & ((1ull << 30) - 1)) >= 6) {
+        hold = g_frame_no - back60 < 120 ? std::min(hold * 2, 600) : 30;
+        g_half = true, set_game_dt(1 / 30.0f), hist = 0, n = 0;
+        log("fps: auto 30: 6 of the last 30 frames missed their vsync (next try of 60 in %.0f s or later)", std::max(hold, 45) / 30.0);
+    } else if (g_half && n >= std::max(hold, 45) && __builtin_popcountll(hist & ((1ull << 45) - 1)) <= 1) {
+        g_half = false, set_game_dt(1 / 60.0f), back60 = g_frame_no, hist = 0;
+        log("fps: back to 60 after %.1f s at 30", n / 30.0);
+        n = 0;
+    }
+    return g_half ? 2 : 1;
+}
+static std::atomic<int> g_extra_ms{0};  // test knob (pace_present)
 void pace_present(uint32_t interval) {
     const int fps = vrr_cap(fps_setting());
     stall_stats();
     frame_begin();
     g_frame_no++;
     profile_start();
+    {  // "perf: game speed" every 10 s (s125): game time stepped per real time; under ~97% = slow motion (the PC could not
+       // keep the fps setting's step; loading screens also lower it)
+        static const uint64_t freq = SDL_GetPerformanceFrequency();
+        static uint64_t w0 = 0;
+        static double g = 0;
+        const uint64_t now = SDL_GetPerformanceCounter();
+        g += fps == 30 ? 1 / 30.0 : game_base_dt();
+        if (!w0) w0 = now, g = 0;
+        else if (now - w0 >= 10 * freq) {
+            log("perf: game speed %.0f%% of real time%s", 100 * g * freq / (double)(now - w0), g_half ? " (auto 30 on)" : "");
+            w0 = now, g = 0;
+        }
+    }
     if (fps == 0 || fps > 60) {
+        g_half = false;  // the variable step keeps the game's speed by itself; set_fps(60) sets 1/60 again
         const uint64_t t0 = SDL_GetPerformanceCounter();
         pace_variable(fps);
         g_pace_us += (SDL_GetPerformanceCounter() - t0) * 1000000 / SDL_GetPerformanceFrequency();
@@ -147,16 +217,26 @@ void pace_present(uint32_t interval) {
     static const char* force = getenv("NX_PRESENT_INTERVAL");
     if (force) interval = (uint32_t)atoi(force);
     if (off || !interval) return;
+    // test: a slower PC (NX_FRAME_EXTRA_MS, or NX_CONTROL "extrams n" live): n ms more work per frame
+    static const bool extra_env = [] { if (getenv("NX_FRAME_EXTRA_MS")) g_extra_ms = atoi(getenv("NX_FRAME_EXTRA_MS")); return true; }();
+    (void)extra_env;
+    if (const int x = g_extra_ms) SDL_Delay((uint32_t)x);
     static uint64_t back = 0;  // performance counter when the previous pace returned
     uint64_t in = SDL_GetPerformanceCounter();
+    uint32_t us = 0;
     if (back) {
-        uint32_t us = (uint32_t)((in - back) * 1000000 / SDL_GetPerformanceFrequency());
+        us = (uint32_t)((in - back) * 1000000 / SDL_GetPerformanceFrequency());
         if (us > g_frame_work_max_us) g_frame_work_max_us = us;
     }
     std::unique_lock<std::mutex> l(g_ui_lock);
+    if (fps == 60) interval = auto30(interval, back && g_vsync_count > last + 1, us);
     uint64_t target = last + interval;
     if (g_vsync_count < target) g_vsync_cv.wait(l, [&] { return g_vsync_count >= target; });
     else if (g_vsync_count > target) g_late_vsyncs += g_vsync_count - target;  // the frame took too long
+    // Auto 30 catch-up (above): at 60, the next step covers the vsyncs this frame really took (1 or 2)
+    static const bool catchup = !getenv("NX_AUTO30_CATCHUP") || atoi(getenv("NX_AUTO30_CATCHUP")) != 0;
+    if (fps == 60 && interval == 1 && !g_half && auto30_setting() && catchup && last)
+        set_game_dt(std::clamp<uint64_t>(g_vsync_count - last, 1, 2) / 60.0f);
     last = g_vsync_count;
     g_pace_tick = last;
     l.unlock();
@@ -215,10 +295,12 @@ static uint64_t control_buttons(uint64_t now) {
                         else if (cmd.rfind("shots ", 0) == 0) g_shot_request += atoi(cmd.c_str() + 6);  // the next N frames
                         else if (cmd.rfind("drawlog", 0) == 0) g_drawlog_request += cmd.size() > 8 ? atoi(cmd.c_str() + 8) : 1;  // "drawlog N": N frames
                         else if (cmd == "rt") g_rt_request++;
+                        else if (cmd.rfind("extrams ", 0) == 0) g_extra_ms = atoi(cmd.c_str() + 8);  // test: slower frames
                         else if (cmd.rfind("skipshadow ", 0) == 0) rt::g_skip_shadow = atoi(cmd.c_str() + 11);
                         else if (cmd.rfind("aa ", 0) == 0) rt::apply_aa(atoi(cmd.c_str() + 3));
                         else if (cmd.rfind("upq ", 0) == 0) rt::apply_fsr3_quality(atoi(cmd.c_str() + 4));
                         else if (cmd.rfind("msaa ", 0) == 0) rt::apply_msaa(atoi(cmd.c_str() + 5));
+                        else if (cmd.rfind("hdr ", 0) == 0) rt::set_hdr(atoi(cmd.c_str() + 4));  // live, not saved
                         else if (cmd == "cover") cover_report();
                         else if (cmd.rfind("speed ", 0) == 0) set_speed(atoi(cmd.c_str() + 6));
                         else if (cmd.rfind("env ", 0) == 0) { _putenv(cmd.c_str() + 4); log("env %s", cmd.c_str() + 4); }  // env NX_KEY=v: a setting, live
@@ -657,11 +739,14 @@ static void vsync_thread() {
             const bool fg = fg_pid == GetCurrentProcessId();
             static bool was_fg = false;
             static int told = 0;
-            if (fg != was_fg && spin && !spin_env && told < 8) told++, log("vsync: window %s: %s", fg ? "in front" : "behind", fg && timer ? "timer + spin" : "full spin");
+            // USER 11-27: the game lagged and stuttered whenever its window was not in front. The full spin at time-critical
+            // priority took a whole core from the game / render / job threads (6-thread CPUs; 2-core test runs: crosswalk
+            // 60 -> 45 fps). Behind, the timer now wakes 2 ms early (its background oversleep) and the spin does the rest.
+            if (fg != was_fg && spin && !spin_env && told < 8) told++, log("vsync: window %s: %s", fg ? "in front" : "behind", timer ? (fg ? "timer + spin" : "timer + 2 ms spin") : "full spin");
             was_fg = fg;
-            if (timer && fg && spin && !spin_env) {
+            if (timer && spin && !spin_env) {
                 timed = true;
-                margin = freq / 2000;
+                margin = fg ? freq / 2000 : freq / 500;
                 const uint64_t now2 = SDL_GetPerformanceCounter();
                 if (now2 + margin < next) {
                     LARGE_INTEGER due;
@@ -735,6 +820,24 @@ static void ui_thread() {
 #endif
     // NX_WINDOW=borderless: borderless fullscreen on the window's display (play.bat default); Alt+Enter or F11 toggles
     if (const char* w = getenv("NX_WINDOW"); w && !strcmp(w, "borderless")) SDL_SetWindowFullscreen(g_window, true);
+    // s125 (Augs: "it starts as a background process, I have to click the window to bring it to the front"): the
+    // launcher has closed by the time this window exists, so Windows' foreground lock kept it behind. The launcher grants
+    // the right (AllowSetForegroundWindow); take it here. Still refused: Windows flashes the taskbar button instead.
+    SDL_RaiseWindow(g_window);
+#ifdef _WIN32
+    if (HWND hw = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(g_window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+        hw && GetForegroundWindow() != hw) {
+        SetForegroundWindow(hw);
+        if (GetForegroundWindow() != hw) {  // started without the launcher's grant: join the foreground thread's input once
+            const DWORD fg = GetWindowThreadProcessId(GetForegroundWindow(), nullptr), me = GetCurrentThreadId();
+            if (fg && fg != me && AttachThreadInput(me, fg, TRUE)) {
+                BringWindowToTop(hw), SetForegroundWindow(hw);
+                AttachThreadInput(me, fg, FALSE);
+            }
+        }
+        if (GetForegroundWindow() != hw) log("ui: Windows kept the game window in the background (click it to play)");
+    }
+#endif
     {
         std::lock_guard<std::mutex> l(g_ui_lock);
         g_ui_ready = true;

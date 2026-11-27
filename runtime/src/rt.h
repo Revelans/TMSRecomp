@@ -20,6 +20,9 @@ namespace rt {
 
 // ------------------------------------------------------------------------------------------------ logging
 void log(const char* fmt, ...);
+void perfmon_start(const char* gpu_name, uint32_t vendor);
+int cpk_dump(const std::string& data, bool all, const std::string& only);  // hle_fs.cpp: tms.exe --dump [--all | --pack <name>]: game packs -> <data>/dump  // perfmon.cpp: "perf:" lines (GPU clocks / heat / power), s124
+extern std::atomic<bool> g_perf_in_game;                    // perfmon.cpp: a 3D frame since its last sample
 [[noreturn]] void fatal(const char* fmt, ...);
 extern int g_verbose;
 #define LOGV(...) do { if (rt::g_verbose) rt::log(__VA_ARGS__); } while (0)
@@ -45,6 +48,12 @@ void mem_unmap(uint32_t addr, uint32_t size);
 Region mem_query(uint32_t addr);
 double process_private_mb(), guest_committed_mb();  // memory.cpp
 void mem_regions_report();  // memory.cpp, NX_MEM_REGIONS
+// s126 write ticks (vertex data in video memory): mem_write_tick harvests the 2 MB chunks under the range once per stamp
+// and returns the current tick; mem_written_tick = the newest tick any page of the range was seen written at (0 never).
+// Linux: unsupported (mem_write_ticks_ok false).
+bool mem_write_ticks_ok();
+uint32_t mem_write_tick(uint32_t addr, uint32_t size, uint64_t stamp);
+uint32_t mem_written_tick(uint32_t addr, uint32_t size);
 bool mem_written(uint32_t addr, uint32_t size);  // CPU wrote the range since the last call (write watch)
 // the same, but the write watch of [span_lo, span_lo + span_len) (the texture's memory pool) is read once per stamp (submit)
 bool mem_written_span(uint32_t addr, uint32_t size, uint32_t span_lo, uint32_t span_len, uint64_t stamp);
@@ -111,7 +120,15 @@ void apply_aa(int i);   // overlay.cpp: Anti-aliasing row: 0 off, 1 FXAA, 2 SMAA
 int msaa_setting();     // overlay.cpp: setting msaa (0 off, 2 / 4 / 8 samples for the 3D scene passes)
 int fsr3_setting();     // overlay.cpp: 1 = Anti-aliasing FSR 3 (setting fx_fxaa 3; vk_replay.cpp fsr3_in_place)
 int fsr3_quality();     // overlay.cpp: setting fsr3_quality 0 native AA, 1 Quality .. 4 Ultra Performance (live)
+int scene_res();       // overlay.cpp: setting scene_res, 3D resolution % with AA off / FXAA / SMAA (100 = off, live)
+void apply_scene_res(int i);  // F1 row index 0..4
 int smaa_setting();     // overlay.cpp: setting smaa (1: SMAA in place of the game's FXAA)
+int hdr_setting();         // overlay.cpp: setting hdr (0 / 1), HDR10 / scRGB output when the screen offers it (vk.cpp)
+void set_hdr(int on);      // overlay.cpp: hdr on / off now, not saved (NX_CONTROL "hdr n")
+int hdr_paper_white();     // overlay.cpp: setting hdr_paper_white, nits of SDR white in HDR
+int hdr_peak_setting();    // overlay.cpp: setting hdr_peak, nits, 0 = auto (the screen's own)
+int hdr_boost();          // overlay.cpp: setting hdr_boost 0..4, inverse tone mapping strength (3D scene only)
+int hdr_color();          // overlay.cpp: setting hdr_color 0..4, extra saturation in the 3D scene with HDR
 int sharpen_setting();    // overlay.cpp: setting sharpen (0 off .. 100), the present path's sharpening pass
 // pad_icons.cpp: button icons by controller (setting pad_icons auto|switch|playstation|xbox)
 extern std::atomic<int> g_pad_kind;  // ui.cpp sets it for the open pad: 0 Switch / other, 1 PlayStation, 2 Xbox
@@ -179,11 +196,17 @@ extern std::atomic<uint64_t> g_frame_no;           // ui.cpp: pace_present calls
 void call_guest(Cpu* c, uint32_t addr);   // r14 = sentinel, dispatch
 int fps_setting();                          // hle_sys.cpp: NX_FPS (30, 60, N > 60 capped, 0 uncapped)
 void set_fps(int n);                        // control "fps N" (60 / N > 60 / 0 only)
+void auto30_new_area();                    // ui.cpp: a new field area loaded: Auto 30 tries 60 again soon
+bool auto30_active();                      // ui.cpp: Auto 30 is holding 30 now
+bool auto30_setting();                      // ui.cpp: setting auto_30 (default 1): at fps 60, drop to 30 while 60 is not held
+void set_auto30(bool on);                   // settings menu: applies at once
 extern std::atomic<uint32_t> g_dt_keep;      // hle_sys.cpp: debug control "dtkeep mask" (dt literals kept at 1/30)
 extern std::atomic<int> g_ui_gate;          // hle_sys.cpp: menu/HUD 30 Hz gates (control "uigate N")
 float walk_speed();                         // hle_sys.cpp: NX_WALK_SPEED (field walk/run x k)
 void set_walk_speed(float k);               // settings menu: applies at once
+float game_base_dt();                       // hle_sys.cpp: the step set_game_dt last asked for (perf: game speed)
 void set_game_dt(float dt);                 // hle_sys.cpp: the game's per-frame time step in seconds
+extern std::atomic<int> g_shadow_detail;    // vk_replay.cpp: setting shadow_detail (1: no far shadow map)
 extern std::atomic<int> g_skip_shadow;      // vk_replay.cpp: debug, drop shadow casters
 bool ui_smooth();                          // hle_sys.cpp: setting ui_smooth: sprites glide between UI ticks above 60 fps
 void set_ui_smooth(bool on);

@@ -38,11 +38,11 @@ void game_load(const std::filesystem::path& dir) {
 #ifdef _WIN32
     auto p = dir / "game.dll";
     HMODULE m = LoadLibraryW(p.c_str());
-    if (!m) fatal("cannot load %s (error %lu): run Setup in launcher.exe to build it from your game files",
+    if (!m) fatal("cannot load %s (error %lu): run Setup in tmslauncher.exe to build it from your game files",
                   p.string().c_str(), GetLastError());
     auto sym = [&](const char* n) {
         void* a = (void*)GetProcAddress(m, n);
-        if (!a) fatal("game.dll has no %s: rebuild it (Setup in launcher.exe)", n);
+        if (!a) fatal("game.dll has no %s: rebuild it (Setup in tmslauncher.exe)", n);
         return a;
     };
 #else

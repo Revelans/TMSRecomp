@@ -1,6 +1,14 @@
 // nn::fs on host files: "rom:" -> <data>/romfs, save mounts -> <data>/save. Positional Win32 reads (thread-safe).
 // Mods (LayeredFS style): a file at <data>/mods/<name>/romfs/<path> replaces romfs/<path>. Every mod folder is on
 // unless named in NX_MODS_DISABLED (ini mods_disabled, comma separated); earlier names (sorted) win.
+// Loose-file mods (s125, user request: P5R-style modding): a file at <data>/mods/<name>/cpk/<pack>/<path> replaces the
+// file <path> inside romfs/Pack/<pack>.cpk, so a mod holds only the files it changes (e.g. cpk/pack_030_etc/Skill/
+// SkillData.dat) instead of a whole multi-GB CPK. The game opens a virtual CPK: the original bytes, with the TOC (and
+// the header's ContentSize) served from a patched copy whose rows for the replaced files point past the original end,
+// where the loose files are served from disk (stored uncompressed: FileSize = ExtractSize). The packs have no TOC / file
+// CRCs (EnableTocCrc 0, EnableFileCrc 0, checked per pack: else the pack is left alone). Only files already in the pack
+// can be replaced (new names would need a re-sorted TOC); others are logged and ignored. The launcher's "Dump game
+// files" writes <data>/dump/<pack>/<path> with the same paths.
 #include "plat.h"
 #ifndef _WIN32
 #include <fcntl.h>
@@ -10,6 +18,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <map>
+#include <memory>
 
 #include "rt.h"
 
@@ -49,7 +60,9 @@ static fs::path ci_path(const fs::path& root, const fs::path& rel) {
     return cur;
 }
 #endif
-static std::unordered_map<uint32_t, FileH> g_files;
+struct VCpk;  // below
+struct FsFile { FileH h; std::shared_ptr<VCpk> v; };
+static std::unordered_map<uint32_t, FsFile> g_files;
 struct Dir { std::vector<fs::directory_entry> ents; size_t pos = 0; };
 static std::unordered_map<uint32_t, Dir> g_dirs;
 static uint32_t g_next = 1;
@@ -98,6 +111,316 @@ static std::vector<fs::path> rom_roots() {
     return roots;
 }
 
+// ------------------------------------------------------------------------------------------------ loose-file CPK mods
+struct VCpk {
+    uint64_t base_size = 0, size = 0;
+    std::vector<std::pair<uint64_t, std::vector<uint8_t>>> patches;  // (offset, bytes) served instead of the original
+    struct Extra { uint64_t off, size; FileH h; };
+    std::vector<Extra> extras;  // loose files past base_size
+};
+static FileH open_ro(const fs::path& p) {
+#ifdef _WIN32
+    return CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+#else
+    return f_open(p, GENERIC_READ);
+#endif
+}
+static bool pread_all(FileH h, uint64_t off, void* dst, size_t n) {
+#ifdef _WIN32
+    OVERLAPPED o{};
+    o.Offset = (DWORD)off;
+    o.OffsetHigh = (DWORD)(off >> 32);
+    DWORD got = 0;
+    return ReadFile(h, dst, (DWORD)n, &got, &o) && got == n;
+#else
+    size_t got = 0;
+    while (got < n) {
+        ssize_t r = pread(h, (uint8_t*)dst + got, n - got, (off_t)(off + got));
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) return false;
+        got += (size_t)r;
+    }
+    return true;
+#endif
+}
+static uint64_t file_size_of(FileH h) {
+#ifdef _WIN32
+    LARGE_INTEGER sz{};
+    GetFileSizeEx(h, &sz);
+    return (uint64_t)sz.QuadPart;
+#else
+    struct stat st{};
+    fstat(h, &st);
+    return (uint64_t)st.st_size;
+#endif
+}
+// @UTF table (big-endian): column name -> (storage, type, byte position in a row); rows / strings located
+struct Utf {
+    const uint8_t* b = nullptr;
+    size_t n = 0;
+    uint32_t rows_off = 0, str_off = 0, row_len = 0, nrows = 0;
+    struct Col { std::string name; int st, type, pos; };
+    std::vector<Col> cols;
+    static uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+    static int width(int t) { static const int w[12] = {1, 1, 2, 2, 4, 4, 8, 8, 4, 8, 4, 8}; return t < 12 ? w[t] : 0; }
+    std::string str(uint32_t o) const {
+        o += str_off;
+        std::string r;
+        while (o < n && b[o]) r += (char)b[o++];
+        return r;
+    }
+    bool parse(const uint8_t* data, size_t len) {  // data = "@UTF"
+        b = data, n = len;
+        if (len < 32 || memcmp(b, "@UTF", 4)) return false;
+        const uint8_t* h = b + 8;
+        rows_off = (uint32_t)((h[2] << 8 | h[3]) + 8), str_off = be32(h + 4) + 8;
+        const int ncols = h[16] << 8 | h[17];
+        row_len = h[18] << 8 | h[19], nrows = be32(h + 20);
+        size_t p = 8 + 0x18;
+        int rp = 0;
+        for (int i = 0; i < ncols; i++) {
+            if (p + 5 > n) return false;
+            const int fl = b[p], st = fl & 0xF0, t = fl & 0xF;
+            Col c{str(be32(b + p + 1)), st, t, -1};
+            p += 5;
+            if (st == 0x30) p += width(t);
+            if (st == 0x50) c.pos = rp, rp += width(t);
+            cols.push_back(c);
+        }
+        return rows_off + (uint64_t)row_len * nrows <= n;
+    }
+    const Col* col(const char* name) const {
+        for (auto& c : cols) if (c.name == name) return &c;
+        return nullptr;
+    }
+    uint64_t get(uint32_t row, const Col* c) const {
+        const uint8_t* p = b + rows_off + row * row_len + c->pos;
+        uint64_t v = 0;
+        for (int i = 0; i < width(c->type); i++) v = v << 8 | p[i];
+        return v;
+    }
+    static void put(uint8_t* row_base, const Col* c, uint64_t v) {
+        for (int i = width(c->type) - 1; i >= 0; i--) row_base[c->pos + i] = (uint8_t)v, v >>= 8;
+    }
+};
+static std::string lower(std::string s) {
+    for (char& ch : s) ch = (char)tolower((unsigned char)ch);
+    return s;
+}
+// enabled mod folders with cpk/<pack> (sorted: earlier names win, as for romfs)
+static std::vector<fs::path> loose_dirs(const std::string& pack) {
+    std::vector<fs::path> v;
+    const std::string off = getenv("NX_MODS_DISABLED") ? std::string(",") + getenv("NX_MODS_DISABLED") + "," : ",";
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(fs::path(g_data_dir) / "mods", ec)) {
+        auto u8 = e.path().filename().u8string();
+        if (off.find("," + std::string((const char*)u8.data(), u8.size()) + ",") != std::string::npos) continue;
+        if (fs::is_directory(e.path() / "cpk" / pack, ec)) v.push_back(e.path() / "cpk" / pack);
+    }
+    std::sort(v.begin(), v.end());
+    return v;
+}
+static std::shared_ptr<VCpk> build_vcpk(const fs::path& cpk_path, FileH base) {
+    const std::string pack = cpk_path.stem().string();
+    auto dirs = loose_dirs(pack);
+    if (dirs.empty()) return nullptr;
+    std::map<std::string, std::pair<fs::path, std::string>> loose;  // lower-case inner path -> (file, mod name)
+    std::error_code ec;
+    for (auto& d : dirs)
+        for (auto& f : fs::recursive_directory_iterator(d, ec)) {
+            if (!f.is_regular_file(ec)) continue;
+            auto u8 = fs::relative(f.path(), d, ec).generic_u8string();
+            loose.emplace(lower(std::string((const char*)u8.data(), u8.size())), std::make_pair(f.path(), d.parent_path().parent_path().filename().string()));
+        }
+    if (loose.empty()) return nullptr;
+    auto fail = [&](const char* why) { log("fs: loose mods for %s.cpk not used: %s", pack.c_str(), why); return std::shared_ptr<VCpk>(); };
+    std::vector<uint8_t> head(0x800);
+    if (!pread_all(base, 0, head.data(), head.size()) || memcmp(head.data(), "CPK ", 4)) return fail("not a CPK");
+    Utf hu;
+    if (!hu.parse(head.data() + 0x10, head.size() - 0x10)) return fail("header unreadable");
+    auto hc = [&](const char* n) -> uint64_t { const Utf::Col* c = hu.col(n); return c && c->st == 0x50 ? hu.get(0, c) : 0; };
+    if (hc("EnableTocCrc") || hc("EnableFileCrc") || hc("TocCrc")) return fail("the pack checks CRCs");
+    const uint64_t toc_off = hc("TocOffset"), toc_size = hc("TocSize"), align = std::max<uint64_t>(hc("Align"), 0x800);
+    if (!toc_off || toc_size < 0x30 || toc_size > (64u << 20)) return fail("no TOC");
+    std::vector<uint8_t> toc(toc_size);
+    if (!pread_all(base, toc_off, toc.data(), toc.size())) return fail("TOC unreadable");
+    Utf tu;
+    if (!tu.parse(toc.data() + 0x10, toc.size() - 0x10)) return fail("TOC unreadable (encrypted?)");
+    const Utf::Col *cdir = tu.col("DirName"), *cname = tu.col("FileName"), *cfs = tu.col("FileSize"), *ces = tu.col("ExtractSize"), *coff = tu.col("FileOffset");
+    if (!cname || !cfs || !ces || !coff || cname->st != 0x50 || cfs->st != 0x50 || ces->st != 0x50 || coff->st != 0x50)
+        return fail("TOC columns not per file");
+    auto v = std::make_shared<VCpk>();
+    v->base_size = file_size_of(base);
+    uint64_t end = (v->base_size + align - 1) / align * align;
+    uint8_t* rows = toc.data() + 0x10 + tu.rows_off;
+    std::map<std::string, int> per_mod;
+    for (uint32_t r = 0; r < tu.nrows; r++) {
+        std::string dir = cdir && cdir->st == 0x50 ? tu.str((uint32_t)tu.get(r, cdir)) : std::string();
+        if (dir == "<NULL>") dir.clear();
+        const std::string name = tu.str((uint32_t)tu.get(r, cname)), inner = lower(dir.empty() ? name : dir + "/" + name);
+        auto it = loose.find(inner);
+        if (it == loose.end()) continue;
+        FileH h = open_ro(it->second.first);
+        if (h == k_bad_file) { log("fs: loose mod file %s cannot be opened", it->second.first.string().c_str()); loose.erase(it); continue; }
+        const uint64_t sz = file_size_of(h);
+        if (sz >> 32) { log("fs: loose mod file %s over 4 GB: ignored", it->second.first.string().c_str()); loose.erase(it); continue; }
+        // FileOffset counts from 0x800 here (tools/cpk.py, measured): the file goes to `end`
+        uint8_t* row = rows + (size_t)r * tu.row_len;
+        Utf::put(row, coff, end - 0x800), Utf::put(row, cfs, sz), Utf::put(row, ces, sz);
+        v->extras.push_back({end, sz, h});
+        per_mod[it->second.second]++;
+        end = (end + sz + align - 1) / align * align;
+        loose.erase(it);
+    }
+    for (auto& [inner, f] : loose) log("fs: mod %s: %s is not in %s.cpk: ignored (only files the pack has can be replaced)", f.second.c_str(), inner.c_str(), pack.c_str());
+    if (v->extras.empty()) return nullptr;
+    v->size = end;
+    v->patches.push_back({toc_off, std::move(toc)});
+    if (const Utf::Col* cs = hu.col("ContentSize"); cs && cs->st == 0x50) {  // the content now reaches the new end
+        const uint64_t content_off = hc("ContentOffset");
+        Utf::put(head.data() + 0x10 + hu.rows_off, cs, end - content_off);
+        v->patches.push_back({0, std::move(head)});
+    }
+    for (auto& [m, k] : per_mod) log("fs: mod %s: %d loose file%s in %s.cpk", m.c_str(), k, k == 1 ? "" : "s", pack.c_str());
+    return v;
+}
+static std::shared_ptr<VCpk> vcpk_for(const fs::path& p, FileH base) {
+    static std::mutex m;
+    static std::map<fs::path, std::shared_ptr<VCpk>> cache;  // mods do not change while the game runs
+    std::lock_guard<std::mutex> l(m);
+    auto it = cache.find(p);
+    if (it != cache.end()) return it->second;
+    return cache[p] = build_vcpk(p, base);
+}
+static uint32_t vread(const VCpk& v, FileH h, uint64_t off, uint32_t buf, uint32_t size, uint32_t* got) {
+    if (off >= v.size) { *got = 0; return 0; }
+    const uint32_t n = (uint32_t)std::min<uint64_t>(size, v.size - off);
+    std::vector<uint8_t> tmp(n, 0);  // bounce buffer (also keeps Linux write-watched guest pages safe)
+    if (off < v.base_size) {
+        const size_t k = (size_t)std::min<uint64_t>(n, v.base_size - off);
+        if (!pread_all(h, off, tmp.data(), k)) return RES_FAIL;
+    }
+    for (auto& [po, pb] : v.patches) {
+        const uint64_t a = std::max(off, po), b = std::min(off + n, po + pb.size());
+        if (a < b) memcpy(tmp.data() + (a - off), pb.data() + (a - po), (size_t)(b - a));
+    }
+    for (auto& e : v.extras) {
+        const uint64_t a = std::max(off, e.off), b = std::min(off + n, e.off + e.size);
+        if (a < b && !pread_all(e.h, a - e.off, tmp.data() + (a - off), (size_t)(b - a))) return RES_FAIL;
+    }
+    memcpy(GPTR(buf), tmp.data(), n);
+    *got = n;
+    return 0;
+}
+
+// ------------------------------------------------------------------------------------------------ dump (tms.exe --dump)
+// CRILAYLA (CRI's LZ, read backwards; the first 0x100 bytes stored raw at the end). Same as tools/cpk.py crilayla.
+static bool crilayla(const std::vector<uint8_t>& src, std::vector<uint8_t>& out) {
+    if (src.size() < 0x10 || memcmp(src.data(), "CRILAYLA", 8)) return false;
+    auto le32 = [&](size_t o) { return (uint32_t)src[o] | src[o + 1] << 8 | src[o + 2] << 16 | (uint32_t)src[o + 3] << 24; };
+    const uint32_t usize = le32(8), csize = le32(12);
+    if ((uint64_t)0x10 + csize + 0x100 > src.size()) return false;
+    out.assign((size_t)usize + 0x100, 0);
+    memcpy(out.data(), src.data() + 0x10 + csize, 0x100);
+    int64_t inp = 0x10 + (int64_t)csize - 1, o = (int64_t)out.size() - 1;
+    uint32_t pool = 0;
+    int left = 0;
+    bool bad = false;
+    auto bits = [&](int k) {
+        uint32_t v = 0;
+        while (k) {
+            if (!left) {
+                if (inp < 0x10) { bad = true; return 0u; }
+                pool = src[(size_t)inp--], left = 8;
+            }
+            const int take = std::min(left, k);
+            v = v << take | ((pool >> (left - take)) & ((1u << take) - 1));
+            left -= take, k -= take;
+        }
+        return v;
+    };
+    while (o >= 0x100 && !bad) {
+        if (bits(1)) {
+            const int64_t off = bits(13) + 3;
+            int64_t len = 3;
+            static const int w[3] = {2, 3, 5};
+            bool more = true;
+            for (int i = 0; i < 3 && more; i++) {
+                const uint32_t x = bits(w[i]);
+                len += x;
+                more = x == (1u << w[i]) - 1;
+            }
+            if (more)
+                for (;;) { const uint32_t x = bits(8); len += x; if (x != 0xFF || bad) break; }
+            for (; len > 0 && o >= 0; len--, o--) {
+                if (o + off >= (int64_t)out.size()) return false;
+                out[(size_t)o] = out[(size_t)(o + off)];
+            }
+        } else out[(size_t)o--] = (uint8_t)bits(8);
+    }
+    return !bad;
+}
+// every pack in <data>/romfs/Pack (movies only with all) -> <data>/dump/<pack>/<path>; files already there at the right
+// size are skipped (a stopped dump continues). Progress on stdout. Returns the process exit code.
+int rt::cpk_dump(const std::string& data, bool all, const std::string& only) {
+    std::error_code ec;
+    std::vector<fs::path> packs;
+    for (auto& e : fs::directory_iterator(fs::path(data) / "romfs" / "Pack", ec))
+        if (e.path().extension() == ".cpk" && (only.empty() ? all || e.path().stem().string().find("movie") == std::string::npos : e.path().stem().string() == only))
+            packs.push_back(e.path());
+    std::sort(packs.begin(), packs.end());
+    if (packs.empty()) { printf("No game packs in %s\\romfs\\Pack: set up the game first.\n", data.c_str()); return 1; }
+    const fs::path out_root = fs::path(data) / "dump";
+    uint64_t total = 0, failed = 0;
+    for (size_t i = 0; i < packs.size(); i++) {
+        const std::string stem = packs[i].stem().string();
+        FileH h = open_ro(packs[i]);
+        if (h == k_bad_file) { printf("%s: cannot open\n", stem.c_str()); continue; }
+        std::vector<uint8_t> head(0x800), toc;
+        Utf hu, tu;
+        auto hc = [&](const char* n) -> uint64_t { const Utf::Col* c = hu.col(n); return c && c->st == 0x50 ? hu.get(0, c) : 0; };
+        bool ok = pread_all(h, 0, head.data(), head.size()) && !memcmp(head.data(), "CPK ", 4) && hu.parse(head.data() + 0x10, head.size() - 0x10);
+        if (ok) toc.resize(hc("TocSize")), ok = hc("TocOffset") && toc.size() > 0x10 && pread_all(h, hc("TocOffset"), toc.data(), toc.size()) && tu.parse(toc.data() + 0x10, toc.size() - 0x10);
+        const Utf::Col *cdir = ok ? tu.col("DirName") : nullptr, *cname = ok ? tu.col("FileName") : nullptr, *cfs = ok ? tu.col("FileSize") : nullptr,
+                       *ces = ok ? tu.col("ExtractSize") : nullptr, *coff = ok ? tu.col("FileOffset") : nullptr;
+        if (!ok || !cname || !cfs || !ces || !coff) { printf("%s: no readable file table: skipped\n", stem.c_str()); continue; }
+        printf("[%zu/%zu] %s: %u files\n", i + 1, packs.size(), stem.c_str(), tu.nrows);
+        fflush(stdout);
+        std::vector<uint8_t> buf, dec;
+        for (uint32_t r = 0; r < tu.nrows; r++) {
+            std::string dir = cdir && cdir->st == 0x50 ? tu.str((uint32_t)tu.get(r, cdir)) : std::string();
+            if (dir == "<NULL>") dir.clear();
+            const std::string inner = dir.empty() ? tu.str((uint32_t)tu.get(r, cname)) : dir + "/" + tu.str((uint32_t)tu.get(r, cname));
+            const uint64_t fsz = tu.get(r, cfs), esz = tu.get(r, ces), off = tu.get(r, coff) + 0x800;
+            const fs::path dst = out_root / stem / fs::u8path(inner);
+            if (fs::is_regular_file(dst, ec) && fs::file_size(dst, ec) == esz) continue;
+            buf.resize((size_t)fsz);
+            bool good = pread_all(h, off, buf.data(), buf.size());
+            const std::vector<uint8_t>* w = &buf;
+            if (good && esz != fsz) good = crilayla(buf, dec) && dec.size() == esz, w = &dec;
+            if (!good) { failed++; printf("  %s: could not be read\n", inner.c_str()); continue; }
+            fs::create_directories(dst.parent_path(), ec);
+            fs::path part = dst;
+            part += ".part";
+            {
+                std::ofstream f(part, std::ios::binary);
+                good = f && f.write((const char*)w->data(), (std::streamsize)w->size()).good();
+            }
+            if (good) fs::rename(part, dst, ec);
+            if (!good || ec) failed++, printf("  %s: could not be written\n", inner.c_str());
+            if (++total % 1000 == 0) printf("  %llu files written\n", (unsigned long long)total), fflush(stdout);
+        }
+#ifdef _WIN32
+        CloseHandle(h);
+#else
+        close(h);
+#endif
+    }
+    printf("\nDone: %s (%llu files written now, %llu failed)\n", out_root.string().c_str(), (unsigned long long)total, (unsigned long long)failed);
+    printf("To mod a file: copy it to mods\\<your mod name>\\cpk\\<pack>\\<same path> and edit the copy.\n");
+    return failed ? 1 : 0;
+}
+
 HLE_FN(fs_QueryRomCache, "_ZN2nn2fs22QueryMountRomCacheSizeEPj") { st32(c->r[0], 0x1000); c->r[0] = 0; }
 HLE_FN(fs_MountRom, "_ZN2nn2fs8MountRomEPKcPvj") {
     std::string name = gstr(c->r[0]);
@@ -144,21 +467,28 @@ HLE_FN(fs_OpenFile, "_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci") {
         c->r[0] = RES_PATH_NOT_FOUND;
         return;
     }
+    // loose-file mods: a read-only CPK from the rom mount may be served as a virtual CPK
+    std::shared_ptr<VCpk> v;
+    if (mode == 1 && p.extension() == ".cpk") v = vcpk_for(p, h);
     std::lock_guard<std::mutex> l(g_fs_lock);
     uint32_t id = g_next++;
-    g_files[id] = h;
+    g_files[id] = {h, v};
     st32(c->r[0], id);
     LOGV("fs: open %s -> %u", p.string().c_str(), id);
     c->r[0] = 0;
 }
-static FileH file(uint32_t id) {
+static FileH file(uint32_t id, std::shared_ptr<VCpk>* v = nullptr) {
     std::lock_guard<std::mutex> l(g_fs_lock);
     auto it = g_files.find(id);
-    return it == g_files.end() ? k_bad_file : it->second;
+    if (it == g_files.end()) return k_bad_file;
+    if (v) *v = it->second.v;
+    return it->second.h;
 }
 static uint32_t do_read(uint32_t id, uint64_t off, uint32_t buf, uint32_t size, uint32_t* got) {
-    FileH h = file(id);
+    std::shared_ptr<VCpk> v;
+    FileH h = file(id, &v);
     if (h == k_bad_file) return RES_FAIL;
+    if (v) return vread(*v, h, off, buf, size, got);
 #ifndef _WIN32
     // straight into guest memory; a write-watched page (memory.cpp) makes the kernel return EFAULT instead of
     // faulting, so the rest then goes through a bounce buffer (written by the CPU: the watch sees it)
@@ -224,8 +554,9 @@ HLE_FN(fs_WriteFile, "_ZN2nn2fs9WriteFileENS0_10FileHandleExPKvjRKNS0_11WriteOpt
 HLE_FN(fs_FlushFile, "_ZN2nn2fs9FlushFileENS0_10FileHandleE") { FlushFileBuffers(file(c->r[0])); c->r[0] = 0; }
 HLE_FN(fs_GetSize, "_ZN2nn2fs11GetFileSizeEPxNS0_10FileHandleE") {
     LARGE_INTEGER sz{};
-    GetFileSizeEx(file(c->r[1]), &sz);
-    st64(c->r[0], (uint64_t)sz.QuadPart);
+    std::shared_ptr<VCpk> v;
+    GetFileSizeEx(file(c->r[1], &v), &sz);
+    st64(c->r[0], v ? v->size : (uint64_t)sz.QuadPart);
     c->r[0] = 0;
 }
 HLE_FN(fs_SetSize, "_ZN2nn2fs11SetFileSizeENS0_10FileHandleEx") {
@@ -238,8 +569,9 @@ HLE_FN(fs_SetSize, "_ZN2nn2fs11SetFileSizeENS0_10FileHandleEx") {
 HLE_FN(fs_FlushFile, "_ZN2nn2fs9FlushFileENS0_10FileHandleE") { fsync(file(c->r[0])); c->r[0] = 0; }
 HLE_FN(fs_GetSize, "_ZN2nn2fs11GetFileSizeEPxNS0_10FileHandleE") {
     struct stat st{};
-    fstat(file(c->r[1]), &st);
-    st64(c->r[0], (uint64_t)st.st_size);
+    std::shared_ptr<VCpk> v;
+    fstat(file(c->r[1], &v), &st);
+    st64(c->r[0], v ? v->size : (uint64_t)st.st_size);
     c->r[0] = 0;
 }
 HLE_FN(fs_SetSize, "_ZN2nn2fs11SetFileSizeENS0_10FileHandleEx") {
@@ -250,9 +582,9 @@ HLE_FN(fs_CloseFile, "_ZN2nn2fs9CloseFileENS0_10FileHandleE") {
     std::lock_guard<std::mutex> l(g_fs_lock);
     auto it = g_files.find(c->r[0]);
 #ifdef _WIN32
-    if (it != g_files.end()) { CloseHandle(it->second); g_files.erase(it); }
+    if (it != g_files.end()) { CloseHandle(it->second.h); g_files.erase(it); }
 #else
-    if (it != g_files.end()) { close(it->second); g_files.erase(it); }
+    if (it != g_files.end()) { close(it->second.h); g_files.erase(it); }
 #endif
 }
 HLE_FN(fs_CreateFile, "_ZN2nn2fs10CreateFileEPKcx") {  // (path r0, size r2:r3)

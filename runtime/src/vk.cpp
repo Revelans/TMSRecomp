@@ -8,6 +8,10 @@
 #include "sharpen_spv.h"
 #include "upscale_spv.h"
 #include "overlay_spv.h"
+#include "hdr_spv.h"
+#ifdef _WIN32
+#include <dxgi1_6.h>
+#endif
 #include "vk_shader.h"
 
 #include <SDL3/SDL.h>
@@ -42,6 +46,16 @@ static VkSwapchainKHR g_swap;
 static std::vector<VkImage> g_swap_images;
 static VkExtent2D g_swap_extent;
 static VkFormat g_swap_format;
+// HDR output (setting hdr): 0 SDR, 1 HDR10 (BT.2020 + PQ, 10-bit), 2 scRGB (linear BT.709 half floats)
+std::atomic<int> g_hdr_mode{0};
+static int g_hdr_req = -1;             // hdr setting the swapchain was made for (present_thread remakes it on a change)
+static bool g_colorspace_ext = false;  // VK_EXT_swapchain_colorspace: HDR colour spaces can be offered at all
+static float g_hdr_screen_peak = 0;    // nits Windows reports for the window's screen (0: unknown)
+// the float image the game copied into the window texture g_hdr_win this frame (vk_replay.cpp; replay thread)
+static Image* g_hdr_src = nullptr;
+static uint32_t g_hdr_win = 0;
+void hdr_note_copy(uint32_t window_guest, Image* src) { g_hdr_win = window_guest, g_hdr_src = src; }
+void hdr_note_target(uint32_t guest) { if (guest == g_hdr_win) g_hdr_src = nullptr; }
 static VkCommandPool g_pool;
 static VkCommandBuffer g_cb;
 static VkFence g_fence;
@@ -56,10 +70,28 @@ std::atomic<uint32_t> g_hitch_us[HITCH_N];
 RenderWait::~RenderWait() { g_hitch_us[HITCH_RENDER_WAIT] += (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count(); }
 static uint64_t g_replay_us_acc = 0;  // replay + submit time since the last frames line (present thread order: game thread only)
 static uint64_t g_gpuwait_us_acc = 0;  // game-thread GPU waits since the last frames line (GPU-bound share, s75)
-// NX_GPU_TIME=1 (debug): timestamps at the start and end of every submit; their sum = GPU busy time on the frames line
+// Timestamps at the start and end of every submit (when the queue has timers): their sum = GPU busy time, used by
+// Auto 3D resolution (scene_res = auto) and shown on the frames line with NX_GPU_TIME=1 (debug)
 static VkQueryPool g_ts_pool = VK_NULL_HANDLE;
 static bool g_ts_written[3];
 static double g_gpu_busy_ns_acc = 0;
+static std::atomic<uint64_t> g_frame_gpu_ns{0};
+static PFN_vkGetPhysicalDeviceMemoryProperties2 g_mem_props2;  // with VK_EXT_memory_budget enabled, else null
+// "perf: VRAM" (s124, #11): the driver's budget for this game against what it uses. Over budget, Windows moves memory to
+// system RAM, which makes every frame much slower on small cards; the line says so.
+static void vram_budget_line() {
+    if (!g_mem_props2) return;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT mb{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 mp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &mb};
+    g_mem_props2(phys, &mp);
+    for (uint32_t i = 0; i < mp.memoryProperties.memoryHeapCount; i++) {
+        if (!(mp.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) || !mb.heapBudget[i]) continue;
+        const double use = mb.heapUsage[i] / 1048576.0, bud = mb.heapBudget[i] / 1048576.0;
+        log("perf: VRAM %.0f of %.0f MB budget used (heap %u, %.0f MB)%s", use, bud, i, mp.memoryProperties.memoryHeaps[i].size / 1048576.0,
+            use > bud ? ": OVER BUDGET, Windows moves memory to system RAM (much slower): lower res / MSAA / texture pack" : "");
+        break;
+    }
+}  // GPU busy ns of submits finished since the last frame end (auto_scene_res)
 static uint64_t g_rwait_us_acc = 0, g_slotwait_us_acc = 0;  // game thread blocked on the render thread / render thread on its submit slot
 static thread_local bool t_present_thread = false;
 static std::atomic<uint64_t> g_serial{0};  // last serial submitted
@@ -123,6 +155,13 @@ std::atomic<uint64_t> g_wgen{0};
 VkDeviceMemory alloc(VkMemoryRequirements req, VkMemoryPropertyFlags flags, VkDeviceSize* offset) {
     uint32_t t = mem_type(req.memoryTypeBits, flags);
     std::lock_guard<std::mutex> l(g_mem_lock);
+    // s124 (#11, 920MX 2 GB: 1792 MB in 256 MB blocks for 1050 MB used): under 4 GB of video memory, 64 MB blocks so less
+    // is reserved but unused (each memory type keeps a part-filled block). NX_VRAM_BLOCK_MB=<n> overrides.
+    static auto block_bytes = [] {
+        static const VkDeviceSize b = getenv("NX_VRAM_BLOCK_MB") ? std::clamp<VkDeviceSize>(atoi(getenv("NX_VRAM_BLOCK_MB")), 16, 1024) << 20
+                                      : vram_bytes() < (4ull << 30) ? 64ull << 20 : 256ull << 20;
+        return b;
+    };
     static uint32_t spill = ~0u;  // memory type that took blocks after video memory ran full (see below)
     for (uint32_t tt : {t, spill}) {
     if (tt == ~0u || !(req.memoryTypeBits & (1u << tt)) || (g_memprops.memoryTypes[tt].propertyFlags & flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
@@ -139,7 +178,7 @@ VkDeviceMemory alloc(VkMemoryRequirements req, VkMemoryPropertyFlags flags, VkDe
             return b.mem;
         }
     }
-    VkDeviceSize size = std::max<VkDeviceSize>(256ull << 20, req.size);
+    VkDeviceSize size = std::max<VkDeviceSize>(block_bytes(), req.size);
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, size, t};
     VkDeviceMemory m;
     // NX_VRAM_LIMIT_MB=<n> (test): device-local blocks past n MB fail as if the GPU were full
@@ -158,7 +197,7 @@ VkDeviceMemory alloc(VkMemoryRequirements req, VkMemoryPropertyFlags flags, VkDe
             if (i == t || !(req.memoryTypeBits & (1u << i))) continue;
             if (fake_full && (g_memprops.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) continue;
             if ((flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !(g_memprops.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
-            ai.memoryTypeIndex = i, ai.allocationSize = size = std::max<VkDeviceSize>(256ull << 20, req.size);
+            ai.memoryTypeIndex = i, ai.allocationSize = size = std::max<VkDeviceSize>(block_bytes(), req.size);
             if ((r = vkAllocateMemory(dev, &ai, nullptr, &m)) == VK_SUCCESS) {
                 static std::atomic<int> n{0};
                 if (n++ < 3) log("vk: video memory full: %llu MB in memory type %u instead of %u (slower)", (unsigned long long)(size >> 20), i, t);
@@ -219,6 +258,34 @@ PFN_vkGetDeviceProcAddr device_proc_addr() {  // for vk_fsr3.cpp (the FidelityFX
     return (PFN_vkGetDeviceProcAddr)gipa(g_inst, "vkGetDeviceProcAddr");
 }
 
+// HDR: the brightest nits Windows reports for the screen the window is on (DXGI output description), 0 if unknown
+static float screen_peak_nits() {
+#ifdef _WIN32
+    HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(ui_window()), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    HMONITOR mon = hwnd ? MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) : nullptr;
+    IDXGIFactory1* fac = nullptr;
+    if (!mon || FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&fac))) return 0;
+    float peak = 0;
+    IDXGIAdapter1* ad = nullptr;
+    for (UINT a = 0; !peak && fac->EnumAdapters1(a, &ad) == S_OK; a++) {
+        IDXGIOutput* out = nullptr;
+        for (UINT o = 0; !peak && ad->EnumOutputs(o, &out) == S_OK; o++) {
+            IDXGIOutput6* o6 = nullptr;
+            DXGI_OUTPUT_DESC1 d;
+            if (SUCCEEDED(out->QueryInterface(__uuidof(IDXGIOutput6), (void**)&o6)) && SUCCEEDED(o6->GetDesc1(&d)) && d.Monitor == mon)
+                peak = d.MaxLuminance;
+            if (o6) o6->Release();
+            out->Release();
+        }
+        ad->Release();
+    }
+    fac->Release();
+    return peak;
+#else
+    return 0;
+#endif
+}
+
 static void create_swapchain() {
     VkSurfaceCapabilitiesKHR caps;
     VKC(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, g_surface, &caps));
@@ -228,7 +295,34 @@ static void create_swapchain() {
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys, g_surface, &n, fmts.data());
     VkSurfaceFormatKHR f = fmts[0];
     for (auto& x : fmts)
-        if (x.format == VK_FORMAT_B8G8R8A8_UNORM) f = x;
+        if (x.format == VK_FORMAT_B8G8R8A8_UNORM && x.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) f = x;
+    // HDR (setting hdr): only with the async present path (its staging pass writes the HDR picture) and when the
+    // screen offers an HDR format (Windows HDR on); HDR10 first, then scRGB, else SDR as before
+    int mode = 0;
+    g_hdr_req = rt::hdr_setting();
+    if (g_hdr_req && g_present_queue) {
+        auto blit_ok = [](VkFormat fm) {  // present_thread blits the staging image into the swapchain image
+            VkFormatProperties fp;
+            vkGetPhysicalDeviceFormatProperties(phys, fm, &fp);
+            return (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
+        };
+        for (auto& x : fmts)
+            if (!mode && x.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT && blit_ok(x.format) &&
+                (x.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || x.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32))
+                f = x, mode = 1;
+        for (auto& x : fmts)
+            if (!mode && x.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT && x.format == VK_FORMAT_R16G16B16A16_SFLOAT && blit_ok(x.format))
+                f = x, mode = 2;
+        if (mode) g_hdr_screen_peak = screen_peak_nits();
+    }
+    static int told = -1;
+    if (told != mode + 4 * g_hdr_req) {
+        told = mode + 4 * g_hdr_req;
+        if (mode) log("vk: HDR output on: %s (format %d), screen peak %.0f nits (Windows), paper white %d nits, peak setting %d", mode == 1 ? "HDR10 / PQ" : "scRGB",
+                      (int)f.format, g_hdr_screen_peak, rt::hdr_paper_white(), rt::hdr_peak_setting());
+        else if (g_hdr_req) log("vk: HDR asked for but %s: SDR output", !g_present_queue ? "no async present queue" : !g_colorspace_ext ? "the driver has no VK_EXT_swapchain_colorspace" : "the screen offers no HDR format (Windows HDR off?)");
+    }
+    g_hdr_mode = mode;
     g_swap_format = f.format;
     g_swap_extent = caps.currentExtent.width != 0xFFFFFFFF ? caps.currentExtent : VkExtent2D{1280, 720};
     VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
@@ -279,6 +373,17 @@ static void init() {
     const char* const* exts = SDL_Vulkan_GetInstanceExtensions(&next);
     std::vector<const char*> iext(exts, exts + next);
     iext.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    {  // HDR colour spaces (setting hdr): enabled only where the loader lists the extension
+        auto enum_iext = (PFN_vkEnumerateInstanceExtensionProperties)gipa(nullptr, "vkEnumerateInstanceExtensionProperties");
+        uint32_t ne = 0;
+        if (enum_iext) enum_iext(nullptr, &ne, nullptr);
+        std::vector<VkExtensionProperties> ie(ne);
+        if (ne) enum_iext(nullptr, &ne, ie.data());
+        for (auto& e : ie) g_colorspace_ext |= !strcmp(e.extensionName, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+        bool listed = false;
+        for (auto* e : iext) listed |= !strcmp(e, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+        if (g_colorspace_ext && !listed) iext.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+    }
     dlss_instance_exts(iext);  // nothing unless nvngx_dlss.dll is next to tms.exe
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "TMSRecomp", 1, "TMSRecomp", 1, VK_API_VERSION_1_3};
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -301,7 +406,9 @@ static void init() {
     }
     vkGetPhysicalDeviceProperties(phys, &props);
     vkGetPhysicalDeviceMemoryProperties(phys, &g_memprops);
-    log("vk: %s (driver %u.%u)", props.deviceName, props.driverVersion >> 22, (props.driverVersion >> 14) & 0xFF);
+    log("vk: %s (driver %u.%u), %llu MB video memory", props.deviceName, props.driverVersion >> 22, (props.driverVersion >> 14) & 0xFF,
+        (unsigned long long)(vram_bytes() >> 20));
+    rt::perfmon_start(props.deviceName, props.vendorID);
     if (!SDL_Vulkan_CreateSurface(win, g_inst, nullptr, &g_surface)) fatal("SDL_Vulkan_CreateSurface: %s", SDL_GetError());
     vkGetPhysicalDeviceQueueFamilyProperties(phys, &n, nullptr);
     std::vector<VkQueueFamilyProperties> qf(n);
@@ -404,6 +511,11 @@ static void init() {
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
     std::vector<const char*> dexts(dext, dext + 3 + fault_ext + cp_ext);
+    for (auto& e : have)  // s124: Windows' video memory budget for the "perf: VRAM" line (PORTABILITY: optional)
+        if (!strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) {
+            dexts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+            g_mem_props2 = (PFN_vkGetPhysicalDeviceMemoryProperties2)gipa(g_inst, "vkGetPhysicalDeviceMemoryProperties2");
+        }
     dlss_device_exts(have, dexts);
     // optional (s118, Augs' CPU-bound crosswalk): push descriptors write a draw's resources straight into the command
     // buffer (vkCmdPushDescriptorSetKHR) instead of allocate + update + bind per draw. NX_PUSH_DESC=0 off.
@@ -445,10 +557,10 @@ static void init() {
     VkSemaphoreTypeCreateInfo tci{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, nullptr, VK_SEMAPHORE_TYPE_TIMELINE, 0};
     VkSemaphoreCreateInfo tsci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &tci};
     VKC(vkCreateSemaphore(dev, &tsci, nullptr, &g_timeline));
-    if (getenv("NX_GPU_TIME") && qf[qfam].timestampValidBits && props.limits.timestampPeriod > 0) {
+    if (qf[qfam].timestampValidBits && props.limits.timestampPeriod > 0) {  // PORTABILITY: no timers = Auto 3D resolution stays 100%
         VkQueryPoolCreateInfo qpi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, nullptr, 0, VK_QUERY_TYPE_TIMESTAMP, 6};
-        VKC(vkCreateQueryPool(dev, &qpi, nullptr, &g_ts_pool));
-        log("vk: GPU timing on (NX_GPU_TIME)");
+        if (vkCreateQueryPool(dev, &qpi, nullptr, &g_ts_pool) != VK_SUCCESS) g_ts_pool = VK_NULL_HANDLE;
+        if (getenv("NX_GPU_TIME")) log("vk: GPU timing %s (NX_GPU_TIME)", g_ts_pool ? "on" : "unavailable");
     }
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     VKC(vkCreateFence(dev, &fci, nullptr, &g_fence));
@@ -726,8 +838,34 @@ struct Twin { Image* hi; Image* lo; std::vector<nvn::Texture*> tex; };  // lo: n
 static std::vector<Twin> g_twins;  // g_twin_lock
 static std::mutex g_twin_lock;
 static bool g_scene_lo;
+// 3D resolution (setting scene_res) needs linear blits of the scene formats (PORTABILITY: checked, else stays 100%)
+bool spatial_upscale_ok() {
+    static const bool ok = [] {
+        const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        for (VkFormat f : {VK_FORMAT_B10G11R11_UFLOAT_PACK32, VK_FORMAT_R8G8B8A8_UNORM}) {
+            VkFormatProperties fp{};
+            vkGetPhysicalDeviceFormatProperties(phys, f, &fp);
+            if ((fp.optimalTilingFeatures & need) != need) { log("vk: 3D resolution below 100%% unavailable (format %d cannot be blitted linearly)", (int)f); return false; }
+        }
+        return true;
+    }();
+    return ok;
+}
+// Auto 3D resolution (scene_res = auto, s123, #11): like a console engine's dynamic resolution. The GPU time of 3D
+// frames (submit timestamps) is averaged over 30-frame windows and compared with the frame budget of the fps setting:
+// over 90% twice in a row = one step down; a step up only when even a fully pixel-bound frame would stay under 80% at the
+// larger size for 6 windows (and twice as long after a step up had to be taken back), so it does not swing. Each step is
+// the same frame-end rebuild of the lo images as a manual change. Menus / movies / loading (no FXAA draw) are not counted.
+static const int k_auto_steps[] = {100, 85, 75, 67, 50};
+static int g_auto_step = getenv("NX_AUTO_RES_START") ? std::clamp(atoi(getenv("NX_AUTO_RES_START")), 0, 4) : 0;  // render thread (frame end); debug: start step
+static int scene_pct() { return rt::scene_res() > 0 ? rt::scene_res() : k_auto_steps[g_auto_step]; }
 static float lo_for_setting() {
-    if (!rt::fsr3_setting()) return 0;  // anti-aliasing is not FSR 3 / DLSS: no upscaling, no lo images in VRAM
+    if (!rt::fsr3_setting()) {  // 3D resolution (scene_res) with AA off / FXAA / SMAA: linear upscale at the FXAA draw
+        const int p = scene_pct();
+        if (p >= 100 || !spatial_upscale_ok()) return 0;
+        const float hi = res_scale(), lo = std::max(floorf(hi * p / 100.f * 80) / 80, 0.5f);
+        return lo < hi ? lo : 0;
+    }
     static const float ratio[5] = {1, 1.5f, 1.7f, 2, 3};  // AMD's Quality / Balanced / Performance / Ultra Performance
     const int m = std::clamp(rt::fsr3_quality(), 0, 4);
     const float hi = res_scale();
@@ -737,6 +875,11 @@ static float lo_for_setting() {
 }
 static std::atomic<float> g_lo{-1.f};  // current scene scale, written under g_twin_lock
 static void log_lo(float lo) {
+    if (!rt::fsr3_setting() && (rt::scene_res() < 100)) {
+        log("vk: 3D resolution %s%d%%: %s (scene %ux%u of %ux%u)", rt::scene_res() ? "" : "auto ", scene_pct(), lo > 0 ? "on" : "off", (uint32_t)(1280 * lo), (uint32_t)(720 * lo),
+            (uint32_t)lround(1280 * res_scale()), (uint32_t)lround(720 * res_scale()));
+        return;
+    }
     log("vk: FSR 3 / DLSS upscaling %s (mode %d, scene %ux%u of %ux%u)", lo > 0 ? "on" : "off", rt::fsr3_quality(),
         (uint32_t)(1280 * lo), (uint32_t)(720 * lo), (uint32_t)lround(1280 * res_scale()), (uint32_t)lround(720 * res_scale()));
 }
@@ -948,6 +1091,7 @@ using namespace vk;
 namespace nvn {
 
 void replay(VkCommandBuffer cb, const std::vector<Cmd>& cmds);  // vk_replay.cpp
+void replay(VkCommandBuffer cb, const std::vector<const Cmd*>& cmds);  // same, a flattened list by pointer
 void descriptors_reset(int slot);
 void pass_timing_slot(VkCommandBuffer cb, int slot);  // NX_GPU_PASSES (vk_replay.cpp)
 void pass_timing_report(uint64_t frames);
@@ -1010,9 +1154,43 @@ void vk::defer_destroy(VkImage image, VkImageView view, std::map<uint64_t, VkIma
 }
 // frame end (upscale_frame_end, before the next frame's phase): the upscaling setting changed -> all targets back to full
 // size, old lo images freed once the GPU is past them, new ones made at the new scale (none when off)
+void vk::auto_scene_res(bool scene_frame) {
+    static uint32_t frames = 0, over = 0, under = 0, skip = 0, up_need = 6, since_up = ~0u;
+    static uint64_t acc = 0;
+    static bool told = false;
+    const uint64_t ns = g_frame_gpu_ns.exchange(0);
+    if (scene_frame) rt::g_perf_in_game = true;
+    if (rt::scene_res() != 0 || rt::fsr3_setting() || !spatial_upscale_ok()) { frames = over = under = 0, acc = 0; return; }
+    if (!g_ts_pool) {
+        if (!told) told = true, log("vk: Auto 3D resolution: this GPU has no frame timers, it stays at 100%%");
+        return;
+    }
+    if (!scene_frame) return;
+    acc += ns;
+    if (++frames < 30) return;
+    const double ms = acc / 1e6 / frames;
+    acc = 0, frames = 0;
+    if (since_up != ~0u) since_up++;
+    if (skip) { skip--; return; }  // the first window after a step mixes both sizes
+    static const double forced = getenv("NX_AUTO_RES_BUDGET") ? atof(getenv("NX_AUTO_RES_BUDGET")) : 0;  // debug: budget in ms
+    const int fps = rt::fps_setting();
+    const double budget = forced > 0 ? forced : 1000.0 / (fps >= 30 ? fps : 60);
+    over = ms > budget * 0.9 ? over + 1 : 0;
+    const int cur = k_auto_steps[g_auto_step], up = g_auto_step ? k_auto_steps[g_auto_step - 1] : cur;
+    under = g_auto_step && ms * (up * up) / (cur * cur) < budget * 0.8 ? under + 1 : 0;
+    int step = g_auto_step;
+    if (over >= 2 && g_auto_step < 4) {
+        step++;
+        if (since_up < 20) up_need = std::min(up_need * 2, 48u);  // a step up taken back within ~10 s: wait longer next time
+    } else if (under >= up_need) step--, since_up = 0;
+    if (step == g_auto_step) return;
+    log("vk: Auto 3D resolution %d%% -> %d%% (GPU %.2f ms per 3D frame, budget %.2f ms)", cur, k_auto_steps[step], ms, budget);
+    g_auto_step = step, over = under = 0, skip = 1;
+}
 void vk::upscale_apply_setting() {
     const float want = lo_for_setting();
     if (want == upscale_lo_scale()) return;
+    const auto t0 = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> l(g_twin_lock);
     g_scene_lo = false;
     for (Twin& w : g_twins) {
@@ -1031,6 +1209,7 @@ void vk::upscale_apply_setting() {
     }
     g_lo = want;
     log_lo(want);
+    log("vk: 3D resolution images rebuilt in %.2f ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 namespace nvn {
 static void free_dead_images() {  // g_vk_lock held
@@ -1093,7 +1272,9 @@ bool gpu_wait(uint64_t serial, uint64_t timeout_ns) {
 namespace nvn {
 
 // next slot: wait until its previous submit finished, then reuse its command buffer, descriptor pools and upload ring
+uint64_t g_cb_begins = 0;  // command buffers begun (vk_replay.cpp draw(): a new one has no graphics state yet)
 static void begin() {
+    g_cb_begins++;
     g_slot = (g_slot + 1) % 3;
     Slot& sl = g_slots[g_slot];
     { HitchTimer ht{HITCH_SLOT_WAIT}; gpu_wait(sl.serial); }  // also in HITCH_GPU_WAIT: the rest of that is nvnSyncWait
@@ -1106,8 +1287,11 @@ static void begin() {
     VKC(vkBeginCommandBuffer(g_cb, &bi));
     if (g_ts_pool) {  // the slot's previous submit is done (waited above): add its GPU time
         uint64_t ts[2];
-        if (g_ts_written[g_slot] && vkGetQueryPoolResults(dev, g_ts_pool, 2 * g_slot, 2, sizeof ts, ts, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && ts[1] > ts[0])
-            g_gpu_busy_ns_acc += (ts[1] - ts[0]) * (double)props.limits.timestampPeriod;
+        if (g_ts_written[g_slot] && vkGetQueryPoolResults(dev, g_ts_pool, 2 * g_slot, 2, sizeof ts, ts, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && ts[1] > ts[0]) {
+            const double ns = (ts[1] - ts[0]) * (double)props.limits.timestampPeriod;
+            g_gpu_busy_ns_acc += ns;
+            g_frame_gpu_ns += (uint64_t)ns;
+        }
         vkCmdResetQueryPool(g_cb, g_ts_pool, 2 * g_slot, 2);
         vkCmdWriteTimestamp(g_cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g_ts_pool, 2 * g_slot);
         g_ts_written[g_slot] = false;
@@ -1144,18 +1328,16 @@ static void end_and_wait(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal =
 extern int g_log_draws;
 
 // NX_SYNC_SUBMIT=1: wait for every submit as before (A/B test of the asynchronous path)
-// OP_CALL (nvn_hle.cpp CallCommands, s117): the called list, expanded here on the render thread. Blobs are copied as
-// views; the submit job keeps the lists, and they keep the lists they call.
-static void flatten(const std::vector<Cmd>& in, std::vector<Cmd>& out) {
+// OP_CALL (nvn_hle.cpp CallCommands, s117): the called list, expanded here on the render thread as pointers to the
+// commands (s119: copying each ~80-byte Cmd was ~12% of the render thread at the Shibuya crosswalk); the submit job
+// keeps the lists, and they keep the lists they call, so the pointers stay valid through the replay.
+static void flatten(const std::vector<Cmd>& in, std::vector<const Cmd*>& out) {
     for (const Cmd& k : in) {
         if (k.op == OP_CALL) {
             flatten(*(const std::vector<Cmd>*)(uintptr_t)((uint64_t)k.a[1] << 32 | k.a[0]), out);
             continue;
         }
-        Cmd& d = out.emplace_back();
-        d.op = k.op;
-        memcpy(d.a, k.a, sizeof d.a);
-        d.blob.v = k.blob.v;
+        out.push_back(&k);
     }
 }
 void backend_submit(const std::vector<const std::vector<Cmd>*>& lists) {
@@ -1166,7 +1348,7 @@ void backend_submit(const std::vector<const std::vector<Cmd>*>& lists) {
     static const bool sync = getenv("NX_SYNC_SUBMIT") != nullptr;
     begin();
     g_submit_serial++;
-    static std::vector<Cmd> flat;  // g_vk_lock held
+    static std::vector<const Cmd*> flat;  // g_vk_lock held
     for (auto* cmds : lists) {
         if (std::none_of(cmds->begin(), cmds->end(), [](const Cmd& k) { return k.op == OP_CALL; })) { replay(g_cb, *cmds); continue; }
         flat.clear();
@@ -1231,6 +1413,8 @@ static void dump_frame(Image* src, uint64_t n, const char* tag = "frame", const 
     if (src->format == VK_FORMAT_R8G8B8A8_UNORM || src->format == VK_FORMAT_R8G8B8A8_SRGB)
         for (uint32_t i = 0; i < sz; i += 4) std::swap(px[i], px[i + 2]);  // RGBA -> BGRA
     bool hdr_rgb = src->format == VK_FORMAT_B10G11R11_UFLOAT_PACK32;  // scene colour: decode, clamp to 0..1
+    float top = 0;  // brightest channel and how many pixels go over 1 (the part an SDR screen clips; HDR keeps it)
+    uint32_t over = 0;
     if (hdr_rgb)
         for (uint32_t i = 0; i < sz; i += 4) {
             uint32_t v;
@@ -1240,7 +1424,10 @@ static void dump_frame(Image* src, uint64_t n, const char* tag = "frame", const 
                 return e ? ldexpf(1 + m / float(1u << mant), (int)e - 15) : ldexpf(m / float(1u << mant), -14);
             };
             float r = uf(v & 0x7ff, 6), g = uf((v >> 11) & 0x7ff, 6), b = uf(v >> 22, 5);
-            px[i] = (uint8_t)std::min(255.f, b * 255), px[i + 1] = (uint8_t)std::min(255.f, g * 255);
+            const float mx = std::max(r, std::max(g, b));
+            top = std::max(top, mx);
+            over += mx > 1;
+            px[i] =(uint8_t)std::min(255.f, b * 255), px[i + 1] = (uint8_t)std::min(255.f, g * 255);
             px[i + 2] = (uint8_t)std::min(255.f, r * 255), px[i + 3] = 255;
         }
     static const bool lum = getenv("NX_SHOT_LUM") && atoi(getenv("NX_SHOT_LUM"));  // debug: log mean brightness, no file
@@ -1258,6 +1445,7 @@ static void dump_frame(Image* src, uint64_t n, const char* tag = "frame", const 
     fclose(f);
     if (out && !MoveFileExA(path, out, MOVEFILE_REPLACE_EXISTING)) return (void)DeleteFileA(path);
     if (out) snprintf(path, sizeof path, "%s", out);
+    if (hdr_rgb) log("vk: %s float target: brightest %.2f, %.2f%% of pixels over 1", path, top, 100.0 * over / (w * h));
     log("vk: wrote %s (%s)", path, hdr_rgb || src->format == VK_FORMAT_R8G8B8A8_UNORM || src->format == VK_FORMAT_R8G8B8A8_SRGB || src->format == VK_FORMAT_B8G8R8A8_UNORM ? "8-bit" : "raw");
 }
 
@@ -1278,7 +1466,8 @@ static std::mutex g_pres_lock;
 static std::condition_variable g_pres_cv;
 
 static void make_staging(Image& im, uint32_t w, uint32_t h, VkFormat fmt) {
-    // shortcut: the old image and its memory are leaked when the game's frame size or format changes (rare)
+    // the old image goes once the GPU is past it (frame size change; HDR on / off switches the format live)
+    if (im.image) defer_destroy(im.image, im.view, {}, im.mem, im.mem_off, im.mem_size);
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType = VK_IMAGE_TYPE_2D;
     ci.format = fmt;
@@ -1287,7 +1476,8 @@ static void make_staging(Image& im, uint32_t w, uint32_t h, VkFormat fmt) {
     ci.samples = VK_SAMPLE_COUNT_1_BIT;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    const bool storage = fmt == VK_FORMAT_R8G8B8A8_UNORM;  // the sharpening pass writes it (sharpen_spv.h: rgba8)
+    // the sharpening pass writes rgba8 (sharpen_spv.h), the HDR pass rgba16f (hdr_spv.h)
+    const bool storage = fmt == VK_FORMAT_R8G8B8A8_UNORM || fmt == VK_FORMAT_R16G16B16A16_SFLOAT;
     if (storage) ci.usage |= VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;  // sampled: upscale -> sharpen
     VKC(vkCreateImage(dev, &ci, nullptr, &im.image));
     VkMemoryRequirements req;
@@ -1295,6 +1485,7 @@ static void make_staging(Image& im, uint32_t w, uint32_t h, VkFormat fmt) {
     VkDeviceSize off;
     VkDeviceMemory m = alloc(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &off);
     VKC(vkBindImageMemory(dev, im.image, m, off));
+    im.mem = m, im.mem_off = off, im.mem_size = req.size;
     im.view = VK_NULL_HANDLE;
     if (storage) {
         VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -1389,6 +1580,15 @@ static void present_thread() {
         if (!asap) rt::wait_vsync_tick(g_staged[i].tick);
         const double vsync_ms = ms_since(t_vs);
         auto t_tick = std::chrono::steady_clock::now();
+        if (rt::hdr_setting() != g_hdr_req) {  // HDR switched in the F1 menu: a swapchain of the other kind
+            queue_idle();
+            create_swapchain();
+        }
+        if ((src->format == VK_FORMAT_R16G16B16A16_SFLOAT) != (g_hdr_mode != 0)) {  // staged for the other mode: drop it
+            std::lock_guard<std::mutex> l(g_pres_lock);
+            g_staged[i].state = Staged::FREE;
+            continue;
+        }
         uint32_t idx;
         // acquire with a fence waited here on the CPU: a GPU-side semaphore wait on the display's release stalled the
         // game's queue too (both queues share the hardware), up to ~30 ms
@@ -1610,8 +1810,8 @@ static OverlayPass* overlay_pass() {
     }();
     return op;
 }
-static void overlay_subs(int slot, Image& st, std::shared_ptr<const rt::SubsBitmap> b) {
-    if (!b || !st.view) return;
+// the subtitle bitmap in slot's host-visible buffer (written when it changed); null when larger than the frame
+static VkBuffer subs_buffer(int slot, const Image& st, const std::shared_ptr<const rt::SubsBitmap>& b) {
     OverlayPass* op = overlay_pass();
     const VkDeviceSize need = (VkDeviceSize)b->w * b->h * 4;
     // s114: a 4K P5 panel + a notice took ~18 MB and neither was drawn. The buffer now holds a whole frame; a bigger frame
@@ -1633,8 +1833,15 @@ static void overlay_subs(int slot, Image& st, std::shared_ptr<const rt::SubsBitm
         VKC(vkMapMemory(dev, op->mem[slot], 0, cap, 0, &m));
         op->map[slot] = (uint32_t*)m, op->cap[slot] = cap;
     }
-    if (need > op->cap[slot]) return;  // larger than the frame: not drawn
+    if (need > op->cap[slot]) return VK_NULL_HANDLE;  // larger than the frame: not drawn
     if (op->shown[slot] != b) memcpy(op->map[slot], b->rgba.data(), need), op->shown[slot] = b;
+    return op->buf[slot];
+}
+static void overlay_subs(int slot, Image& st, std::shared_ptr<const rt::SubsBitmap> b) {
+    if (!b || !st.view) return;
+    OverlayPass* op = overlay_pass();
+    const VkDeviceSize need = (VkDeviceSize)b->w * b->h * 4;
+    if (!subs_buffer(slot, st, b)) return;
     // after the copy or the sharpening pass into st
     VkImageMemoryBarrier ib{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     ib.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
@@ -1658,6 +1865,178 @@ static void overlay_subs(int slot, Image& st, std::shared_ptr<const rt::SubsBitm
     vkCmdDispatch(g_cb, (b->w + 7) / 8, (b->h + 7) / 8, 1);
 }
 
+// HDR output (setting hdr, swapchain HDR10 / scRGB): one compute pass (tools/spvgen/Hdr.cs -> hdr_spv.h) from the game's
+// float frame (scene + UI before its 8-bit copy: highlights above SDR white kept) into the RGBA16F staging image at the
+// window size: bilinear scale, subtitles over it, nits (paper white), highlight roll-off to the screen's peak, PQ or
+// scRGB. The present blit then only places it (fit_blit bars). Replaces upscale / sharpen / copy / overlay_subs in HDR.
+// HDR scene snapshot (s121): vk_replay.cpp blits the 3D scene into this right after the game's FXAA draw (before its gamma
+// pass and the UI); hdr_pass expands only pixels the UI left alone. RGBA16F (sampleable); the blit's format support is
+// checked (PORTABILITY), else null: HDR without the expansion, as before.
+static Image g_hdr_scene;
+static std::atomic<bool> g_hdr_scene_fresh{false};
+Image* hdr_scene_target(uint32_t w, uint32_t h, VkFormat from) {
+    static std::map<VkFormat, bool> ok;
+    if (!ok.count(from)) {
+        VkFormatProperties a{}, b{};
+        vkGetPhysicalDeviceFormatProperties(phys, from, &a);
+        vkGetPhysicalDeviceFormatProperties(phys, VK_FORMAT_R16G16B16A16_SFLOAT, &b);
+        ok[from] = (a.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) && (b.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT);
+        if (!ok[from]) log("vk: HDR scene snapshot: format %d cannot be blitted: highlights stay as the game made them", (int)from);
+    }
+    if (!ok[from] || (!rt::hdr_boost() && !rt::hdr_color())) return nullptr;
+    if (g_hdr_scene.w != w || g_hdr_scene.h != h || !g_hdr_scene.image) make_staging(g_hdr_scene, w, h, VK_FORMAT_R16G16B16A16_SFLOAT);
+    g_hdr_scene_fresh = true;
+    return &g_hdr_scene;
+}
+static void hdr_pass(int slot, Image* src, Image& st, const std::shared_ptr<const rt::SubsBitmap>& subs) {
+    struct Pass { VkPipeline pipe; VkPipelineLayout layout; VkDescriptorSet sets[4]; VkBuffer dummy; };
+    static Pass* hp = [] {
+        auto* p = new Pass{};
+        VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, sizeof k_hdr_spv, k_hdr_spv};
+        VkShaderModule mod;
+        VKC(vkCreateShaderModule(dev, &smi, nullptr, &mod));
+        VkDescriptorSetLayoutBinding b[4] = {{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+                                             {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+                                             {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+                                             {3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT}};
+        VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, b};
+        VkDescriptorSetLayout dsl;
+        VKC(vkCreateDescriptorSetLayout(dev, &dli, nullptr, &dsl));
+        VkPushConstantRange pr{VK_SHADER_STAGE_COMPUTE_BIT, 0, 60};
+        VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &dsl, 1, &pr};
+        VKC(vkCreatePipelineLayout(dev, &pli, nullptr, &p->layout));
+        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod, "main"};
+        ci.layout = p->layout;
+        VKC(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, nullptr, &p->pipe));
+        VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}};
+        VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 4, 3, ps};
+        VkDescriptorPool pool;
+        VKC(vkCreateDescriptorPool(dev, &dpi, nullptr, &pool));
+        VkDescriptorSetLayout l4[4] = {dsl, dsl, dsl, dsl};
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, pool, 4, l4};
+        VKC(vkAllocateDescriptorSets(dev, &ai, p->sets));
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};  // bound when there is no subtitle (never read)
+        bci.size = 16;
+        bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        VKC(vkCreateBuffer(dev, &bci, nullptr, &p->dummy));
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(dev, p->dummy, &req);
+        // own memory: from alloc()'s shared image blocks (packed by alignment only, not bufferImageGranularity) the
+        // first live switch to HDR lost the device every time (s119, A/B in an isolated data folder; granularity =
+        // likely cause, not proven)
+        VkMemoryAllocateInfo mai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, mem_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)};
+        VkDeviceMemory dm;
+        VKC(vkAllocateMemory(dev, &mai, nullptr, &dm));
+        VKC(vkBindBufferMemory(dev, p->dummy, dm, 0));
+        log("vk: HDR output pass ready");
+        return p;
+    }();
+    VkBuffer sb = subs ? subs_buffer(slot, st, subs) : VK_NULL_HANDLE;
+    struct { int32_t sw, sh, dw, dh, bx, by, bw, bh; float paper, knee, peak; int32_t mode; float itm, sat; int32_t scene; } pc{};
+    pc.sw = (int32_t)src->w, pc.sh = (int32_t)src->h, pc.dw = (int32_t)st.w, pc.dh = (int32_t)st.h;
+    if (sb) pc.bx = subs->x, pc.by = subs->y, pc.bw = subs->w, pc.bh = subs->h;
+    pc.peak = rt::hdr_peak_setting() > 0 ? (float)rt::hdr_peak_setting() : g_hdr_screen_peak >= 200 ? g_hdr_screen_peak : 1000.f;
+    pc.paper = std::min((float)rt::hdr_paper_white(), pc.peak);
+    pc.knee = std::min(std::max(pc.paper, 0.5f * pc.peak), 0.9f * pc.peak);  // below it highlights stay exact, above they roll off
+    pc.mode = g_hdr_mode == 2 ? 1 : 0;
+    static const float k_itm[5] = {0, 0.35f, 0.6f, 0.8f, 1.0f}, k_sat[5] = {0, 0.08f, 0.16f, 0.25f, 0.35f};
+    pc.itm = k_itm[std::clamp(rt::hdr_boost(), 0, 4)], pc.sat = k_sat[std::clamp(rt::hdr_color(), 0, 4)];
+    // the scene snapshot of this frame (vk_replay.cpp at the FXAA draw), same size as the frame: else no expansion
+    const bool scene = g_hdr_scene_fresh.exchange(false) && g_hdr_scene.image && g_hdr_scene.w == src->w && g_hdr_scene.h == src->h;
+    pc.scene = scene ? 1 : 0;
+    transition(g_cb, src, VK_IMAGE_LAYOUT_GENERAL);
+    transition(g_cb, &st, VK_IMAGE_LAYOUT_GENERAL);
+    if (scene) transition(g_cb, &g_hdr_scene, VK_IMAGE_LAYOUT_GENERAL);
+    VkDescriptorImageInfo ii[3] = {{VK_NULL_HANDLE, src->view, VK_IMAGE_LAYOUT_GENERAL}, {VK_NULL_HANDLE, st.view, VK_IMAGE_LAYOUT_GENERAL},
+                                   {VK_NULL_HANDLE, scene ? g_hdr_scene.view : src->view, VK_IMAGE_LAYOUT_GENERAL}};
+    VkDescriptorBufferInfo bi{sb ? sb : hp->dummy, 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet wr[4] = {{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, hp->sets[slot], 0, 0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &ii[0]},
+                                  {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, hp->sets[slot], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &ii[1]},
+                                  {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, hp->sets[slot], 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &bi},
+                                  {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, hp->sets[slot], 3, 0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &ii[2]}};
+    vkUpdateDescriptorSets(dev, 4, wr, 0, nullptr);
+    vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_COMPUTE, hp->pipe);
+    vkCmdBindDescriptorSets(g_cb, VK_PIPELINE_BIND_POINT_COMPUTE, hp->layout, 0, 1, &hp->sets[slot], 0, nullptr);
+    vkCmdPushConstants(g_cb, hp->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
+    vkCmdDispatch(g_cb, (st.w + 7) / 8, (st.h + 7) / 8, 1);
+}
+
+// debug (NX_HDR_SHOT=1, then NX_CONTROL "shot"): the HDR staging image read back: luminance statistics in nits in the log
+// and shots/hdr_NNNNN.bmp (nits / paper white, clipped, 2.2 gamma: an SDR view of the HDR picture)
+static std::atomic<bool> g_hdr_shot{false};
+static VkBuffer g_hrb_buf = VK_NULL_HANDLE;
+static void* g_hrb_map = nullptr;
+static VkDeviceSize g_hrb_cap = 0;
+static void hdr_readback_record(Image& st) {
+    const VkDeviceSize size = (VkDeviceSize)st.w * st.h * 8;
+    if (size > g_hrb_cap) {  // shortcut: a smaller old buffer is leaked (debug only)
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = size;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VKC(vkCreateBuffer(dev, &bci, nullptr, &g_hrb_buf));
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(dev, g_hrb_buf, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size,
+                                mem_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)};
+        VkDeviceMemory m;
+        VKC(vkAllocateMemory(dev, &ai, nullptr, &m));
+        VKC(vkBindBufferMemory(dev, g_hrb_buf, m, 0));
+        VKC(vkMapMemory(dev, m, 0, req.size, 0, &g_hrb_map));
+        g_hrb_cap = size;
+    }
+    VkBufferImageCopy c{};
+    c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    c.imageExtent = {st.w, st.h, 1};
+    vkCmdCopyImageToBuffer(g_cb, st.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_hrb_buf, 1, &c);
+}
+static void hdr_readback_finish(const Image& st) {
+    auto half = [](uint16_t h) {
+        const uint32_t e = (h >> 10) & 31, m = h & 1023;
+        const float v = e ? ldexpf(1 + m / 1024.f, (int)e - 15) : ldexpf(m / 1024.f, -14);
+        return (h & 0x8000) ? -v : v;
+    };
+    auto pq_nits = [](float v) {  // SMPTE ST 2084 inverse
+        const float p = powf(std::max(v, 0.f), 1 / 78.84375f);
+        return 10000 * powf(std::max(p - 0.8359375f, 0.f) / (18.8515625f - 18.6875f * p), 1 / 0.1593017578125f);
+    };
+    const bool pq = g_hdr_mode == 1;
+    const float paper = (float)rt::hdr_paper_white();
+    const uint32_t n = st.w * st.h;
+    std::vector<float> y(n);
+    std::vector<uint8_t> px((size_t)n * 4);
+    const uint16_t* s = (const uint16_t*)g_hrb_map;
+    double sum = 0;
+    uint32_t over = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        float c[3];
+        for (int k = 0; k < 3; k++) c[k] = pq ? pq_nits(half(s[4 * i + k])) : half(s[4 * i + k]) * 80;
+        y[i] = pq ? 0.2627f * c[0] + 0.6780f * c[1] + 0.0593f * c[2] : 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+        sum += y[i];
+        over += y[i] > paper * 1.05f;
+        if (pq) {  // preview in BT.709 (BT.2087 inverse)
+            const float r = 1.6605f * c[0] - 0.5876f * c[1] - 0.0728f * c[2], g = -0.1246f * c[0] + 1.1329f * c[1] - 0.0083f * c[2],
+                        b = -0.0182f * c[0] - 0.1006f * c[1] + 1.1187f * c[2];
+            c[0] = r, c[1] = g, c[2] = b;
+        }
+        for (int k = 0; k < 3; k++) px[4 * i + 2 - k] = (uint8_t)lround(255 * powf(std::clamp(c[k] / paper, 0.f, 1.f), 1 / 2.2f));
+        px[4 * i + 3] = 255;
+    }
+    std::vector<float> sorted(y);
+    std::sort(sorted.begin(), sorted.end());
+    log("hdr shot: %ux%u %s, luminance nits: max %.0f, 99.9%% %.0f, 99%% %.0f, median %.0f, mean %.1f; %.2f%% of pixels over paper white %.0f",
+        st.w, st.h, pq ? "PQ" : "scRGB", sorted[n - 1], sorted[(size_t)(n * 0.999)], sorted[(size_t)(n * 0.99)], sorted[n / 2], sum / n,
+        100.0 * over / n, paper);
+    static int k = 0;
+    char path[512];
+    snprintf(path, sizeof path, "%s/shots/hdr_%05d.bmp", g_data_dir.c_str(), ++k);
+    uint8_t hdr[54] = {'B', 'M'};
+    auto put = [&](int o, uint32_t v) { memcpy(hdr + o, &v, 4); };
+    put(2, 54 + n * 4); put(10, 54); put(14, 40); put(18, st.w); put(22, (uint32_t)-(int32_t)st.h);
+    hdr[26] = 1; hdr[28] = 32; put(34, n * 4);
+    if (FILE* f = fopen(path, "wb")) fwrite(hdr, 1, 54, f), fwrite(px.data(), 1, px.size(), f), fclose(f);
+}
+
 // screenshots show what the player sees: with sharpening on, the sharpened frame; subtitles on top
 static Image* shot_source(Image* src) {
     static Image img;
@@ -1678,7 +2057,7 @@ static Image* shot_source(Image* src) {
     return &img;
 }
 
-static void present_async(Image* src) {
+static void present_async(Image* src, Image* hsrc) {
     static std::once_flag once;
     std::call_once(once, [] { std::thread(present_thread).detach(); });
     int i = -1;
@@ -1695,16 +2074,43 @@ static void present_async(Image* src) {
     // NX_PRESENT_DELAY=n (vsync ticks after release, default 1): more absorbs slow staging copies, adds n/60 s latency
     static const uint64_t delay = getenv("NX_PRESENT_DELAY") ? strtoull(getenv("NX_PRESENT_DELAY"), nullptr, 10) : 1;
     g_staged[i].tick = rt::g_pace_tick + delay;
-    const bool up = upscale_wanted(src);
+    // HDR: the game's float frame when it was copied into this window texture this frame, else the window texture
+    // (copied first into a sampleable image: window textures are not made for sampling; sampling one lost the device)
+    static Image win_copy[3];
+    Image* hs = hsrc;
+    const bool hdr = g_hdr_mode && (hsrc || src->format == VK_FORMAT_R8G8B8A8_UNORM);
+    if (g_hdr_mode && !hdr) {
+        static bool told = false;
+        if (!told) told = true, log("vk: HDR: window texture format %d cannot be read; frames are dropped", (int)src->format);
+    }
+    const bool up = (hdr && g_swap_extent.width && g_swap_extent.height) || upscale_wanted(src);  // minimized: 0 x 0
     uint32_t ow = up ? g_swap_extent.width : src->w, oh = up ? g_swap_extent.height : src->h;
     if (up) {  // upscale to the picture's own shape inside the window (fit_blit adds the bars)
         const double s = std::min((double)ow / src->w, (double)oh / src->h);
         const uint32_t w = (uint32_t)lround(src->w * s), h = (uint32_t)lround(src->h * s);
         if (w * 100 < ow * 99 || h * 100 < oh * 99) ow = w, oh = h;
     }
-    if (st.w != ow || st.h != oh || st.format != src->format) make_staging(st, ow, oh, src->format);
+    const VkFormat sf = hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : src->format;
+    if (st.w != ow || st.h != oh || st.format != sf) make_staging(st, ow, oh, sf);
+    if (hdr && !hs) {
+        Image& wc = win_copy[i];
+        if (wc.w != src->w || wc.h != src->h || wc.format != src->format) make_staging(wc, src->w, src->h, src->format);
+        hs = &wc;
+    }
     begin();
-    if (up) {
+    if (hdr) {
+        static int told = -1;  // which source the HDR picture comes from (log on change)
+        if (told != (hsrc != nullptr)) told = hsrc != nullptr, log("vk: HDR source: %s (format %d, %ux%u)", hsrc ? "the game's float frame" : "the 8-bit window texture (no float copy this frame)", (int)hs->format, hs->w, hs->h);
+        if (!hsrc) {
+            transition(g_cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition(g_cb, hs, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            VkImageCopy c{};
+            c.srcSubresource = c.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            c.extent = {src->w, src->h, 1};
+            vkCmdCopyImage(g_cb, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hs->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        }
+        hdr_pass(i, hs, st, rt::frame_overlay(st.w, st.h));
+    } else if (up) {
         upscale(i, src, st);
     } else if (!sharpen(i, src, st)) {
         transition(g_cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -1714,9 +2120,12 @@ static void present_async(Image* src) {
         c.extent = {src->w, src->h, 1};
         vkCmdCopyImage(g_cb, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, st.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
     }
-    overlay_subs(i, st, rt::frame_overlay(st.w, st.h));
+    if (!hdr) overlay_subs(i, st, rt::frame_overlay(st.w, st.h));
     transition(g_cb, &st, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    const bool rb = hdr && g_hdr_shot.exchange(false);  // debug: NX_CONTROL "shot" with NX_HDR_SHOT=1
+    if (rb) hdr_readback_record(st);
     g_staged[i].serial = end_and_submit();
+    if (rb) gpu_wait(g_staged[i].serial), hdr_readback_finish(st);
     {
         std::lock_guard<std::mutex> l(g_pres_lock);
         if (g_pending >= 0) g_staged[g_pending].state = Staged::FREE;  // replaced by this newer frame
@@ -1783,10 +2192,10 @@ void backend_present(Texture* t) {
     static uint64_t ld_at = getenv("NX_LOG_DRAWS") ? strtoull(getenv("NX_LOG_DRAWS"), nullptr, 10) : 0, ld_n = 0;
     static int live_drawlog = 0;  // NX_CONTROL "drawlog [n]": frames still to log
     ++ld_n;
-    if (ld_at && ld_n + 1 == ld_at) { g_log_draws = 1000; log("NX_LOG_DRAWS: frame %llu", (unsigned long long)ld_at); }
+    if (ld_at && ld_n + 1 == ld_at) { g_log_draws = 20000; log("NX_LOG_DRAWS: frame %llu", (unsigned long long)ld_at); }
     else if ((ld_at && ld_n == ld_at) || (live_drawlog && --live_drawlog == 0)) g_log_draws = 0;
-    else if (live_drawlog) g_log_draws = 1000, log("NX_CONTROL drawlog: frame %llu", (unsigned long long)ld_n + 1);
-    if (int n = g_drawlog_request.exchange(0)) { g_log_draws = 1000; live_drawlog = n; log("NX_CONTROL drawlog: frame %llu", (unsigned long long)ld_n + 1); }
+    else if (live_drawlog) g_log_draws = 20000, log("NX_CONTROL drawlog: frame %llu", (unsigned long long)ld_n + 1);
+    if (int n = g_drawlog_request.exchange(0)) { g_log_draws = 20000; live_drawlog = n; log("NX_CONTROL drawlog: frame %llu", (unsigned long long)ld_n + 1); }
     // NX_DUMP_RT=<n>: at present n, also write every colour target drawn into since the last present (rt_<guest>_n.bmp)
     static uint64_t rt_at = getenv("NX_DUMP_RT") ? strtoull(getenv("NX_DUMP_RT"), nullptr, 10) : 0, rt_n = 0;
     static bool live_rt = false;  // NX_CONTROL "rt": dump at the next present
@@ -1806,6 +2215,9 @@ void backend_present(Texture* t) {
     vk::upscale_frame_end();
     memset(g_ops_since_present, 0, sizeof(uint64_t) * (OP_UNKNOWN + 1));
     if (getenv("NX_PRESENT_LAST") && g_last_rt) t = g_last_rt;
+    // HDR: the float frame noted for this window texture this frame (one frame only)
+    Image* hdr_src = t && g_hdr_src && t->guest == g_hdr_win ? g_hdr_src : nullptr;
+    g_hdr_src = nullptr;
     if (!dev || !t) return;
     {  // frame time stats every 10 s: presents/s, worst present-to-present gap
         using clk = std::chrono::steady_clock;
@@ -1827,13 +2239,26 @@ void backend_present(Texture* t) {
             auto low = [&](size_t k) { k = std::max<size_t>(k, 1); double s = 0; for (size_t i = 0; i < k; i++) s += gaps[i]; return 1000.0 * k / s; };
             log("frames: 1%% low %.1f fps, 0.1%% low %.1f fps, median %.2f ms, p99 %.2f ms (%zu frames)", low(gaps.size() / 100), low(gaps.size() / 1000),
                 gaps[gaps.size() / 2], gaps[gaps.size() / 100], gaps.size());
+            const double med_gap = gaps[gaps.size() / 2], p99_gap = gaps[gaps.size() / 100];  // perf line below
             gaps.clear();
             log("frames: %.1f/s, worst gap %.1f ms, %u gaps > 40 ms, %llu late vsyncs, longest frame %.1f ms, present blocked %.1f ms max (acquire %.1f, blit %.1f, present %.1f)",
                 n / secs, worst, over40, (unsigned long long)rt::g_late_vsyncs.exchange(0),
                 rt::g_frame_work_max_us.exchange(0) / 1000.0, g_present_block_max, g_block_part[0], g_block_part[1], g_block_part[2]);
             log("frames: replay + submit %.2f ms per frame (%.0f%% of the time), GPU waits %.2f ms per frame (%.2f for a submit slot), pacing waits %.2f ms per frame, render thread waits %.2f ms per frame", n ? g_replay_us_acc / 1e3 / n : 0.0,
                 g_replay_us_acc / 1e4 / secs, n ? g_gpuwait_us_acc / 1e3 / n : 0.0, n ? g_slotwait_us_acc / 1e3 / n : 0.0, n ? rt::g_pace_us.exchange(0) / 1e3 / n : 0.0, n ? g_rwait_us_acc / 1e3 / n : 0.0);
-            if (g_ts_pool) log("frames: GPU busy %.2f ms per frame (NX_GPU_TIME)", n ? g_gpu_busy_ns_acc / 1e6 / n : 0.0);
+            if (g_ts_pool && n) {  // s124 (#11): what limits the frame rate, in plain words
+                // typical frame = the median gap (loading hitches only move the mean); GPU / render thread are means
+                const double frame = med_gap, gpu = g_gpu_busy_ns_acc / 1e6 / n, rep = g_replay_us_acc / 1e3 / n;
+                const int fs = rt::auto30_active() ? 30 : rt::fps_setting();  // Auto 30 holding 30: that is the target
+                const double want = fs > 0 ? 1000.0 / fs : 0;
+                const char* why = want && frame < want * 1.1 ? "on target"
+                                  : gpu > frame * 0.8     ? "GPU-bound: the graphics card is the limit (lower 3D resolution, res, MSAA or effects)"
+                                  : rep > frame * 0.8     ? "CPU-bound: the render thread is the limit"
+                                                          : "CPU-bound: the game thread is the limit";
+                log("perf: typical frame %.1f ms (1%% slowest %.1f ms), GPU busy %.1f ms, render thread %.1f ms per frame: %s%s", frame, p99_gap, gpu, rep,
+                    why, want && p99_gap > want * 2.5 ? "; with hitches (loading / shader builds / spikes)" : "");
+            }
+            vram_budget_line();
             pass_timing_report(n);
             g_replay_us_acc = 0, g_gpuwait_us_acc = 0, g_gpu_busy_ns_acc = 0, g_rwait_us_acc = 0, g_slotwait_us_acc = 0;
             uint32_t tn = g_translate_n.exchange(0), th = g_translate_hits.exchange(0), pn = g_pipeline_n.exchange(0);
@@ -1856,7 +2281,11 @@ void backend_present(Texture* t) {
     if (every && (++presents % every) == 0) dump_frame(src, presents);
     static uint64_t live = 0;
     static const std::string live_tag = getenv("NX_SHOT_TAG") ? getenv("NX_SHOT_TAG") : "live";  // test rigs running side by side
-    if (g_shot_request > 0) g_shot_request--, dump_frame(shot_source(src), ++live, live_tag.c_str());  // NX_CONTROL "shot" / "shots N"
+    if (g_shot_request > 0) {  // NX_CONTROL "shot" / "shots N"
+        g_shot_request--, dump_frame(shot_source(src), ++live, live_tag.c_str());
+        static const bool hdr_shot = getenv("NX_HDR_SHOT") && atoi(getenv("NX_HDR_SHOT"));
+        if (hdr_shot) g_hdr_shot = true;
+    }
     if (g_hero_shot.exchange(0)) dump_frame(shot_source(src), 0, "hero", (g_data_dir + "/launcher_hero.bmp").c_str());
     if (g_user_shot.exchange(0)) {  // F12: <data>/shots/screenshot_<date>_<time>_N.bmp
         static uint64_t user = 0;
@@ -1867,7 +2296,7 @@ void backend_present(Texture* t) {
     }
     auto t_block = std::chrono::steady_clock::now();
     if (g_present_queue) {
-        present_async(src);
+        present_async(src, hdr_src);
         g_present_block_max = std::max(g_present_block_max,
                                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_block).count());
         return;

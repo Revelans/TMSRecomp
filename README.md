@@ -39,7 +39,7 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.5 beta.** It is tested until the chapter 2 Idolasphere with
+> **v0.1.6 beta.** It is tested until the chapter 2 Idolasphere with
 > saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
 > PCs: bug reports are very welcome.
 
@@ -62,6 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
+- [What's new in v0.1.6](#whats-new-in-v016)
 - [What's new in v0.1.5](#whats-new-in-v015)
 - [What's new in v0.1.4](#whats-new-in-v014)
 - [What's new in v0.1.3](#whats-new-in-v013)
@@ -135,6 +136,17 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
   Switch (right face button confirms) or Xbox / PC (bottom button confirms).
 - **Resist markers**: a shield over foes that resist the highlighted skill (also in the target panel) and a RESIST popup
   on resisted hits, next to the game's own weakness "!" and WEAK.
+- **WEAK in the skill list** (like Persona 5 Royal): a skill shows WEAK when a foe on the field is weak to it and you
+  already know that weakness. On by default; F1 / L3 + R3 menu and launcher > Game.
+- **Low-end options**: Auto 30 when slow (full game speed instead of slow motion), Crowd density (fewer walkers and cars
+  in town), Shadow detail (no far shadow layer), 3D resolution (the 3D scene renders at 85 / 75 / 67 / 50% and is
+  scaled up while menus and text stay sharp: the biggest FPS gain on weak graphics cards; Auto lowers it step by step
+  while the graphics card cannot keep your FPS and raises it again when there is room). Launcher > Display & FPS and
+  the F1 menu.
+- **3D models in video memory** (on by default, `vb_vram`): the game's unchanged model data is copied to video memory
+  instead of being read over the PCIe bus every frame: about half the GPU time in big areas such as the Shibuya crosswalk.
+- **HDR** (HDR screens, Windows HDR on): HDR highlights lifts the bright parts of the 3D scene toward your screen's peak
+  (like AutoHDR) and HDR colour makes it more vivid; menus and text stay at normal white.
 - **Keyboard and mouse**: every button can be rebound (up to 3 keys each, mouse buttons and wheel too), and the mouse
   turns the camera (sensitivity, invert). Launcher > Game > Keyboard & mouse.
 - **Controller button remapping**: any Switch button on any pad button, back paddles included; button prompts follow.
@@ -151,6 +163,29 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.6
+
+- **Loose-file mods** (P5R style): a mod holds only the files it changes. Launcher > Mods > **Dump game files** unpacks
+  the game to `<game files>\dump\<pack>\...`; copy a file to `mods\<ModName>\cpk\<pack>\<same path>` and edit it. See
+  [Mods](#mods). Whole-pack mods like the Uncensored patch keep working, and loose files work on top of them.
+- **3D models in video memory** (#11): the graphics card read the game's 3D model data over the PCIe bus every frame;
+  unchanged model data is now copied to video memory. Shibuya crosswalk: about half the GPU time here, 14-17 ms -> 4-5
+  ms on an RTX 3050 (60 fps in all hub areas). Laptop and budget cards gain the most (`vb_vram = 0` turns it off).
+- **3D resolution** (#11): 100 / 85 / 75 / 67 / 50% or **Auto** (lowered step by step while the graphics card cannot
+  keep your FPS, raised again when there is room); menus and text stay sharp. Launcher > Display & FPS, F1 menu.
+- **Auto 30** keeps full game speed while it switches between 30 and 60 FPS (it played in slow motion), locks to 30
+  in about half a second and tries 60 again when you enter a new area.
+- **HDR** on HDR screens (Windows HDR on): HDR highlights and HDR colour options; menus and text stay at normal white.
+- **WEAK in the battle skill list** next to skills that hit a weakness you already know (`weak_hint`).
+- **Weak-PC options**: Crowd density (fewer walkers and cars in town), Shadow detail (no far shadow layer).
+- **Better performance logs**: `nx.log` says every 10 s whether the graphics card or the processor is the limit, the
+  game speed, video memory use, and on NVIDIA the GPU clock, temperature and throttle reasons.
+- **Launcher**: renamed `tmslauncher.exe` with its own icon; What's new box before updating.
+- Fixes: setup stopped with "UnicodeEncodeError" when a folder name had characters like the game title's sharp sign
+  (`Tokyo Mirage Sessions ♯FE`): any folder name works now; the game window started behind other windows; 4K Uncensored movies (m06 / m07 / m12) dropped to a few FPS on
+  repeated frames; launcher froze during setup until the mouse moved (#16); shader compiling after an update no longer
+  competes with the game on 2-core CPUs.
 
 ## What's new in v0.1.5
 
@@ -242,7 +277,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 
 1. Download `TMSRecomp-<date>.zip` from the [Releases](../../releases) page and extract it anywhere you can write to
    (for example `D:\Games\TMSRecomp`, not `C:\Program Files`).
-2. Run `launcher.exe`. The **Setup** page opens.
+2. Run `tmslauncher.exe` (called `launcher.exe` up to 0.1.5). The **Setup** page opens.
 3. Pick your game: **NSP file…** plus your `prod.keys`, or **Extracted folder…**. Optionally tick **Download NVIDIA DLSS**
    (RTX GPUs).
 4. Press **SET UP**. Setup copies the game files (about 13 GB), translates the game code, compiles it into `game.dll`
@@ -375,8 +410,30 @@ A save written by an updated game (not 1.0.0) is untested.
 
 A mod is a folder `<game files>\mods\<ModName>\` (LayeredFS style); the launcher's **Mods** page turns each one on or off.
 
-- **Game files**: put them in `mods\<ModName>\romfs\` at the same path as in `<game files>\romfs\` (setup extracts the
-  game there, so you can copy a file out, change it and put it in your mod). Files you do not ship come from the game.
+- **Loose files (easiest)**: the game keeps its data inside big `.cpk` packs in `romfs\Pack`. A mod can replace single
+  files inside them, so it only holds the files it changes:
+  1. Launcher > Mods > **Dump game files** (or `tms.exe --dump`; `--all` adds the movies, `--pack <name>` one pack).
+     It unpacks every pack to `<game files>\dump\<pack>\...` (about 19 GB, a few minutes; a stopped dump continues).
+  2. Copy the file you want to change to `mods\<ModName>\cpk\<pack>\<same path>`, for example
+     `dump\pack_030_etc\Table\StSkillTable.dat` -> `mods\MySkills\cpk\pack_030_etc\Table\StSkillTable.dat`.
+  3. Edit the copy and start the game. `nx.log` shows `fs: mod MySkills: 1 loose file in pack_030_etc.cpk`.
+
+  Where things are:
+
+  | Pack | What is inside |
+  |---|---|
+  | `pack_030_etc` | game tables: skills (`Skill\`, `Table\StSkillTable.dat`, `Table\EnterSkillTable.dat`...), items, units, encounters, events |
+  | `pack_031_message` | all text (`Message\USen\...` English, one `.msbt` per screen: skill / item descriptions in `Common\`, map names in `Common\MapName.msbt`) |
+  | `pack_999_lua` | game scripts (`Battle\AI\*.lua` enemy behaviour and more) |
+  | `pack_999_etc_om` | battle tables, cameras, voice lists |
+  | `pack_080_interface` | menus and HUD art; `pack_010_character` models; `pack_000_map` maps; `pack_040_sound` music and sound |
+
+  Text (`.msbt`) opens in any MSBT editor. Tables (`.dat`, `.tbl`) are binary: a hex editor and community notes.
+  A replaced file may be any size; it is read as it is (no compression needed). Only files the pack already has can be
+  replaced (the log names any other file it ignored). Loose files work on top of whole-pack mods such as the Uncensored
+  patch.
+- **Whole game files**: put them in `mods\<ModName>\romfs\` at the same path as in `<game files>\romfs\` (a whole `.cpk`
+  pack, for example). Files you do not ship come from the game.
   Mods shipped as xdelta patches against the game's `.cpk` files:
   `python tools/vcdiff.py <original.cpk> <patch.xdelta> <out.cpk>`.
 - **Textures**: set `tex_dump = 1` and play: every texture shown is saved once to

@@ -167,6 +167,10 @@ bool mem_written(uint32_t addr, uint32_t size) {  // CPU wrote [addr, addr+size)
     return any;
 }
 bool mem_written_span(uint32_t addr, uint32_t size, uint32_t, uint32_t, uint64_t) { return mem_written(addr, size); }
+// PORTABILITY: no write ticks here (the dirty flags are taken by the texture checks): vertex data stays in system RAM
+bool mem_write_ticks_ok() { return false; }
+uint32_t mem_write_tick(uint32_t, uint32_t, uint64_t) { return 0; }
+uint32_t mem_written_tick(uint32_t, uint32_t) { return UINT32_MAX; }
 #else
 double process_private_mb() {  // committed private memory of the process (leak checks in the logs)
     PROCESS_MEMORY_COUNTERS_EX pm{};
@@ -244,17 +248,45 @@ std::atomic<uint64_t> g_ww_reset_pages{0};  // NX_STALL_STATS: pages re-armed by
 // both see the same pages. NX_WW_BATCH=0: the old per-texture calls.
 static std::mutex g_ww_lock;
 static uint64_t g_ww_bits[(1ull << 32) >> 18];  // one bit per 4 KB guest page
+// s126 (vertex data in video memory, vk_replay.cpp VbEntry): every harvest also stamps the written pages with the
+// harvest tick, a record that reading does not clear (several cached copies can share a page; the bits above are taken
+// by the texture checks). 4 MB.
+static uint32_t g_ww_tick_of[(1ull << 32) >> 12];
+static uint32_t g_ww_tick = 1;
 static void ww_harvest(uint32_t lo, uint32_t len) {  // g_ww_lock held; lo, len page aligned
     thread_local std::vector<void*> hits;
     if (hits.size() < (len >> 12)) hits.resize(len >> 12);
     ULONG_PTR n = len >> 12;
     DWORD gran;
-    if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, GPTR(lo), len, hits.data(), &n, &gran) != 0) return;
+    if (GetWriteWatch(WRITE_WATCH_FLAG_RESET, GPTR(lo), len, hits.data(), &n, &gran) != 0) {
+        for (uint64_t pg = lo >> 12; pg < ((uint64_t)lo + len) >> 12; pg++) g_ww_tick_of[pg] = g_ww_tick;  // unknown: count as written
+        g_ww_tick++;
+        return;
+    }
     for (ULONG_PTR i = 0; i < n; i++) {
         const uint64_t pg = ((uint8_t*)hits[i] - (uint8_t*)GUEST_BASE) >> 12;
         g_ww_bits[pg >> 6] |= 1ull << (pg & 63);
+        g_ww_tick_of[pg] = g_ww_tick;
     }
+    if (n) g_ww_tick++;
     g_ww_reset_pages += n;
+}
+bool mem_write_ticks_ok() { return true; }
+// harvests the 2 MB chunks under [addr, addr+size) once per stamp (crosswalk: a whole 1368 MB pool per frame was 0.8 ms)
+uint32_t mem_write_tick(uint32_t addr, uint32_t size, uint64_t stamp) {
+    static uint64_t chunk_stamp[(1ull << 32) >> 21];  // per 2 MB chunk: stamp + 1 of its last harvest here (16 KB)
+    std::lock_guard<std::mutex> l(g_ww_lock);
+    for (uint64_t c = addr >> 21, e = ((uint64_t)addr + size + (1 << 21) - 1) >> 21; c < e; c++)
+        if (chunk_stamp[c] != stamp + 1) chunk_stamp[c] = stamp + 1, ww_harvest((uint32_t)(c << 21), 1u << 21);
+    return g_ww_tick;
+}
+uint32_t mem_written_tick(uint32_t addr, uint32_t size) {  // no lock: aligned 32-bit reads, a racing harvest is seen next frame
+    uint32_t t = 0;
+    for (uint64_t pg = addr >> 12, e = ((uint64_t)addr + size + 0xFFF) >> 12; pg < e; pg++) {
+        const uint32_t v = ((volatile uint32_t*)g_ww_tick_of)[pg];
+        if (v > t) t = v;
+    }
+    return t;
 }
 static bool ww_take(uint32_t lo, uint32_t len) {  // g_ww_lock held: any page of [lo, lo+len) written; clears them
     bool any = false;

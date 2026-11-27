@@ -3,6 +3,10 @@
 Usage:
     python tools/cpk.py list <cpk> [--grep substr]
     python tools/cpk.py extract <cpk> <outdir> [--grep substr]
+    python tools/cpk.py dump <data folder> [--all]
+        every pack in <data>/romfs/Pack -> <data>/dump/<pack>/<path> (the launcher's "Dump game files"; movies only with
+        --all). Files already dumped at the right size are skipped, so a stopped dump continues. Loose-file mods use the
+        same paths: <data>/mods/<mod name>/cpk/<pack>/<path>.
 """
 import argparse
 import os
@@ -146,13 +150,40 @@ class Cpk:
         return data
 
 
+def dump(data, everything):
+    packs = sorted(f for f in os.listdir(os.path.join(data, "romfs", "Pack")) if f.lower().endswith(".cpk"))
+    if not everything:
+        packs = [f for f in packs if "movie" not in f]
+    out_root = os.path.join(data, "dump")
+    for i, name in enumerate(packs, 1):
+        c = Cpk(os.path.join(data, "romfs", "Pack", name))
+        stem = os.path.splitext(name)[0]
+        print(f"[{i}/{len(packs)}] {name}: {len(c.files)} files", flush=True)
+        done = 0
+        for r in c.files:
+            dst = os.path.join(out_root, stem, *c.path(r).split("/"))
+            if not (os.path.isfile(dst) and os.path.getsize(dst) == r["ExtractSize"]):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(dst + ".part", "wb") as f:
+                    f.write(c.read(r))
+                os.replace(dst + ".part", dst)
+            done += 1
+            if done % 1000 == 0:
+                print(f"    {done} / {len(c.files)}", flush=True)
+    print(f"Done: {out_root}", flush=True)
+    print("To mod a file: copy it to mods/<your mod name>/cpk/<pack>/<same path> and edit the copy.", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["list", "extract", "header"])
+    ap.add_argument("cmd", choices=["list", "extract", "header", "dump"])
     ap.add_argument("cpk")
     ap.add_argument("outdir", nargs="?")
     ap.add_argument("--grep")
+    ap.add_argument("--all", action="store_true")
     a = ap.parse_args()
+    if a.cmd == "dump":
+        return dump(a.cpk, a.all)
     c = Cpk(a.cpk)
     if a.cmd == "header":
         for k, v in c.header.items():
