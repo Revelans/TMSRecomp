@@ -1,12 +1,13 @@
 <h1 align="center">TMSRecomp</h1>
 
-<p align="center"><b>Tokyo Mirage Sessions #FE Encore, running natively on Windows.</b><br>
+<p align="center"><b>Tokyo Mirage Sessions #FE Encore, running natively on Windows and Linux / Steam Deck (experimental).</b><br>
 Up to 4K and 240 fps · DLSS 4.5 / FSR 3 · VRR · one-click setup and updates · no emulator</p>
 
 <p align="center">
   <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/godofknife/TMSRecomp?include_prereleases&label=release&color=3ee08f"></a>
   <a href="../../releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/godofknife/TMSRecomp/total?color=3ee08f"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue">
+  <img alt="Linux" src="https://img.shields.io/badge/Linux%20%7C%20Steam%20Deck-experimental-orange">
   <img alt="Vulkan" src="https://img.shields.io/badge/graphics-Vulkan%201.3-red">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--2.0--or--later-lightgrey"></a>
 </p>
@@ -19,7 +20,7 @@ Up to 4K and 240 fps · DLSS 4.5 / FSR 3 · VRR · one-click setup and updates �
 </p>
 <p align="center"><sub>4K, DLSS, UHD textures, Xbox button prompts. Screenshots from the author's own copy.</sub></p>
 
-**TMSRecomp** is an unofficial native Windows port of *Tokyo Mirage Sessions #FE Encore* (Nintendo Switch, ATLUS /
+**TMSRecomp** is an unofficial native Windows (and experimental Linux / Steam Deck) port of *Tokyo Mirage Sessions #FE Encore* (Nintendo Switch, ATLUS /
 Intelligent Systems, 2020), made by static recompilation: the game's 32-bit ARM code is translated to C and compiled
 into an ordinary Windows x64 program, and its graphics run on Vulkan. There is no emulator and no JIT
 ([how it works](#how-it-works)).
@@ -300,10 +301,15 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - Your own dump of the game: an NSP of the base game 1.0.0 and `prod.keys` from your own Switch, or an already extracted
   folder with `exefs\` and `romfs\` (no keys needed then).
 - Nothing else: Python, the compiler and the shader translator ship inside the ZIP.
+- **Linux / Steam Deck (experimental)**: x86-64 with glibc 2.39 or newer (Ubuntu 24.04, Fedora 40, Debian 13, SteamOS
+  3.7). Same game, no FSR 3 / DLSS. Not tested on a Steam Deck yet: see [Linux](#linux-experimental).
 
 ## Installing and playing
 
-1. Download `TMSRecomp-<date>.zip` from the [Releases](../../releases) page and extract it anywhere you can write to
+Linux / Steam Deck: download `TMSRecomp-<version>-linux-x64.tar.gz` instead, extract it, run `launcher`; the rest is
+the same ([details](#linux-experimental)).
+
+1. Download `TMSRecomp-<version>.zip` from the [Releases](../../releases) page and extract it anywhere you can write to
    (for example `D:\Games\TMSRecomp`, not `C:\Program Files`).
 2. Run `tmslauncher.exe` (called `launcher.exe` up to 0.1.5). The **Setup** page opens.
 3. Pick your game: **NSP file…** plus your `prod.keys`, or **Extracted folder…**. Optionally tick **Download NVIDIA DLSS**
@@ -559,6 +565,10 @@ GPUs and the Steam Deck are not tested yet.
 (`.github/workflows/build.yml`). Extract it and run `./launcher`: nothing to install (also on the Steam Deck).
 Python, clang + lld (game code compiler), nstool, SDL3, libvpx and the shader translator's .NET runtime are inside; glibc 2.39 or newer (Ubuntu 24.04,
 Debian 13, Fedora 40, SteamOS 3.7).
+
+**Steam Deck**: switch to Desktop Mode, download the tarball, right-click it in Dolphin > Extract > Extract archive here,
+double-click `launcher` and run Setup there. For Game Mode: right-click `launcher` > Add to Steam. Suggested start
+settings: Resolution 720p, FPS 30, Crowd density Low. Please report how it runs (with `nx.log`).
 
 **Differences from Windows**
 - No AMD FSR 3 and no NVIDIA DLSS: AMD ships the FidelityFX API only as Windows DLLs, and the NGX (DLSS) path is not
