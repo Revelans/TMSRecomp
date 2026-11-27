@@ -1,0 +1,158 @@
+# Builds the runtime (tms + launcher) on Windows and Linux; no game code is involved (the game is built on the player's
+# PC by setup). Linux also packages the release tarball: a workflow artifact on every run, and attached to a GitHub
+# release when one is published. Every download is pinned (tag or commit).
+name: build
+
+on:
+  push:
+    branches: [main, "ci-*"]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write  # attach the tarball to a published release
+    env:
+      SDL_TAG: release-3.4.16
+      NSTOOL_TAG: v1.9.2
+      RYU_SHA: a82350bb774f70fcbd41c9987bf67a3775409963  # the Ryubing commit tools/shaderc/patches are made for
+      PY_URL: https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.12.14+20260929-x86_64-unknown-linux-gnu-install_only.tar.gz
+      CAPSTONE: capstone==5.0.9
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld cmake ninja-build pkg-config patchelf \
+            libvulkan-dev libvpx-dev libcairo2-dev libpango1.0-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: SDL3 (bundled, Ubuntu 24.04 has none)
+        run: |
+          git clone -q --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl"
+          cmake -S "$RUNNER_TEMP/sdl" -B "$RUNNER_TEMP/sdl/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DCMAKE_INSTALL_LIBDIR=lib -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/sdl/build"
+          cmake --install "$RUNNER_TEMP/sdl/build"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/sdl3/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Runtime (tms + launcher)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build --target tms launcher
+
+      - name: Shader translator (self-contained linux-x64)
+        run: |
+          ryu="$RUNNER_TEMP/ryubing"
+          git init -q "$ryu"
+          git -C "$ryu" fetch -q --depth 1 https://git.ryujinx.app/ryubing/ryujinx.git "$RYU_SHA"
+          git -C "$ryu" checkout -q FETCH_HEAD
+          for p in tools/shaderc/patches/*.patch; do patch -d "$ryu" -p1 < "$p"; done
+          dotnet publish tools/shaderc/NxShader.csproj -c Release -r linux-x64 --self-contained true \
+            -o "$RUNNER_TEMP/shaderc" -p:RyuDir="$ryu" -p:DebugType=none -p:SatelliteResourceLanguages=en
+          test -x "$RUNNER_TEMP/shaderc/NxShader" && test -f "$RUNNER_TEMP/shaderc/libhostfxr.so"
+
+      - name: nstool
+        run: |
+          git clone -q --depth 1 --branch "$NSTOOL_TAG" --recurse-submodules --shallow-submodules \
+            https://github.com/jakcron/nstool.git "$RUNNER_TEMP/nstool"
+          make -C "$RUNNER_TEMP/nstool" deps -j"$(nproc)"
+          make -C "$RUNNER_TEMP/nstool" -j"$(nproc)"
+
+      - name: Python (portable) + capstone
+        run: |
+          curl -fsSL "$PY_URL" | tar -xz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/python/bin/python3" -m pip install --no-cache-dir --disable-pip-version-check "$CAPSTONE"
+          "$RUNNER_TEMP/python/bin/python3" -I -c "import capstone; print('capstone', capstone.__version__)"
+
+      - name: Package
+        run: |
+          name=TMSRecomp-linux-x64
+          [ "${{ github.event_name }}" = release ] && name="TMSRecomp-${{ github.event.release.tag_name }}-linux-x64"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          NX_SDL3_LIB="$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" NX_SDL3_LICENSE="$RUNNER_TEMP/sdl/LICENSE.txt" \
+          NX_NSTOOL="$(find "$RUNNER_TEMP/nstool/bin" -type f -name nstool | head -1)" NX_NSTOOL_LICENSE="$RUNNER_TEMP/nstool/LICENSE" \
+          NX_PYTHON="$RUNNER_TEMP/python" NX_SHADERC="$RUNNER_TEMP/shaderc" NX_RYU_LICENSE="$RUNNER_TEMP/ryubing/LICENSE.txt" \
+            bash tools/package/package_linux.sh build "$name.tar.gz"
+
+      - name: Smoke test (the bundled pieces start)
+        run: |
+          mkdir t && tar -xzf "$NAME.tar.gz" -C t && cd t/TMSRecomp
+          if ldd tms launcher | grep "not found"; then exit 1; fi
+          ./setup/python/bin/python3 -I setup/tools/setup/setup.py --help > /dev/null
+          ./setup/nstool 2>&1 | head -2
+          r=0; timeout 20 ./shaderc/NxShader < /dev/null || r=$?
+          echo "NxShader exit $r (empty input: no shader requests)"; [ $r -ne 124 ] && [ $r -ne 126 ] && [ $r -ne 127 ]
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.tar.gz
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "$NAME.tar.gz" --clobber
+
+  windows:
+    runs-on: windows-2022
+    env:
+      SDL_VER: 3.4.16
+      VKH_TAG: v1.4.328
+      FFX_TAG: v2.4.0
+      VPX_TAG: v1.16.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Third-party (pinned)
+        shell: bash
+        run: |
+          t=$(cygpath -u "$RUNNER_TEMP")/tp && mkdir -p "$t" && cd "$t"
+          curl -fsSL -o sdl.zip "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VER/SDL3-devel-$SDL_VER-VC.zip"
+          unzip -q sdl.zip
+          git clone -q --depth 1 --branch "$VKH_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git vkh
+          # FidelityFX: the API / upscaler headers and the two Vulkan DLLs only (the SDK's signedbin is ~170 MB)
+          git clone -q --depth 1 --branch "$FFX_TAG" --filter=blob:none --sparse https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git ffx
+          git -C ffx sparse-checkout set --no-cone /Kits/FidelityFX/api/include/ /Kits/FidelityFX/upscalers/include/
+          mkdir -p ffx/Kits/FidelityFX/signedbin
+          for d in amd_fidelityfx_loader_vk.dll amd_fidelityfx_upscaler_vk.dll; do
+            curl -fsSL -o "ffx/Kits/FidelityFX/signedbin/$d" "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/$FFX_TAG/Kits/FidelityFX/signedbin/$d"
+          done
+          # libvpx: VP9 decoder, portable C (README "Building from source" step 5)
+          git clone -q --depth 1 --branch "$VPX_TAG" https://github.com/webmproject/libvpx.git libvpx
+          mkdir vpx-gen && cd vpx-gen
+          CC=clang ../libvpx/configure --target=generic-gnu --disable-vp8 --disable-vp9-encoder --disable-examples \
+            --disable-tools --disable-docs --disable-unit-tests --disable-webm-io --disable-libyuv
+          perl ../libvpx/build/make/rtcd.pl --arch=generic --sym=vp9_rtcd --config=libs-generic-gnu.mk ../libvpx/vp9/common/vp9_rtcd_defs.pl > vp9_rtcd.h
+          perl ../libvpx/build/make/rtcd.pl --arch=generic --sym=vpx_dsp_rtcd --config=libs-generic-gnu.mk ../libvpx/vpx_dsp/vpx_dsp_rtcd_defs.pl > vpx_dsp_rtcd.h
+          perl ../libvpx/build/make/rtcd.pl --arch=generic --sym=vpx_scale_rtcd --config=libs-generic-gnu.mk ../libvpx/vpx_scale/vpx_scale_rtcd.pl > vpx_scale_rtcd.h
+          sh ../libvpx/build/make/version.sh ../libvpx vpx_version.h
+          python "$GITHUB_WORKSPACE/tools/vpx_sources.py" "$(cygpath -m "$t/libvpx")" "$(cygpath -m "$t/vpx-gen")"
+
+      - name: Runtime (tms.exe + tmslauncher.exe)
+        shell: pwsh
+        run: |
+          $t = "$env:RUNNER_TEMP\tp"
+          pip install --disable-pip-version-check ninja==1.13.0
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DNX_ICON=" `
+            "-DNX_SDL3=$t\SDL3-$env:SDL_VER" "-DNX_VULKAN_INCLUDE=$t\vkh\include" "-DNX_FFX=$t\ffx\Kits\FidelityFX" `
+            "-DNX_LIBVPX=$t\libvpx" "-DNX_VPX_GEN=$t\vpx-gen"
+          if ($LASTEXITCODE) { exit 1 }
+          cmake --build build --target tms launcher
+          if ($LASTEXITCODE) { exit 1 }
+          Get-Item build\tms.exe, build\tmslauncher.exe | Format-Table Name, Length

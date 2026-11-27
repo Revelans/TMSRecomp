@@ -9,9 +9,16 @@ set(NX_VULKAN_INCLUDE "${CMAKE_SOURCE_DIR}/private/third_party/Vulkan-Headers-1.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 11)
 
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NX_GEN}/files.txt")
-file(STRINGS "${NX_GEN}/files.txt" GEN_FILES)
-list(TRANSFORM GEN_FILES PREPEND "${NX_GEN}/")
+# no lifted code (CI, a fresh checkout): runtime only (tms + launcher), no game.dll / game.so target
+set(NX_HAVE_GEN OFF)
+if(EXISTS "${NX_GEN}/files.txt")
+  set(NX_HAVE_GEN ON)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NX_GEN}/files.txt")
+  file(STRINGS "${NX_GEN}/files.txt" GEN_FILES)
+  list(TRANSFORM GEN_FILES PREPEND "${NX_GEN}/")
+else()
+  message(STATUS "${NX_GEN}/files.txt not found: building the runtime only (tms + launcher)")
+endif()
 
 if(WIN32)
 # libvpx (VP9 movies): source tree + a build dir configured by its ./configure, listed by tools/vpx_sources.py
@@ -63,6 +70,7 @@ add_custom_command(TARGET tms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_direct
 
 # game.dll: the recompiled code, built by the same script the player's setup runs (tools/setup/build_game.py) with
 # clang + lld-link only. The CRT import libs come from our own .def files (no Windows SDK libraries are shipped).
+if(NX_HAVE_GEN)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_program(NX_LLVM_LIB llvm-lib REQUIRED)
 find_program(NX_LLD_LINK lld-link REQUIRED)
@@ -81,6 +89,7 @@ add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/game.dll"
     "${CMAKE_BINARY_DIR}/nx_crt_math.lib" "${CMAKE_BINARY_DIR}/nx_vcruntime.lib" tms
   USES_TERMINAL)
 add_custom_target(game_dll ALL DEPENDS "${CMAKE_BINARY_DIR}/game.dll")
+endif()
 
 else()
 # ------------------------------------------------------------------------------------------------ Linux
@@ -105,6 +114,7 @@ add_executable(launcher runtime/launcher/launcher.cpp)
 target_include_directories(launcher PRIVATE runtime/include runtime/src)
 target_link_libraries(launcher PRIVATE PkgConfig::NX_LINUX_DEPS Threads::Threads)
 
+if(NX_HAVE_GEN)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_program(NX_LD_LLD ld.lld REQUIRED)
 set(NX_SETUP "${CMAKE_SOURCE_DIR}/tools/setup")
@@ -115,4 +125,5 @@ add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/game.so"
   DEPENDS ${GEN_FILES} "${NX_GEN}/funcs.h" runtime/include/guest.h "${NX_SETUP}/build_game.py"
   USES_TERMINAL)
 add_custom_target(game_so ALL DEPENDS "${CMAKE_BINARY_DIR}/game.so")
+endif()
 endif()
