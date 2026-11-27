@@ -2559,6 +2559,9 @@ static void browse() {
 }
 
 static void play() {
+    // the wait for the game window below pumps messages: more PLAY clicks would start more games (user 11-28)
+    static bool starting = false;
+    if (starting) return;
     if (!game_ready() || setup_stale()) {
         g_page = 6;
         MessageBoxW(g_wnd, L"The game is not set up yet, or needs a rebuild after an update: Setup page.", L"TMSRecomp", MB_ICONWARNING);
@@ -2579,11 +2582,16 @@ static void play() {
     // s125 (Augs: the game started behind other windows): Windows lets only the foreground process (us, the player just
     // clicked PLAY) bring a window to the front, and the game's window appears seconds later. So the launcher waits (up
     // to 30 s, messages pumped) for it, brings it to the front, then closes.
+    starting = true;
     AllowSetForegroundWindow(pi.dwProcessId);
     struct Find { DWORD pid; HWND hw; } f{pi.dwProcessId, nullptr};
     for (int i = 0; i < 300 && !f.hw && WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT; i++) {
         MSG m;
-        while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) TranslateMessage(&m), DispatchMessageW(&m);
+        bool quit = false;  // WM_QUIT taken here must reach the main loop, else the launcher runs on without a window
+        while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE))
+            if (m.message == WM_QUIT) quit = true;
+            else TranslateMessage(&m), DispatchMessageW(&m);
+        if (quit) { PostQuitMessage(0); break; }
         EnumWindows([](HWND h, LPARAM p) -> BOOL {
             auto* fd = (Find*)p;
             DWORD wp = 0;

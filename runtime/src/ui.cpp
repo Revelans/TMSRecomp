@@ -265,6 +265,7 @@ static uint64_t button_mask(const std::string& b) {
 // "ls x y ms" / "rs x y ms" (hold the left / right stick at x, y in -32767..32767 for ms game milliseconds) or
 // "verbose n" (like -v: 1 logs fs reads etc., 0 stops) or "cover" (NX_COVER report now) or "flag n [0|1]" (log or
 // set game flag n, hle_sys.cpp) or "pos" (log the player position) or "poke addr byte" (hex, debug write).
+static std::atomic<int> g_fs_request{0};  // control file "fs" (rigs)
 std::atomic<int> g_shot_request{0}, g_drawlog_request{0}, g_rt_request{0}, g_user_shot{0};  // g_user_shot: F12
 static int g_ctl_stick[4];  // NX_CONTROL lx ly rx ry, valid until g_ctl_stick_until
 static uint64_t g_ctl_stick_until[2];
@@ -291,6 +292,7 @@ static uint64_t control_buttons(uint64_t now) {
                         std::string cmd = buf.substr(pos, nl - pos);
                         while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == ' ')) cmd.pop_back();
                         if (cmd == "shot") g_shot_request++;
+                        else if (cmd == "fs") g_fs_request++;  // test: the F11 toggle (#17), done on the window thread
                         else if (cmd == "btlspeed") set_battle_speed(battle_speed() % 3 + 1, true);  // = F3 / touchpad (rigs)
                         else if (cmd.rfind("shots ", 0) == 0) g_shot_request += atoi(cmd.c_str() + 6);  // the next N frames
                         else if (cmd.rfind("drawlog", 0) == 0) g_drawlog_request += cmd.size() > 8 ? atoi(cmd.c_str() + 8) : 1;  // "drawlog N": N frames
@@ -864,6 +866,7 @@ static void ui_thread() {
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat &&
                 (e.key.key == SDLK_F11 || (e.key.key == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT))))
                 SDL_SetWindowFullscreen(g_window, !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN));
+            if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) log("window: %d x %d pixels", e.window.data1, e.window.data2), window_resized();
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F12) g_user_shot++;
             if (e.type == SDL_EVENT_MOUSE_MOTION) g_mouse_acc[0] += e.motion.xrel, g_mouse_acc[1] += e.motion.yrel;
             if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0) g_wheel_until[e.wheel.y > 0 ? 0 : 1] = (int64_t)SDL_GetTicks() + 80;
@@ -873,6 +876,7 @@ static void ui_thread() {
                 n ? SDL_HideCursor() : SDL_ShowCursor();
             }
         }
+        for (; g_fs_request > 0; g_fs_request--) SDL_SetWindowFullscreen(g_window, !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN));
         poll_input();
         Sleep(1);
     }

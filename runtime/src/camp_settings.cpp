@@ -1,6 +1,6 @@
 // PC settings inside the game's own Settings screen (Camp > System > Settings; user request 10-30, like the BotW PC
-// port): L / R steps the screen through the game's page and four "PC" pages with the F1 overlay's items (R: game ->
-// PC 1 -> PC 2 -> PC 3 -> PC 4 -> game, L back). The screen keeps working as the game wrote it; we only swap what its 11 rows hold
+// port): L / R steps the screen through the game's page and five "PC" pages with the F1 overlay's items (R: game ->
+// PC 1 -> ... -> PC 5 -> game, L back). The screen keeps working as the game wrote it; we only swap what its 11 rows hold
 // and show:
 // - row i (S+0x1c+i*0x18): +0 label text object, +4 option text object (0 on the 3 slider rows), +8 value, +0xc
 //   arrows (left / right change the value), +0x10 min, +0x14 max. The game's update steps +8 within min/max.
@@ -31,7 +31,7 @@ struct PageRow { const wchar_t* name; bool slider; const char* help; };  // name
 // Rows 0-2 are built as sliders by the game (no option text object). A slider item there gets the bar; an On/Off item there
 // borrows an empty row's option text (lend_options) and is drawn as a choice row (user report 10-30: Bloom/DOF/Vignette
 // showed as sliders; USER 11-21: PC 4/4 began with 3 blank rows).
-const PageRow k_pages[4][11] = {
+const PageRow k_pages[5][11] = {
     {
         {L"Frame rate", true, "Higher is smoother; game speed stays the same. To / from 30: restart."},
         {L"Resolution", true, "Internal render resolution. Applies after a restart."},
@@ -83,15 +83,30 @@ const PageRow k_pages[4][11] = {
         {L"Overworld costume", false, "On: outside battle the party wears the costume equipped for battle."},
         {L"Resist markers", false, "Shield over foes that resist the skill, RESIST on resisted hits."},
         {L"P5-style battle buttons", false, "One button per battle command. P5 panel: a Persona 5 style panel replaces the wheel."},
-        {nullptr, false, ""},
+        {L"Language", false, "Game text and menus (voices stay). Applies after a restart."},
+    },
+    {
+        // PC 5/5 (user 11-28: the 0.1.6 settings were only in the F1 menu and the launcher)
+        {L"3D resolution", true, "3D scene size. Auto: lower while the GPU cannot keep your fps."},
+        {L"HDR highlights", true, "With HDR: how bright the 3D scene's highlights get."},
+        {L"HDR colour", true, "With HDR: more vivid scene colours."},
+        {L"Auto 30 when slow", false, "At 60 fps: 30 at full game speed while 60 is not held."},
+        {L"Crowd density", false, "Fewer walkers and cars in town, for weak PCs. From the next area on."},
+        {L"Shadow detail", false, "Low: no far shadow layer (shadows near you stay), for weak PCs."},
+        {L"WEAK in the skill list", false, "WEAK next to skills that hit a weakness you already know."},
+        {L"Reveal dungeon maps", false, "Every Idolasphere floor shows its whole map when entered."},
+        {L"Attack Session", false, "On: a regular Attack can start a Session. Off: the original rule."},
+        {L"Aspect ratio", false, "16:9 or ultrawide 3D view (HUD and menus stay 16:9)."},
+        {L"Outline", false, "The dark edge lines around characters and objects."},
     },
 };
+constexpr int kPcPages = (int)(sizeof k_pages / sizeof k_pages[0]);
 constexpr uint32_t ITEM_TABLE = 0x7ddd98;  // 11 records of 40 bytes: kind, label, help, flag, count, 5 option labels
 constexpr uint32_t HELP_OBJ = 0x9efb50;    // **: the camp help line (0x319d54)
 constexpr uint32_t MSG_FILE = 0x9efb60;    // **: Camp.msbt (msg file object; +4 = its data)
 constexpr uint32_t BTN_L = 1 << 6, BTN_R = 1 << 7;
 const char k_hint_game[] = "  (L / R: PC settings)";
-const char* const k_hint_pc[4] = {"PC 1/4 (L / R: pages)", "PC 2/4 (L / R: pages)", "PC 3/4 (L / R: pages)", "PC 4/4 (L / R: pages)"};  // put first (long texts get cut)
+const char* const k_hint_pc[kPcPages] = {"PC 1/5 (L / R: pages)", "PC 2/5 (L / R: pages)", "PC 3/5 (L / R: pages)", "PC 4/5 (L / R: pages)", "PC 5/5 (L / R: pages)"};  // put first (long texts get cut)
 
 uint32_t g_screen = 0;
 int g_page = -1;  // -1 the game's page, 0 / 1 ours
@@ -283,7 +298,7 @@ HLE_FN(camp_settings_update, "camp_settings_update") {
         *c = keep;
     }
     if (ld32(s + 4) == 2 && (pressed & (BTN_L | BTN_R))) {
-        const int next = (g_page + 1 + ((pressed & BTN_R) ? 1 : 4)) % 5 - 1;  // -1 game, 0 .. 3
+        const int next = (g_page + 1 + ((pressed & BTN_R) ? 1 : kPcPages)) % (kPcPages + 1) - 1;  // -1 game, 0 .. kPcPages - 1
         if (next < 0) leave_pc(c, s, true);
         else enter_pc(c, s, next);
         *c = keep;

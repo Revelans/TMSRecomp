@@ -286,6 +286,11 @@ static float screen_peak_nits() {
 #endif
 }
 
+// #17: F11 sometimes left the picture at the wrong scale: a swapchain rebuilt mid-transition (in-between window size)
+// was never rebuilt at the final size because Windows drivers need not report OUT_OF_DATE / SUBOPTIMAL after a resize.
+// The window's pixel-size event (ui.cpp) now asks for a rebuild at the next present.
+static std::atomic<bool> g_swap_resize{false};
+void window_resized() { g_swap_resize = true; }  // rt::window_resized forwards here
 static void create_swapchain() {
     VkSurfaceCapabilitiesKHR caps;
     VKC(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, g_surface, &caps));
@@ -1364,6 +1369,7 @@ void backend_submit(const std::vector<const std::vector<Cmd>*>& lists) {
 // title music starts (hle_sys.cpp game log) when <data> has no launcher_hero.* yet. Nothing of the game ships with us.
 static std::atomic<int> g_hero_shot{0};
 }  // namespace nvn
+void rt::window_resized() { vk::window_resized(); }
 void rt::hero_capture_soon() {
     static std::atomic<bool> once{false};
     if (once.exchange(true) || getenv("NX_NO_HERO")) return;
@@ -1580,7 +1586,7 @@ static void present_thread() {
         if (!asap) rt::wait_vsync_tick(g_staged[i].tick);
         const double vsync_ms = ms_since(t_vs);
         auto t_tick = std::chrono::steady_clock::now();
-        if (rt::hdr_setting() != g_hdr_req) {  // HDR switched in the F1 menu: a swapchain of the other kind
+        if (rt::hdr_setting() != g_hdr_req || g_swap_resize.exchange(false)) {  // HDR switched in the F1 menu / window resized
             queue_idle();
             create_swapchain();
         }
@@ -2301,6 +2307,7 @@ void backend_present(Texture* t) {
                                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_block).count());
         return;
     }
+    if (g_swap_resize.exchange(false)) vkDeviceWaitIdle(dev), create_swapchain();
     uint32_t idx;
     VkResult r = vkAcquireNextImageKHR(dev, g_swap, UINT64_MAX, g_acquire_sem, VK_NULL_HANDLE, &idx);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) { vkDeviceWaitIdle(dev); create_swapchain(); return; }

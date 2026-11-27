@@ -39,7 +39,7 @@ into an ordinary Windows x64 program, and its graphics run on Vulkan. There is n
 > your own discretion.
 
 > [!WARNING]
-> **v0.1.6 beta.** It is tested until the chapter 2 Idolasphere with
+> **v0.1.7 beta.** It is tested until the chapter 2 Idolasphere with
 > saving and loading, on NVIDIA RTX. **Anything after that is unknown territory**, as are AMD / Intel GPUs and weaker
 > PCs: bug reports are very welcome.
 
@@ -62,6 +62,7 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 ## Contents
 
 - [Features](#features)
+- [What's new in v0.1.7](#whats-new-in-v017)
 - [What's new in v0.1.6](#whats-new-in-v016)
 - [What's new in v0.1.5](#whats-new-in-v015)
 - [What's new in v0.1.4](#whats-new-in-v014)
@@ -163,6 +164,18 @@ Sessions #FE Encore and all related names, characters and assets are trademarks 
 - **One-click updates** from this repository's releases (see [Updating](#updating)).
 - Copy system info and open the last log for bug reports.
 - The window icon and the Play page picture come from your own game (the NSP's icon and your title screen).
+
+## What's new in v0.1.7
+
+- **4K Uncensored movies play smoothly** (m06 / m07 / m12 with the MovieHD pack, e.g. Tsubasa's song in chapter 2): the
+  4K frames are decoded ahead on their own thread instead of on the game thread (8-29 ms per movie frame before, worst
+  at high frame rates). Now an even frame time at 240 fps.
+- **All PC settings in the game's own Settings screen**: a new page PC 5/5 with 3D resolution, HDR highlights, HDR
+  colour, Auto 30, Crowd density, Shadow detail, WEAK in the skill list, Reveal dungeon maps, Attack Session, Aspect
+  ratio and Outline; Language on PC 4/5.
+- Fixes: F11 / Alt+Enter could leave the picture at the old window size in a corner (#17); clicking PLAY several times
+  started several games, and could leave the launcher running without a window (then files could not be replaced).
+  Only one game runs at a time now.
 
 ## What's new in v0.1.6
 
@@ -364,7 +377,7 @@ stored in `settings.ini` next to `tms.exe` as `key = value`; any key can also be
 | `aspect` | 16:9 (default), auto, 21:9, 32:9 | ultrawide |
 | `resist_marker` | 1 (default), 0 | resist shield / RESIST popup in battle |
 | `font_hd` | 1 (default), 0 | sharp text at high resolutions (the game's glyph sheets scaled 4x with crisp edges) |
-| `battle_buttons` | 0 (default), 1, 2 | P5-style battle buttons: each command on its own button (bottom Attack, right Guard, top Skills, left Items, L Tactics (on wheels that have it), R Change, - Escape, ZR Auto battle, + Stats; also in the game's Settings PC 4/4 and the F1 / L3+R3 menu, live); 2 also shows a Persona 5 style command panel in place of the game's wheel (Windows) |
+| `battle_buttons` | 0 (default), 1, 2 | P5-style battle buttons: each command on its own button (bottom Attack, right Guard, top Skills, left Items, L Tactics (on wheels that have it), R Change, - Escape, ZR Auto battle, + Stats; also in the game's Settings PC 4/5 and the F1 / L3+R3 menu, live); 2 also shows a Persona 5 style command panel in place of the game's wheel (Windows) |
 | `key_a` .. `key_rs_right` | key names, comma separated | keyboard / mouse bindings (see [Controls](#controls)) |
 | `mouse_camera`, `mouse_sensitivity`, `mouse_invert_y` | 1, 1.0 (0.2 .. 3.0), 0 | mouse turns the camera |
 | `pad_a` .. `pad_r3` | default, south, east, west, north, lb, rb, lt, rt, start, back, ls, rs, paddle1 .. paddle4, none | controller button remapping (launcher > Game > Controller buttons); taking another button's swaps the two |

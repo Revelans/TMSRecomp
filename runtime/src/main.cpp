@@ -741,6 +741,12 @@ static int tms_main(int argc, char** argv) {
             getchar();
             return r;
         }
+#ifdef _WIN32
+    // one game at a time (user 11-28: fast PLAY clicks started several; two games share the saves). The mutex lives as
+    // long as this process. NX_MULTI_INSTANCE=1: allowed (debug).
+    if (!getenv("NX_MULTI_INSTANCE") && CreateMutexW(nullptr, TRUE, L"Local\\TMSRecomp.game") && GetLastError() == ERROR_ALREADY_EXISTS)
+        return 0;
+#endif
     if (getenv("NX_VERBOSE")) g_verbose = 1;
     g_data_dir = g_data.string();
     const char* lp = getenv("NX_LOG");

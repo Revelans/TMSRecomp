@@ -205,6 +205,7 @@ extern std::atomic<int> g_ui_gate;          // hle_sys.cpp: menu/HUD 30 Hz gates
 float walk_speed();                         // hle_sys.cpp: NX_WALK_SPEED (field walk/run x k)
 void set_walk_speed(float k);               // settings menu: applies at once
 float game_base_dt();                       // hle_sys.cpp: the step set_game_dt last asked for (perf: game speed)
+void window_resized();                      // vk.cpp: the window's pixel size changed (ui.cpp event): rebuild the swapchain
 void set_game_dt(float dt);                 // hle_sys.cpp: the game's per-frame time step in seconds
 extern std::atomic<int> g_shadow_detail;    // vk_replay.cpp: setting shadow_detail (1: no far shadow map)
 extern std::atomic<int> g_skip_shadow;      // vk_replay.cpp: debug, drop shadow casters
