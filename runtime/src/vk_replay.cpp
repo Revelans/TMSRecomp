@@ -214,6 +214,14 @@ static bool ds_opt() { static const bool on = !getenv("NX_DS_OPT") || atoi(geten
 static Image* g_pass_depth = nullptr;
 static std::unordered_set<Image*> g_ds_feedback;
 static const char* g_break = "";  // debug (ctl seq): why the next end_rendering ends the pass
+// A pass into a small post target (game size <= 640x360: glow / bloom / DOF chains) is fully synced before and after.
+// These chains ping-pong between two targets, and with deferred barriers the field glow showed tile-shaped blocks of
+// stale data (USER 2026-11-27, 6F; fixed by NX_PASS_BARRIER=1). Only a few cheap passes per frame.
+static bool small_post_pass() {
+    for (uint32_t i = 0; i < g_st.ncolors; i++)
+        if (Image* im = image_of(g_st.colors[i]); im && im->w <= 640 * im->scale && im->h <= 360 * im->scale) return true;
+    return false;
+}
 static void end_rendering(VkCommandBuffer cb, bool defer = false) {  // defer: see g_unsynced
     const char* why = g_break;
     g_break = "";
@@ -228,7 +236,7 @@ static void end_rendering(VkCommandBuffer cb, bool defer = false) {  // defer: s
             if (g_bar_pending && !defer) full_barrier(cb);  // an earlier pass's deferred barrier the caller relies on
             return;
         }
-        if (defer && !old && g_ms_samples == 1) {
+        if (defer && !old && g_ms_samples == 1 && !small_post_pass()) {
             for (uint32_t i = 0; i < g_st.ncolors; i++)
                 if (Image* im = image_of(g_st.colors[i]); im && !unsynced(im)) g_unsynced.push_back(im);
             if (Image* im = image_of(g_st.depth); im && !unsynced(im)) g_unsynced.push_back(im);
@@ -538,6 +546,7 @@ static void ms_stale(Image* im) {
 
 static void begin_rendering(VkCommandBuffer cb) {
     if (g_st.rendering) return;
+    if (g_bar_pending && small_post_pass()) full_barrier(cb);
     VkRenderingAttachmentInfo ca[8]{};
     VkRenderingAttachmentInfo da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     uint32_t w = 0x7FFFFFFF, h = 0x7FFFFFFF, n = 0;
