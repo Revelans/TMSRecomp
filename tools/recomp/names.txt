@@ -170,3 +170,12 @@
 0x0023ce80 ui_draw_gauge  # (s0-s5 floats, part id, alpha): 2D gauge fill; settings draw 0x33cb14 slider bar (lr 0x33cd80, row in r9)
 0x0023c8e4 ui_draw_part  # (s0 x, s1 y, part id, alpha): 2D layout part; settings draw 0x33cb14 slider knob (lr 0x33cda0, row in r9)
 0x006dbc5c mana_frame_copy  # (dec, desc, src): CRI Mana copies one decoded MPV (MPEG-1 / Sofdec.Prime) frame into the app planes; desc = 3 x {ptr, w, h, pitch} Y / U / V (hle_movie.cpp 4K swap)
+0x00350634 char_record  # (chr): config record (model token at +0x48)
+0x00407cb4 player_appearance_request  # (npc_app, req): field appearance request (req+12 = chr)
+0x0040d9b0 field_player_set_char  # (ctrl, chr): set field player character (+496)
+0x0046f70c field_player_spawn  # (): spawn field player controller (*0x9f47f4)
+0x003cc6b4 appearance_load  # (rec, async): load CharacterModel actor
+0x005b8588 action_lua_resolve  # (action, out_buf, out_size, path): resolve action Lua script
+0x00553ae0 apak_find  # (apak, path): look up file in APAK archive
+0x004133a0 actor_lua_ref_ctor  # (this, name, actor, ref, [sp] flag): Lua handle to an actor (+68)
+0x00422020 actor_lua_ref_dtor  # (this): its destructor, reads actor+244

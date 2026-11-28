@@ -144,6 +144,12 @@ double process_private_mb() {  // resident anonymous memory of the process (leak
     return 0;
 }
 void mem_regions_report() {}  // NX_MEM_REGIONS: Windows only (VirtualQuery / heap walk)
+bool mem_committed(uint32_t addr, uint32_t size) {
+    const uint64_t lo = addr & ~0xFFFull, hi = (uint64_t)addr + size;
+    for (uint64_t pg = lo; pg < hi; pg += 0x1000)
+        if (pg >= k_window || g_pages[pg >> 12].load(std::memory_order_relaxed) == PG_FREE) return false;
+    return true;
+}
 double guest_committed_mb() {  // the game's own memory: committed pages of the window
     uint64_t n = 0;
     for (uint64_t pg = 0; pg < k_window >> 12; pg++) n += g_pages[pg].load(std::memory_order_relaxed) != PG_FREE;
@@ -232,6 +238,21 @@ void mem_regions_report() {
     prev.swap(cur);
 }
 
+bool mem_committed(uint32_t addr, uint32_t size) {
+    if (size == 0) return true;
+    const uint64_t lo = addr & ~0xFFFull, hi = (uint64_t)addr + size;
+    if (hi > 0x100010000ull) return false;
+    MEMORY_BASIC_INFORMATION mi;
+    for (uint64_t pg = lo; pg < hi;) {
+        if (!VirtualQuery(GPTR((uint32_t)pg), &mi, sizeof mi) || mi.State != MEM_COMMIT ||
+            (mi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) || mi.RegionSize == 0)
+            return false;
+        const uint64_t reg_end = (uint64_t)((const uint8_t*)mi.BaseAddress - (const uint8_t*)GUEST_BASE) + mi.RegionSize;
+        if (reg_end <= pg) return false;
+        pg = reg_end;
+    }
+    return true;
+}
 double guest_committed_mb() {  // committed pages of the guest reservation (the game's own memory; leak checks)
     uint64_t n = 0;
     MEMORY_BASIC_INFORMATION mi;

@@ -360,6 +360,49 @@ static bool crilayla(const std::vector<uint8_t>& src, std::vector<uint8_t>& out)
     }
     return !bad;
 }
+bool rt::cpk_read_file(const char* pack, const char* inner_path, std::vector<uint8_t>& out) {
+    if (!pack || !*pack || !inner_path || !*inner_path || g_data_dir.empty()) return false;
+    fs::path p = fs::path(g_data_dir) / "romfs" / "Pack" / (std::string(pack) + ".cpk");
+    FileH h = open_ro(p);
+    if (h == k_bad_file) { log("fs: cpk_read_file: cannot open %s", p.string().c_str()); return false; }
+    auto close_h = [&] {
+#ifdef _WIN32
+        CloseHandle(h);
+#else
+        close(h);
+#endif
+    };
+    std::vector<uint8_t> head(0x800), toc;
+    Utf hu, tu;
+    auto hc = [&](const char* n) -> uint64_t { const Utf::Col* c = hu.col(n); return c && c->st == 0x50 ? hu.get(0, c) : 0; };
+    bool ok = pread_all(h, 0, head.data(), head.size()) && !memcmp(head.data(), "CPK ", 4) && hu.parse(head.data() + 0x10, head.size() - 0x10);
+    if (ok) {
+        const uint64_t tsz = hc("TocSize"), toff = hc("TocOffset");
+        ok = toff && tsz > 0x10 && tsz <= (128ull << 20);
+        if (ok) toc.resize((size_t)tsz), ok = pread_all(h, toff, toc.data(), toc.size()) && tu.parse(toc.data() + 0x10, toc.size() - 0x10);
+    }
+    const Utf::Col *cdir = ok ? tu.col("DirName") : nullptr, *cname = ok ? tu.col("FileName") : nullptr, *cfs = ok ? tu.col("FileSize") : nullptr,
+                   *ces = ok ? tu.col("ExtractSize") : nullptr, *coff = ok ? tu.col("FileOffset") : nullptr;
+    if (!ok || !cname || !cfs || !ces || !coff) { close_h(); return false; }
+    const std::string want = lower(inner_path);
+    for (uint32_t r = 0; r < tu.nrows; r++) {
+        std::string dir = cdir && cdir->st == 0x50 ? tu.str((uint32_t)tu.get(r, cdir)) : std::string();
+        if (dir == "<NULL>") dir.clear();
+        const std::string inner = lower(dir.empty() ? tu.str((uint32_t)tu.get(r, cname)) : dir + "/" + tu.str((uint32_t)tu.get(r, cname)));
+        if (inner != want) continue;
+        const uint64_t fsz = tu.get(r, cfs), esz = tu.get(r, ces), off = tu.get(r, coff) + 0x800;
+        if (fsz > (256ull << 20) || esz > (256ull << 20)) { close_h(); return false; }
+        std::vector<uint8_t> buf((size_t)fsz);
+        bool good = pread_all(h, off, buf.data(), buf.size());
+        close_h();
+        if (!good) return false;
+        if (esz != fsz) return crilayla(buf, out) && out.size() == esz;
+        out = std::move(buf);
+        return true;
+    }
+    close_h();
+    return false;
+}
 // every pack in <data>/romfs/Pack (movies only with all) -> <data>/dump/<pack>/<path>; files already there at the right
 // size are skipped (a stopped dump continues). Progress on stdout. Returns the process exit code.
 int rt::cpk_dump(const std::string& data, bool all, const std::string& only) {

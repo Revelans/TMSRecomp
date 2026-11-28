@@ -868,6 +868,8 @@ static void ui_thread() {
                 SDL_SetWindowFullscreen(g_window, !(SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN));
             if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) log("window: %d x %d pixels", e.window.data1, e.window.data2), window_resized();
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F12) g_user_shot++;
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F7) field_player_hotkey(-1);
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.key == SDLK_F8) field_player_hotkey(1);
             if (e.type == SDL_EVENT_MOUSE_MOTION) g_mouse_acc[0] += e.motion.xrel, g_mouse_acc[1] += e.motion.yrel;
             if (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.y != 0) g_wheel_until[e.wheel.y > 0 ? 0 : 1] = (int64_t)SDL_GetTicks() + 80;
             if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) {  // no mouse cursor with a pad

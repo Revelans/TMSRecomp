@@ -4,6 +4,8 @@
 #include "plat.h"
 #include <algorithm>
 
+#include <cctype>
+#include <cstring>
 #include <ctime>
 #include <future>
 #include <map>
@@ -896,6 +898,389 @@ HLE_FN(camp_settings_fill, "camp_settings_fill") {
     c->r[0] = call_unhooked(c, "camp_settings_fill", {c->r[0], c->r[1], c->r[2], c->r[3]});
     if (all_difficulties()) st32(scr + 0x118, 1), st32(scr + 0x11c, 0), st32(scr + 0x120, 4);  // row 10: arrows, min, max
 }
+// Playable field character (setting field_player, hotkeys F7 / F8).
+static constexpr struct { const char* name; uint32_t chr; } k_field_party[] = {
+    {"itsuki", 0x3e9}, {"tsubasa", 0x3ea}, {"touma", 0x3eb}, {"kiria", 0x3f1},
+    {"eleonora", 0x3ee}, {"mamori", 0x3ef}, {"yashiro", 0x3f0}, {"maiko", 0x3ec},
+    {"barry", 0x3ed},
+};
+static std::atomic<uint32_t> g_field_target{0};  // playable chr ID, 0 = Itsuki
+static std::atomic<int> g_field_cmd{0};          // -1 = prev (F7), +1 = next (F8)
+static uint32_t g_field_roam_obj = 0;             // last field_roam_update object
+static thread_local bool g_field_in_spawn = false;
+
+void rt::field_player_hotkey(int cmd) { g_field_cmd = cmd; }
+
+static uint32_t field_player_target() {
+    static std::once_flag parsed;
+    std::call_once(parsed, [] {
+        const char* e = getenv("NX_FIELD_PLAYER");
+        if (e && *e) {
+            char low[16];
+            size_t n = 0;
+            for (; e[n] && n < 15; n++) low[n] = (char)tolower((unsigned char)e[n]);
+            low[n] = 0;
+            bool matched = false;
+            for (auto& k : k_field_party)
+                if (!strcmp(low, k.name)) { g_field_target = k.chr == 0x3e9u ? 0u : k.chr; matched = true; break; }
+            if (!matched) {
+                const int v = atoi(low);
+                if (v >= 2 && v <= (int)std::size(k_field_party))
+                    g_field_target = k_field_party[v - 1].chr;
+                else
+                    for (auto& k : k_field_party)
+                        if (k.chr != 0x3e9u && v == (int)k.chr) { g_field_target = k.chr; break; }
+            }
+        }
+    });
+    return g_field_target.load();
+}
+
+HLE_FN(field_player_spawn, "field_player_spawn") {
+    const uint32_t want = field_player_target();
+    if (want) log("field spawn: enter lr %08x, ctrl %08x", c->r[14], ld32(0x9f47f4u));
+    g_field_in_spawn = true;
+    call_unhooked(c, "field_player_spawn", {c->r[0], c->r[1], c->r[2], c->r[3]});
+    g_field_in_spawn = false;
+    if (want) {
+        const Cpu keep = *c;
+        const uint32_t obj = ld32(0x9f47f4u);
+        log("field spawn: after lr %08x, ctrl %08x committed %d", c->r[14], obj, obj && mem_committed(obj, 0x1f4u));
+        if (obj && mem_committed(obj, 0x1f4u)) {
+            const uint32_t chr = ld32(obj + 496u);
+            const uint32_t rec = gcall(c, "char_record", {chr});
+            log("field player: spawned as character %u (%s)%s", chr, rec ? (const char*)GPTR(rec + 0x48u) : "?",
+                chr == want ? "" : " <- NOT swapped");
+        }
+        *c = keep;
+    }
+}
+
+// Fallback missing pcNNN field/facial Lua actions and .anm motions (own locomotion first, then pc000).
+static bool lower_swapped_pc_path(const std::string& p, std::string& low) {
+    if (p.size() < 24) return false;
+    static const char k_pfx[] = "character/player/pc";
+    for (size_t i = 0; i < 19; i++)
+        if ((char)tolower((unsigned char)p[i]) != k_pfx[i]) return false;
+    if (!isdigit((unsigned char)p[19]) || !isdigit((unsigned char)p[20]) || !isdigit((unsigned char)p[21]) || p[22] != '/')
+        return false;
+    if (p[19] == '0' && p[20] == '0' && p[21] == '0') return false;
+    low = p;
+    for (char& ch : low) ch = (char)tolower((unsigned char)ch);
+    return true;
+}
+
+static std::string pc_to_pc000(const std::string& p, const char* sub) {
+    std::string low;
+    if (!lower_swapped_pc_path(p, low) || low.find(sub) == std::string::npos) return {};
+    std::string out = p;
+    out[19] = '0', out[20] = '0', out[21] = '0';
+    return out;
+}
+
+static uint32_t pc000_common_apak() {
+    static std::atomic<uint32_t> g_apak{0};
+    if (uint32_t p = g_apak.load(std::memory_order_acquire)) return p;
+    static std::mutex mu;
+    std::lock_guard<std::mutex> l(mu);
+    if (uint32_t p = g_apak.load(std::memory_order_relaxed)) return p;
+    static bool tried = false;
+    if (tried) return 0;
+    tried = true;
+    std::vector<uint8_t> data;
+    if (!cpk_read_file("pack_010_character", "Character/player/pc000/skin/00/model_common.apak", data) || data.size() < 0x40) {
+        log("field player: failed to load pc000/skin/00/model_common.apak for fallback animations");
+        return 0;
+    }
+    const uint32_t buf = hle_alloc((uint32_t)data.size(), 0x1000u);
+    memcpy(GPTR(buf), data.data(), data.size());
+    const uint32_t obj = hle_alloc(0x18u, 16u);
+    st32(obj + 0u, ld32(0x009f1520u) + 8u);  // APAK reader vtable
+    st32(obj + 4u, buf);
+    st32(obj + 8u, buf + 0x18u);
+    st32(obj + 12u, 0u);
+    st32(obj + 16u, 0u);
+    st32(obj + 20u, 0u);
+    g_apak.store(obj, std::memory_order_release);
+    log("field player: loaded pc000 fallback model_common.apak (%zu bytes at %08x, obj %08x)", data.size(), buf, obj);
+    return obj;
+}
+
+static std::string pc_own_locomotion(const std::string& p) {
+    std::string low;
+    if (!lower_swapped_pc_path(p, low)) return {};
+    const size_t pos = low.find("/field/action/");
+    if (pos == std::string::npos) return {};
+    const std::string name = low.substr(pos + 14);
+    const char* own = nullptr;
+    if (name == "fd_dash_loop" || name == "fd_blade_run_loop") own = "fd_run_loop";
+    else if (name == "fd_blade_walk_loop") own = "fd_walk_loop";
+    else if (name == "fd_blade_idle_loop" || name == "fd_idle_bad_loop") own = "fd_idle_loop";
+    if (!own) return {};
+    return p.substr(0, pos + 14) + own;
+}
+
+HLE_FN(action_lua_resolve, "action_lua_resolve") {
+    const uint32_t a0 = c->r[0], a1 = c->r[1], a2 = c->r[2], a3 = c->r[3];
+    uint32_t ok = call_unhooked(c, "action_lua_resolve", {a0, a1, a2, a3});
+    if (!ok && a3 > 0x1000u && mem_committed(a3, 1u)) {
+        const std::string p = gstr(a3, 256);
+        auto try_fb = [&](const std::string& fb) {
+            if (fb.empty() || fb.size() >= 0xf0u) return false;
+            const uint32_t sp0 = c->r[13], sp_buf = (sp0 - 0x100u) & ~7u;
+            c->r[13] = sp_buf - 0x10u;
+            memcpy(GPTR(sp_buf), fb.c_str(), fb.size() + 1);
+            ok = call_unhooked(c, "action_lua_resolve", {a0, a1, a2, sp_buf});
+            c->r[13] = sp0;
+            if (ok) {
+                static std::mutex log_mu;
+                static std::unordered_set<std::string> logged;
+                std::lock_guard<std::mutex> l(log_mu);
+                if (logged.insert(p).second) log("field player: lua fallback %s -> %s", p.c_str(), fb.c_str());
+            }
+            return ok != 0;
+        };
+        if (!try_fb(pc_own_locomotion(p))) {
+            std::string fb = pc_to_pc000(p, "/field/action/");
+            if (fb.empty()) fb = pc_to_pc000(p, "/facial/action/");
+            try_fb(fb);
+        }
+    }
+    c->r[0] = ok;
+}
+
+HLE_FN(apak_find, "apak_find") {
+    const uint32_t a0 = c->r[0], a1 = c->r[1];
+    uint32_t res = call_unhooked(c, "apak_find", {a0, a1});
+    if (!res && a1 > 0x1000u && mem_committed(a1, 1u)) {
+        const std::string p = gstr(a1, 256);
+        std::string fb = pc_to_pc000(p, "/field/motion/");
+        if (fb.empty()) fb = pc_to_pc000(p, "/facial/motion/");
+        if (!fb.empty() && fb.size() < 0xf0u) {
+            const uint32_t pc0 = pc000_common_apak();
+            if (pc0 && a0 != pc0) {
+                const uint32_t sp0 = c->r[13], sp_buf = (sp0 - 0x100u) & ~7u;
+                c->r[13] = sp_buf - 0x10u;
+                memcpy(GPTR(sp_buf), fb.c_str(), fb.size() + 1);
+                res = call_unhooked(c, "apak_find", {pc0, sp_buf});
+                c->r[13] = sp0;
+                if (res) {
+                    static std::mutex log_mu;
+                    static std::unordered_set<std::string> logged;
+                    std::lock_guard<std::mutex> l(log_mu);
+                    if (logged.insert(p).second) log("field player: motion fallback %s -> %s", p.c_str(), fb.c_str());
+                }
+            }
+        }
+    }
+    c->r[0] = res;
+}
+HLE_FN(appearance_load, "appearance_load") {
+    uint32_t rec = c->r[0];
+    const uint32_t want = field_player_target();
+    if (want && g_field_in_spawn && rec && ld32(rec) == 0x3e9u)
+        st32(rec, want), log("field player: spawn preheat appearance 1001 -> %u (lr %08x)", want, c->r[14]);
+    c->r[0] = call_unhooked(c, "appearance_load", {c->r[0], c->r[1], c->r[2], c->r[3]});
+}
+HLE_FN(field_player_set_char, "field_player_set_char") {
+    uint32_t chr = c->r[1];
+    const uint32_t want = field_player_target();
+    if (want && chr == 0x3e9u && g_field_in_spawn) {
+        chr = want;
+        log("field player: setter redirect 1001 -> %u (lr %08x)", want, c->r[14]);
+    }
+    c->r[0] = call_unhooked(c, "field_player_set_char", {c->r[0], chr});
+}
+HLE_FN(player_appearance_request, "player_appearance_request") {
+    const uint32_t want = field_player_target();
+    if (want && c->r[1] > 0x1000u && mem_committed(c->r[1], 16) && ld32(c->r[1] + 12u) == 0x3e9u) {
+        st32(c->r[1] + 12u, want);
+        log("field player: appearance request character -> %u (lr %08x)", want, c->r[14]);
+    }
+    c->r[0] = call_unhooked(c, "player_appearance_request", {c->r[0], c->r[1]});
+}
+
+// Live Lua actor handles (actor at +68), so an avatar swap can repoint them.
+static std::mutex g_actor_refs_mu;
+static std::unordered_set<uint32_t> g_actor_refs;
+HLE_FN(actor_lua_ref_ctor, "actor_lua_ref_ctor") {
+    const uint32_t self = c->r[0];
+    c->r[0] = call_unhooked(c, "actor_lua_ref_ctor", {c->r[0], c->r[1], c->r[2], c->r[3]});
+    std::lock_guard lk(g_actor_refs_mu);
+    g_actor_refs.insert(self);
+}
+HLE_FN(actor_lua_ref_dtor, "actor_lua_ref_dtor") {
+    {
+        std::lock_guard lk(g_actor_refs_mu);
+        g_actor_refs.erase(c->r[0]);
+    }
+    c->r[0] = call_unhooked(c, "actor_lua_ref_dtor", {c->r[0]});
+}
+static void rebind_actor_lua_refs(uint32_t old_actor, uint32_t new_actor) {
+    int n = 0;
+    {
+        std::lock_guard lk(g_actor_refs_mu);
+        for (uint32_t r : g_actor_refs)
+            if (mem_committed(r + 68u, 4u) && ld32(r + 68u) == old_actor) st32(r + 68u, new_actor), n++;
+    }
+    if (n) log("field player: %d Lua actor handle(s) %08x -> %08x", n, old_actor, new_actor);
+}
+
+// Move roam+44/+48 alert effects (attached to the player model) onto the new model.
+static void rebind_field_alert_effects(Cpu* c, uint32_t old_parent, uint32_t new_parent) {
+    const uint32_t roam = g_field_roam_obj;
+    if (!old_parent || !roam || !mem_committed(roam, 52u)) return;
+    const uint32_t reg_ptr = ld32(0x009ef008u);
+    const uint32_t reg = reg_ptr && mem_committed(reg_ptr, 4u) ? ld32(reg_ptr) : 0u;
+    if (!reg) return;
+    for (uint32_t off : {44u, 48u}) {
+        const uint32_t eff = ld32(roam + off);
+        if (!eff || !gcall(c, 0x003f77a8u, {reg + 8u, eff})) continue;
+        if (!mem_committed(eff, 0x1d0u) || ld32(eff + 12u) != old_parent) continue;
+        const uint32_t vt = ld32(eff);
+        const uint32_t attach = vt && mem_committed(vt + 16u, 4u) ? ld32(vt + 16u) : 0u;
+        if (new_parent && attach) {
+            gcall(c, attach, {eff, new_parent});
+            log("field player: alert effect roam+%u re-attached %08x -> %08x", off, old_parent, new_parent);
+        } else {
+            st32(eff + 12u, 0u);
+            st32(eff + 16u, 0u);
+            log("field player: alert effect roam+%u detached from freed model %08x", off, old_parent);
+        }
+    }
+}
+
+// Reload the playable field avatar (*0x9f47f4) in place for costume updates and F7/F8 switches.
+static bool reload_field_player_actor(Cpu* c, uint32_t ctrl, uint32_t new_chr) {
+    if (!ctrl || !mem_committed(ctrl, 0x390u)) return false;
+    const uint32_t state = ld32(ctrl + 4u);
+    if (state != 3u && state != 5u) return false;
+    const uint32_t old_actor = ld32(ctrl + 504u);
+    if (!old_actor || !mem_committed(old_actor, 0x450u)) return false;
+    if (gcall(c, 0x003cfa5cu, {old_actor}) != 0u) return false;
+
+    const uint32_t char_mgr = ld32(0x009ef454u);
+    if (!char_mgr || !mem_committed(char_mgr, 0x50u)) return false;
+    if (!gcall(c, "char_record", {new_chr})) return false;
+    const uint32_t row = gcall(c, "costume_default_row", {new_chr});
+    if (!row) return false;
+    const uint32_t want_skin = gcall(c, 0x0035083cu, {new_chr, (uint32_t)(int16_t)ld16(row + 4u)});
+    if (!gcall(c, 0x00350688u, {new_chr, want_skin})) return false;
+    const uint32_t old_chr = ld32(ctrl + 496u);
+
+    // Preserve world transform and model matrix for bind + camera.
+    st32(ctrl + 8u,  ld32(old_actor + 12u));
+    st32(ctrl + 12u, ld32(old_actor + 16u));
+    st32(ctrl + 16u, ld32(old_actor + 20u));
+    st32(ctrl + 20u, ld32(old_actor + 24u));
+    st32(ctrl + 24u, ld32(old_actor + 28u));
+    st32(ctrl + 28u, ld32(old_actor + 32u));
+    uint32_t saved_mat[16] = {};
+    const uint32_t old_model = ld32(old_actor + 244u);
+    const bool has_mat = old_model && mem_committed(old_model + 160u, 64u);
+    if (has_mat) memcpy(saved_mat, GPTR(old_model + 160u), 64u);
+
+    const uint32_t wpn = ld32(ctrl + 508u);
+    if (wpn) gcall(c, 0x003d00b8u, {old_actor, wpn});
+    for (uint32_t slot : {1u, 6u, 7u, 4u}) gcall(c, 0x003d046cu, {old_actor, slot});
+
+    gcall(c, 0x0040b894u, {ctrl + 0x274u});
+    gcall(c, 0x0040b86cu, {ctrl + 0x274u});
+    st32(ctrl + 0x274u + 12u, 0u);
+    st32(ctrl + 0x274u + 20u, 0u);
+
+    st32(ctrl + 4u, 0u);
+    st32(ctrl + 500u, 0u);
+    st32(ctrl + 504u, 0u);
+    st32(ctrl + 528u, 0u);
+    st32(ctrl + 644u, 0u);
+    if (new_chr != old_chr) gcall(c, "field_player_set_char", {ctrl, new_chr});
+
+    gcall(c, 0x003ca614u, {char_mgr, old_actor});
+
+    // Synchronous load (r1 = 0) so new_actor+244 is ready before cam_free_update runs.
+    static thread_local uint32_t rec = hle_alloc(0x20u, 8u);
+    st32(rec + 0u,  new_chr);
+    st32(rec + 4u,  0u);
+    st32(rec + 8u,  0u);
+    st32(rec + 12u, 1u);
+    st32(rec + 16u, 0u);
+    const uint32_t new_actor = gcall(c, "appearance_load", {rec, 0u});
+    const uint32_t new_model = new_actor ? ld32(new_actor + 244u) : 0u;
+    rebind_field_alert_effects(c, old_model ? old_model + 100u : 0u, new_model ? new_model + 100u : 0u);
+    if (!new_actor) return false;
+    rebind_actor_lua_refs(old_actor, new_actor);
+    st32(new_actor + 1216u, 0u);
+    if (has_mat && new_model && mem_committed(new_model + 160u, 64u))
+        memcpy(GPTR(new_model + 160u), saved_mat, 64u);
+
+    // Move new_actor to list head so 0x3caf38 picks the player even if a matching NPC is present.
+    gcall(c, 0x01ec9090u, {char_mgr + 0x44u});
+    const uint32_t head = ld32(char_mgr + 4u);
+    for (uint32_t node = head; node; node = ld32(node + 4u)) {
+        if (ld32(node + 8u) != new_actor) continue;
+        if (node != head) {
+            const uint32_t prev = ld32(node + 0u), next = ld32(node + 4u);
+            if (prev) st32(prev + 4u, next);
+            if (next) st32(next + 0u, prev);
+            else st32(char_mgr + 8u, prev);
+            st32(node + 0u, 0u);
+            st32(node + 4u, head);
+            if (head) st32(head + 0u, node);
+            st32(char_mgr + 4u, node);
+        }
+        break;
+    }
+    gcall(c, 0x01ec9134u, {char_mgr + 0x44u});
+
+    if (const uint32_t fctx = gcall(c, 0x004672ccu, {})) {
+        const uint32_t cam_mgr = ld32(fctx + 8u);
+        const uint32_t cam = cam_mgr ? ld32(cam_mgr + 268u) : 0u;
+        if (cam && mem_committed(cam, 0x20u) && ld32(cam + 12u) == old_actor)
+            st32(cam + 12u, ld32(new_actor + 244u) ? new_actor : 0u);
+    }
+
+    gcall(c, 0x0040e80cu, {ctrl});
+    return true;
+}
+static void check_reload_field_player_costume(Cpu* c, const char* why) {
+    const uint32_t ctrl = ld32(0x009f47f4u);
+    if (!ctrl || !mem_committed(ctrl, 0x390u)) return;
+    const uint32_t state = ld32(ctrl + 4u);
+    if (state != 3u && state != 5u) return;
+    const uint32_t actor = ld32(ctrl + 504u);
+    if (!actor || !mem_committed(actor, 0x450u)) return;
+    if (gcall(c, 0x003cfa5cu, {actor}) != 0u) return;
+    const uint32_t chr = ld32(ctrl + 496u);
+    if (!chr) return;
+    const uint32_t row = gcall(c, "costume_default_row", {chr});
+    if (!row) return;
+    const uint32_t want_costume = (uint32_t)(int16_t)ld16(row + 4u);
+    const uint32_t want_skin = gcall(c, 0x0035083cu, {chr, want_costume});
+    const uint32_t cur_chr = ld32(actor + 1072u);
+    const uint32_t cur_skin = ld32(actor + 1076u);
+    if (cur_chr == chr && cur_skin == want_skin) return;
+    if (!gcall(c, 0x00350688u, {chr, want_skin})) return;
+    static uint32_t last_actor = 0, last_chr = 0, last_skin = ~0u;
+    if (actor == last_actor && chr == last_chr && want_skin == last_skin) return;
+    if (reload_field_player_actor(c, ctrl, chr)) {
+        last_actor = ld32(ctrl + 504u), last_chr = chr, last_skin = want_skin;
+        log("costume: reloaded field player %u skin %u -> %u (%s)", chr, cur_skin, want_skin, why);
+    }
+}
+HLE_FN(field_play_update, "field_play_update") {
+    const uint32_t obj = c->r[0];
+    const uint32_t prev_state = obj ? ld32(obj + 8u) : 0u;
+    c->r[0] = call_unhooked(c, "field_play_update", {obj});
+    if (obj && prev_state == 2u) {
+        const uint32_t next_state = ld32(obj + 8u);
+        if (next_state == 3u || next_state == 5u) {  // Camp menu closed
+            const Cpu keep = *c;
+            check_reload_field_player_costume(c, "camp exit");
+            *c = keep;
+        }
+    }
+}
 // Ultrawide (vk.cpp wide_factor, setting aspect): every perspective projection of the game's 16:9 shape (aspect 1.7778:
 // field, battle, event cameras; the scene targets are widened to match) gets the wider aspect before the matrix is built:
 // the same vertical view, more at the sides (Hor+). The object keeps the new aspect (the game sets it once), so frustum
@@ -1420,6 +1805,51 @@ static int reveal_map(Cpu* c) {
 }
 
 HLE_FN(field_roam_update, "field_roam_update") {
+    g_field_roam_obj = c->r[0];
+    {
+        const Cpu keep = *c;
+        const int cmd = g_field_cmd.exchange(0);
+        uint32_t want = field_player_target();
+        const uint32_t obj = ld32(0x9f47f4u);
+        if (cmd && obj && mem_committed(obj, 0x390u)) {
+            constexpr int N = (int)std::size(k_field_party);
+            const uint32_t cur_chr = ld32(obj + 496u);
+            int idx = -1;
+            for (int i = 0; i < N; i++)
+                if (k_field_party[i].chr == cur_chr) { idx = i; break; }
+            if (idx < 0) {
+                const uint32_t base = want ? want : 0x3e9u;
+                idx = 0;
+                for (int i = 0; i < N; i++)
+                    if (k_field_party[i].chr == base) { idx = i; break; }
+            }
+            for (int k = 0; k < N; k++) {
+                idx = (idx + cmd + N) % N;
+                const uint32_t cand = k_field_party[idx].chr;
+                if (cand == 0x3e9u) { want = 0; break; }
+                if (gcall(c, "char_record", {cand}) && gcall(c, 0x3535f4, {cand})) { want = cand; break; }
+            }
+            g_field_target = want;
+        }
+        const uint32_t id = want ? want : 0x3e9u;
+        if (want && !(obj && mem_committed(obj, 0x1f4u))) {
+            static uint64_t last_wait;
+            if (const uint64_t t = GetTickCount64(); t - last_wait > 2000)
+                last_wait = t, log("field player: swap to %u waiting for the controller (ctrl %08x)", want, obj);
+        }
+        if (obj && mem_committed(obj, 0x390u) && id != ld32(obj + 496u)) {
+            if (reload_field_player_actor(c, obj, id)) {
+                const uint32_t rec = gcall(c, "char_record", {id});
+                const uint32_t act = ld32(obj + 504u);
+                log("field player: avatar -> character %u (%s, skin %u, state %u)", id,
+                    rec ? (const char*)GPTR(rec + 0x48u) : "?",
+                    act ? ld32(act + 1076u) : 0u, ld32(obj + 4u));
+            }
+        } else {
+            check_reload_field_player_costume(c, "roam");
+        }
+        *c = keep;
+    }
     if (overlay_take_title_request()) {
         const uint32_t obj = c->r[0];
         const Cpu keep = *c;

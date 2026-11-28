@@ -22,6 +22,7 @@ namespace rt {
 void log(const char* fmt, ...);
 void perfmon_start(const char* gpu_name, uint32_t vendor);
 int cpk_dump(const std::string& data, bool all, const std::string& only);  // hle_fs.cpp: tms.exe --dump [--all | --pack <name>]: game packs -> <data>/dump  // perfmon.cpp: "perf:" lines (GPU clocks / heat / power), s124
+bool cpk_read_file(const char* pack, const char* inner_path, std::vector<uint8_t>& out);  // hle_fs.cpp: read one file from <data>/romfs/Pack/<pack>.cpk
 extern std::atomic<bool> g_perf_in_game;                    // perfmon.cpp: a 3D frame since its last sample
 [[noreturn]] void fatal(const char* fmt, ...);
 extern int g_verbose;
@@ -47,6 +48,7 @@ void mem_map(uint32_t addr, uint32_t size, uint32_t state, uint32_t perm);  // c
 void mem_unmap(uint32_t addr, uint32_t size);
 Region mem_query(uint32_t addr);
 double process_private_mb(), guest_committed_mb();  // memory.cpp
+bool mem_committed(uint32_t addr, uint32_t size);   // memory.cpp: [addr, addr+size) committed + readable (probing game-held pointers)
 void mem_regions_report();  // memory.cpp, NX_MEM_REGIONS
 // s126 write ticks (vertex data in video memory): mem_write_tick harvests the 2 MB chunks under the range once per stamp
 // and returns the current tick; mem_written_tick = the newest tick any page of the range was seen written at (0 never).
@@ -224,6 +226,7 @@ void custom_bgm_stop(const char* why);      // ext_bgm.cpp: the game's music tak
 bool custom_bgm_active();
 void custom_bgm_mix(int16_t* out, uint32_t frames);  // ext_bgm.cpp: add custom music to 48 kHz stereo s16 frames
 bool in_battle();                           // hle_sys.cpp: battle HUD updated in the last 250 ms
+void field_player_hotkey(int cmd);          // hle_sys.cpp: F7 previous (-1), F8 next (+1)
 void frame_begin();                         // hle_sys.cpp: once per game frame (pace_present): 30 Hz tick clock
 
 using HleFn = void (*)(Cpu*);

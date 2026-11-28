@@ -389,6 +389,7 @@ stored in `settings.ini` next to `tms.exe` as `key = value`; any key can also be
 | `map_reveal` | 0 (default), 1 | reveal dungeon maps |
 | `ng_plus_requests` | 1 (default), 0 | the two New Game+ requests (49, 50) also in a fresh game |
 | `field_costume` | 0 (default), 1 | overworld costume |
+| `field_player` | itsuki (default), tsubasa, touma, kiria, eleonora, mamori, yashiro, maiko, barry | playable field character: control that party member (or Maiko / Barry) instead of Itsuki in town and dungeons (F7 = previous, F8 = next, any time; story scenes stay unchanged) |
 | `language` | en (default), ja, fr, zh-Hans, zh-Hant | game text and menus (voices stay; the Uncensored mod's text is English only, so with another language its text changes are left out) |
 | `all_difficulties` | 1 (default), 0 | Friendly / Lunatic unlocked, full difficulty range in Settings |
 | `battle_retry` | 1 (default), 0 | retry lost battles |

@@ -57,6 +57,7 @@ static const char k_default_settings[] =
     "; map_reveal = 1: every Idolasphere floor shows its whole layout on the minimap / map when entered (default 0)\n"
     "; aspect: 16:9 (default, the game's), 21:9 / 32:9 ultrawide (wider 3D view, HUD and menus 16:9 in the middle), auto = the screen's shape\n"
     "; field_costume = 1: outside battle (field, dungeons, story scenes) party members wear their equipped costume (default 0: story clothes)\n"
+    "; field_player = tsubasa: control another party member (or Maiko / Barry) instead of Itsuki in town and dungeons (default: itsuki; tsubasa, touma, kiria, eleonora, mamori, yashiro, maiko, barry; any time: F7 = previous, F8 = next; story scenes stay unchanged)\n"
     "; resist_marker = 0: no resist shield over foes / in the target panel and no RESIST popup on resisted hits (default 1)\n"
     "; weak_hint = 0: the battle skill list shows no WEAK next to skills a known foe weakness takes (default 1)\n"
     "; all_difficulties = 0: Friendly / Lunatic stay locked until the game unlocks them (default 1: all five selectable)\n"
